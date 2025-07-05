@@ -375,31 +375,43 @@ async def check_new_positions(wallet_address: str, alias: str) -> list:
                 position_size = abs(prev_szi)
                 prev_direction = prev_pos['direction']
                 
+                # Get the closing PnL from the previous position
+                closing_pnl = None
+                pnl_value = 0
+                if prev_pos.get('unrealized_pnl') and prev_pos['unrealized_pnl'] != 'N/A':
+                    try:
+                        pnl_value = float(prev_pos['unrealized_pnl'])
+                        closing_pnl = pnl_value
+                    except (ValueError, TypeError):
+                        pass
+                
                 # Try to determine if this was a liquidation
                 # We'll look for rapid position changes or large unrealized losses
                 is_liquidation = False
-                if prev_pos.get('unrealized_pnl') and prev_pos['unrealized_pnl'] != 'N/A':
+                if closing_pnl is not None:
+                    # If PnL was very negative (>15% loss), might be liquidation
                     try:
-                        pnl = float(prev_pos['unrealized_pnl'])
-                        # If PnL was very negative (>10% loss), might be liquidation
-                        if pnl < -0.1 * abs(float(prev_pos.get('position_value', 0))):
+                        position_value = abs(float(prev_pos.get('position_value', 0)))
+                        if position_value > 0 and pnl_value < -0.15 * position_value:
                             is_liquidation = True
                     except (ValueError, TypeError):
                         pass
                 
                 if is_liquidation:
-                    logger.info(f"Potential liquidation detected: {coin} for {wallet_address} ({alias})")
+                    logger.info(f"Potential liquidation detected: {coin} for {wallet_address} ({alias}) - PnL: {closing_pnl}")
                     position_alerts.append({
                         **prev_pos,
                         'alert_type': 'LIQUIDATION',
-                        'liquidated_size': position_size
+                        'liquidated_size': position_size,
+                        'closing_pnl': closing_pnl
                     })
                 else:
-                    logger.info(f"Position closed: {coin} for {wallet_address} ({alias})")
+                    logger.info(f"Position closed: {coin} for {wallet_address} ({alias}) - PnL: {closing_pnl}")
                     position_alerts.append({
                         **prev_pos,
                         'alert_type': 'POSITION_CLOSED',
-                        'closed_size': position_size
+                        'closed_size': position_size,
+                        'closing_pnl': closing_pnl
                     })
     
     # Check for TWAP orders (if present in the API response)
@@ -556,9 +568,22 @@ async def send_position_alert(wallet_address: str, alias: str, position: dict):
     elif alert_type == 'POSITION_DECREASE' and 'size_change' in position:
         additional_info = f" (-{position['size_change']:.2f}, {position.get('remaining_size', 0):.2f} remaining)"
     elif alert_type == 'POSITION_CLOSED' and 'closed_size' in position:
-        additional_info = f" (closed {position['closed_size']:.2f})"
+        pnl_text = ""
+        if position.get('closing_pnl') is not None:
+            pnl = position['closing_pnl']
+            if pnl > 0:
+                pnl_text = f" | 🟢 +${pnl:,.2f}"
+            elif pnl < 0:
+                pnl_text = f" | 🔴 ${pnl:,.2f}"
+            else:
+                pnl_text = f" | ⚪ ${pnl:,.2f}"
+        additional_info = f" (closed {position['closed_size']:.2f}{pnl_text})"
     elif alert_type == 'LIQUIDATION' and 'liquidated_size' in position:
-        additional_info = f" (liquidated {position['liquidated_size']:.2f})"
+        pnl_text = ""
+        if position.get('closing_pnl') is not None:
+            pnl = position['closing_pnl']
+            pnl_text = f" | 🔴 ${pnl:,.2f} loss"
+        additional_info = f" (liquidated {position['liquidated_size']:.2f}{pnl_text})"
     elif alert_type == 'TWAP_COMPLETED' and position.get('filled'):
         additional_info = f" (filled: {position['filled']})"
     
