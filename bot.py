@@ -563,8 +563,26 @@ async def send_position_alert(wallet_address: str, alias: str, position: dict):
     
     # Additional info for different alert types
     additional_info = ""
-    if alert_type == 'POSITION_INCREASE' and 'size_change' in position:
-        additional_info = f" (+{position['size_change']:.2f})"
+    if alert_type == 'NEW_POSITION':
+        # Show entry price for new positions
+        entry_price = ""
+        if position.get('entry_px') and position['entry_px'] != 'N/A':
+            try:
+                entry_px = float(position['entry_px'])
+                entry_price = f" @ ${entry_px:,.4f}"
+            except (ValueError, TypeError):
+                pass
+        additional_info = entry_price
+    elif alert_type == 'POSITION_INCREASE' and 'size_change' in position:
+        # Show entry price for position increases too
+        entry_price = ""
+        if position.get('entry_px') and position['entry_px'] != 'N/A':
+            try:
+                entry_px = float(position['entry_px'])
+                entry_price = f" @ ${entry_px:,.4f}"
+            except (ValueError, TypeError):
+                pass
+        additional_info = f" (+{position['size_change']:.2f}){entry_price}"
     elif alert_type == 'POSITION_DECREASE' and 'size_change' in position:
         additional_info = f" (-{position['size_change']:.2f}, {position.get('remaining_size', 0):.2f} remaining)"
     elif alert_type == 'POSITION_CLOSED' and 'closed_size' in position:
