@@ -289,7 +289,7 @@ async def get_wallet_positions(wallet_address: str) -> dict:
         return {}
 
 async def check_new_positions(wallet_address: str, alias: str) -> list:
-    """Check for new positions and return list of new ones."""
+    """Check for position changes and return list of alerts."""
     current_positions = await get_wallet_positions(wallet_address)
     
     if not current_positions or 'assetPositions' not in current_positions:
@@ -316,30 +316,31 @@ async def check_new_positions(wallet_address: str, alias: str) -> list:
                     'direction': 'LONG' if float(szi) > 0 else 'SHORT',
                     'entry_px': position.get('entryPx', 'N/A'),
                     'position_value': position.get('positionValue', 'N/A'),
-                    'coin': coin
+                    'coin': coin,
+                    'unrealized_pnl': position.get('unrealizedPnl', 'N/A')
                 }
     
     # Get previous positions for this wallet
     previous_position_map = previous_positions.get(wallet_address, {})
     
-    new_position_alerts = []
+    position_alerts = []
     
     if is_initial_scan:
         # First scan - record positions but don't alert
         logger.info(f"Initial scan for {wallet_address} ({alias}) - recording {len(current_position_map)} positions")
         initial_scan_done[wallet_address] = True
     else:
-        # Subsequent scan - check for new positions or size increases
+        # Check for NEW positions and SIZE INCREASES
         for coin, current_pos in current_position_map.items():
             if coin not in previous_position_map:
                 # Completely new position
                 logger.info(f"New position detected: {coin} for {wallet_address} ({alias})")
-                new_position_alerts.append({
+                position_alerts.append({
                     **current_pos,
                     'alert_type': 'NEW_POSITION'
                 })
             else:
-                # Position exists - check if size increased
+                # Position exists - check for size changes
                 prev_szi = float(previous_position_map[coin]['szi'])
                 curr_szi = float(current_pos['szi'])
                 
@@ -348,21 +349,68 @@ async def check_new_positions(wallet_address: str, alias: str) -> list:
                     (prev_szi < 0 and curr_szi < prev_szi)):
                     size_increase = abs(curr_szi - prev_szi)
                     logger.info(f"Position size increase detected: {coin} for {wallet_address} ({alias}) - added {size_increase}")
-                    new_position_alerts.append({
+                    position_alerts.append({
                         **current_pos,
                         'alert_type': 'POSITION_INCREASE',
-                        'size_increase': size_increase
+                        'size_change': size_increase
+                    })
+                
+                # Check if position size decreased (partial close)
+                elif ((prev_szi > 0 and curr_szi < prev_szi and curr_szi > 0) or 
+                      (prev_szi < 0 and curr_szi > prev_szi and curr_szi < 0)):
+                    size_decrease = abs(prev_szi - curr_szi)
+                    logger.info(f"Position size decrease detected: {coin} for {wallet_address} ({alias}) - reduced by {size_decrease}")
+                    position_alerts.append({
+                        **current_pos,
+                        'alert_type': 'POSITION_DECREASE',
+                        'size_change': size_decrease,
+                        'remaining_size': abs(curr_szi)
+                    })
+        
+        # Check for CLOSED positions and LIQUIDATIONS
+        for coin, prev_pos in previous_position_map.items():
+            if coin not in current_position_map:
+                # Position completely closed
+                prev_szi = float(prev_pos['szi'])
+                position_size = abs(prev_szi)
+                prev_direction = prev_pos['direction']
+                
+                # Try to determine if this was a liquidation
+                # We'll look for rapid position changes or large unrealized losses
+                is_liquidation = False
+                if prev_pos.get('unrealized_pnl') and prev_pos['unrealized_pnl'] != 'N/A':
+                    try:
+                        pnl = float(prev_pos['unrealized_pnl'])
+                        # If PnL was very negative (>10% loss), might be liquidation
+                        if pnl < -0.1 * abs(float(prev_pos.get('position_value', 0))):
+                            is_liquidation = True
+                    except (ValueError, TypeError):
+                        pass
+                
+                if is_liquidation:
+                    logger.info(f"Potential liquidation detected: {coin} for {wallet_address} ({alias})")
+                    position_alerts.append({
+                        **prev_pos,
+                        'alert_type': 'LIQUIDATION',
+                        'liquidated_size': position_size
+                    })
+                else:
+                    logger.info(f"Position closed: {coin} for {wallet_address} ({alias})")
+                    position_alerts.append({
+                        **prev_pos,
+                        'alert_type': 'POSITION_CLOSED',
+                        'closed_size': position_size
                     })
     
     # Check for TWAP orders (if present in the API response)
     if 'twapOrders' in current_positions:
         twap_alerts = await check_twap_orders(wallet_address, alias, current_positions['twapOrders'])
-        new_position_alerts.extend(twap_alerts)
+        position_alerts.extend(twap_alerts)
     
     # Update stored positions
     previous_positions[wallet_address] = current_position_map
     
-    return new_position_alerts
+    return position_alerts
 
 async def check_twap_orders(wallet_address: str, alias: str, twap_orders: list) -> list:
     """Check for TWAP order status changes."""
@@ -455,6 +503,15 @@ async def send_position_alert(wallet_address: str, alias: str, position: dict):
     elif alert_type == 'POSITION_INCREASE':
         side_emoji = "📈" if position['direction'] == 'LONG' else "📉"
         action_text = "added to"
+    elif alert_type == 'POSITION_DECREASE':
+        side_emoji = "📉" if position['direction'] == 'LONG' else "📈"
+        action_text = "reduced"
+    elif alert_type == 'POSITION_CLOSED':
+        side_emoji = "🔒"
+        action_text = "closed"
+    elif alert_type == 'LIQUIDATION':
+        side_emoji = "🔥"
+        action_text = "was liquidated on"
     elif alert_type == 'TWAP_STARTED':
         side_emoji = "⏰"
         action_text = "started TWAP"
@@ -492,18 +549,30 @@ async def send_position_alert(wallet_address: str, alias: str, position: dict):
         else:
             size_str = "unknown"
     
-    # Additional info for position increases
+    # Additional info for different alert types
     additional_info = ""
-    if alert_type == 'POSITION_INCREASE' and 'size_increase' in position:
-        additional_info = f" (+{position['size_increase']:.2f})"
+    if alert_type == 'POSITION_INCREASE' and 'size_change' in position:
+        additional_info = f" (+{position['size_change']:.2f})"
+    elif alert_type == 'POSITION_DECREASE' and 'size_change' in position:
+        additional_info = f" (-{position['size_change']:.2f}, {position.get('remaining_size', 0):.2f} remaining)"
+    elif alert_type == 'POSITION_CLOSED' and 'closed_size' in position:
+        additional_info = f" (closed {position['closed_size']:.2f})"
+    elif alert_type == 'LIQUIDATION' and 'liquidated_size' in position:
+        additional_info = f" (liquidated {position['liquidated_size']:.2f})"
     elif alert_type == 'TWAP_COMPLETED' and position.get('filled'):
         additional_info = f" (filled: {position['filled']})"
     
-    # Special handling for TWAP messages
+    # Special handling for different alert types
     if alert_type.startswith('TWAP_'):
         message = (
             f"{side_emoji} **{wallet_address[:6]}...{wallet_address[-4:]}** ({alias}) "
             f"just {action_text} **{position['direction']}** on ${position['coin']}"
+            f"{additional_info}."
+        )
+    elif alert_type in ['POSITION_CLOSED', 'LIQUIDATION']:
+        message = (
+            f"{side_emoji} **{wallet_address[:6]}...{wallet_address[-4:]}** ({alias}) "
+            f"just {action_text} **{position['direction']}** position on ${position['coin']}"
             f"{additional_info}."
         )
     else:
