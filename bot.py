@@ -153,6 +153,9 @@ def format_transfer_message(transfer: dict, wallet_address: str, alias: str) -> 
         if transfer_type in ['vaultLeaderCommission', 'rewardsClaim']:
             return None
         
+        # Create clickable alias link
+        clickable_alias = f"[{alias}](https://hypurrscan.io/address/{wallet_address})"
+        
         if transfer_type == 'spotTransfer':
             token = delta.get('token', 'Unknown')
             amount = float(delta.get('amount', 0))
@@ -164,37 +167,37 @@ def format_transfer_message(transfer: dict, wallet_address: str, alias: str) -> 
             if user.lower() == wallet_address.lower():
                 # Outgoing transfer
                 dest_short = f"{destination[:6]}...{destination[-4:]}" if len(destination) > 10 else destination
-                return f"↗️ **{alias}** sent {amount:.2f} {token} (${usd_value:,.2f}) to `{dest_short}`"
+                return f"↗️ **{clickable_alias}** sent {amount:.2f} {token} (${usd_value:,.2f}) to `{dest_short}`"
             elif destination.lower() == wallet_address.lower():
                 # Incoming transfer
                 user_short = f"{user[:6]}...{user[-4:]}" if len(user) > 10 else user
-                return f"↘️ **{alias}** received {amount:.2f} {token} (${usd_value:,.2f}) from `{user_short}`"
+                return f"↘️ **{clickable_alias}** received {amount:.2f} {token} (${usd_value:,.2f}) from `{user_short}`"
         
         elif transfer_type == 'accountClassTransfer':
             usdc_amount = float(delta.get('usdc', 0))
             to_perp = delta.get('toPerp', True)
             
             if to_perp:
-                return f"🔄 **{alias}** transferred ${usdc_amount:,.2f} from Spot to Perp"
+                return f"🔄 **{clickable_alias}** transferred ${usdc_amount:,.2f} from Spot to Perp"
             else:
-                return f"🔄 **{alias}** transferred ${usdc_amount:,.2f} from Perp to Spot"
+                return f"🔄 **{clickable_alias}** transferred ${usdc_amount:,.2f} from Perp to Spot"
         
         elif transfer_type == 'deposit':
             usdc_amount = float(delta.get('usdc', 0))
-            return f"💰 **{alias}** deposited ${usdc_amount:,.2f}"
+            return f"💰 **{clickable_alias}** deposited ${usdc_amount:,.2f}"
         
         elif transfer_type == 'withdraw':
             usdc_amount = float(delta.get('usdc', 0))
-            return f"💸 **{alias}** withdrew ${usdc_amount:,.2f}"
+            return f"💸 **{clickable_alias}** withdrew ${usdc_amount:,.2f}"
         
         # For other types, try to detect buy/sell from spot fills
         # This would require additional API calls to get recent fills
         # For now, return a generic message
-        return f"📊 **{alias}** - {transfer_type}: {delta}"
+        return f"📊 **{clickable_alias}** - {transfer_type}: {delta}"
         
     except Exception as e:
         logger.error(f"Error formatting transfer message: {e}")
-        return f"📊 **{alias}** had a transfer activity"
+        return f"📊 **[{alias}](https://hypurrscan.io/address/{wallet_address})** had a transfer activity"
 
 def format_spot_fill_message(fill: dict, wallet_address: str, alias: str) -> str:
     """Format a spot fill into a buy/sell message."""
@@ -205,16 +208,19 @@ def format_spot_fill_message(fill: dict, wallet_address: str, alias: str) -> str
         quantity = float(fill.get('sz', 0))
         usd_value = price * quantity
         
+        # Create clickable alias link
+        clickable_alias = f"[{alias}](https://hypurrscan.io/address/{wallet_address})"
+        
         if side.lower() == 'b':  # Buy
-            return f"🟢 **{alias}** bought {quantity:.2f} {coin} for ${usd_value:,.2f} @ ${price:.4f}"
+            return f"🟢 **{clickable_alias}** bought {quantity:.2f} {coin} for ${usd_value:,.2f} @ ${price:.4f}"
         elif side.lower() == 's':  # Sell
-            return f"🔴 **{alias}** sold {quantity:.2f} {coin} for ${usd_value:,.2f} @ ${price:.4f}"
+            return f"🔴 **{clickable_alias}** sold {quantity:.2f} {coin} for ${usd_value:,.2f} @ ${price:.4f}"
         else:
-            return f"📊 **{alias}** traded {quantity:.2f} {coin} for ${usd_value:,.2f} @ ${price:.4f}"
+            return f"📊 **{clickable_alias}** traded {quantity:.2f} {coin} for ${usd_value:,.2f} @ ${price:.4f}"
         
     except Exception as e:
         logger.error(f"Error formatting spot fill message: {e}")
-        return f"📊 **{alias}** had a spot trading activity"
+        return f"📊 **[{alias}](https://hypurrscan.io/address/{wallet_address})** had a spot trading activity"
 
 async def check_new_transfers(wallet_address: str, alias: str) -> list:
     """Check for new transfers and spot fills, return formatted messages."""
@@ -303,6 +309,13 @@ async def check_new_positions(wallet_address: str, alias: str) -> list:
     asset_positions = current_positions.get('assetPositions', [])
     logger.debug(f"Found {len(asset_positions)} asset positions for {wallet_address}")
     
+    # Track active TWAP orders to suppress regular position alerts for TWAP-related changes
+    active_twap_coins = set()
+    if 'twapOrders' in current_positions:
+        for twap in current_positions['twapOrders']:
+            if twap.get('status') == 'active':
+                active_twap_coins.add(twap.get('coin', ''))
+    
     # Create current position mapping
     current_position_map = {}
     for pos in asset_positions:
@@ -332,13 +345,19 @@ async def check_new_positions(wallet_address: str, alias: str) -> list:
     else:
         # Check for NEW positions and SIZE INCREASES
         for coin, current_pos in current_position_map.items():
+            # Skip position alerts if there's an active TWAP order for this coin
+            is_twap_related = coin in active_twap_coins
+            
             if coin not in previous_position_map:
                 # Completely new position
-                logger.info(f"New position detected: {coin} for {wallet_address} ({alias})")
-                position_alerts.append({
-                    **current_pos,
-                    'alert_type': 'NEW_POSITION'
-                })
+                if not is_twap_related:
+                    logger.info(f"New position detected: {coin} for {wallet_address} ({alias})")
+                    position_alerts.append({
+                        **current_pos,
+                        'alert_type': 'NEW_POSITION'
+                    })
+                else:
+                    logger.info(f"New position detected for {coin} but suppressed due to active TWAP")
             else:
                 # Position exists - check for size changes
                 prev_szi = float(previous_position_map[coin]['szi'])
@@ -348,24 +367,30 @@ async def check_new_positions(wallet_address: str, alias: str) -> list:
                 if ((prev_szi > 0 and curr_szi > prev_szi) or 
                     (prev_szi < 0 and curr_szi < prev_szi)):
                     size_increase = abs(curr_szi - prev_szi)
-                    logger.info(f"Position size increase detected: {coin} for {wallet_address} ({alias}) - added {size_increase}")
-                    position_alerts.append({
-                        **current_pos,
-                        'alert_type': 'POSITION_INCREASE',
-                        'size_change': size_increase
-                    })
+                    if not is_twap_related:
+                        logger.info(f"Position size increase detected: {coin} for {wallet_address} ({alias}) - added {size_increase}")
+                        position_alerts.append({
+                            **current_pos,
+                            'alert_type': 'POSITION_INCREASE',
+                            'size_change': size_increase
+                        })
+                    else:
+                        logger.info(f"Position size increase detected for {coin} but suppressed due to active TWAP")
                 
                 # Check if position size decreased (partial close)
                 elif ((prev_szi > 0 and curr_szi < prev_szi and curr_szi > 0) or 
                       (prev_szi < 0 and curr_szi > prev_szi and curr_szi < 0)):
                     size_decrease = abs(prev_szi - curr_szi)
-                    logger.info(f"Position size decrease detected: {coin} for {wallet_address} ({alias}) - reduced by {size_decrease}")
-                    position_alerts.append({
-                        **current_pos,
-                        'alert_type': 'POSITION_DECREASE',
-                        'size_change': size_decrease,
-                        'remaining_size': abs(curr_szi)
-                    })
+                    if not is_twap_related:
+                        logger.info(f"Position size decrease detected: {coin} for {wallet_address} ({alias}) - reduced by {size_decrease}")
+                        position_alerts.append({
+                            **current_pos,
+                            'alert_type': 'POSITION_DECREASE',
+                            'size_change': size_decrease,
+                            'remaining_size': abs(curr_szi)
+                        })
+                    else:
+                        logger.info(f"Position size decrease detected for {coin} but suppressed due to active TWAP")
         
         # Check for CLOSED positions and LIQUIDATIONS
         for coin, prev_pos in previous_position_map.items():
@@ -582,7 +607,8 @@ async def send_position_alert(wallet_address: str, alias: str, position: dict):
                 entry_price = f" @ ${entry_px:,.4f}"
             except (ValueError, TypeError):
                 pass
-        additional_info = f" (+{position['size_change']:.2f}){entry_price}"
+        # Show the added amount more clearly
+        additional_info = f" (+{position['size_change']:.2f} added){entry_price}"
     elif alert_type == 'POSITION_DECREASE' and 'size_change' in position:
         additional_info = f" (-{position['size_change']:.2f}, {position.get('remaining_size', 0):.2f} remaining)"
     elif alert_type == 'POSITION_CLOSED' and 'closed_size' in position:
@@ -607,23 +633,47 @@ async def send_position_alert(wallet_address: str, alias: str, position: dict):
     
     # Special handling for different alert types
     if alert_type.startswith('TWAP_'):
+        # For TWAP orders, show TWAP-specific size information
+        twap_size = position.get('size', position.get('szi', 'unknown'))
+        try:
+            twap_size_val = abs(float(twap_size))
+            twap_size_str = f"{twap_size_val:.2f}"
+        except (ValueError, TypeError):
+            twap_size_str = str(twap_size)
+        
         message = (
-            f"{side_emoji} **{wallet_address[:6]}...{wallet_address[-4:]}** ({alias}) "
-            f"just {action_text} **{position['direction']}** on ${position['coin']}"
-            f"{additional_info}."
+            f"{side_emoji} **{wallet_address[:6]}...{wallet_address[-4:]}** ([{alias}](https://hypurrscan.io/address/{wallet_address})) "
+            f"just {action_text} **{position['direction']}** on ${position['coin']} "
+            f"(TWAP size: {twap_size_str}){additional_info}."
         )
     elif alert_type in ['POSITION_CLOSED', 'LIQUIDATION']:
         message = (
-            f"{side_emoji} **{wallet_address[:6]}...{wallet_address[-4:]}** ({alias}) "
+            f"{side_emoji} **{wallet_address[:6]}...{wallet_address[-4:]}** ([{alias}](https://hypurrscan.io/address/{wallet_address})) "
             f"just {action_text} **{position['direction']}** position on ${position['coin']}"
             f"{additional_info}."
         )
     else:
-        message = (
-            f"{side_emoji} **{wallet_address[:6]}...{wallet_address[-4:]}** ({alias}) "
-            f"just {action_text} **{position['direction']}** on ${position['coin']} "
-            f"with {size_str} size{additional_info}."
-        )
+        # Format message differently based on alert type for clarity
+        if alert_type == 'POSITION_INCREASE':
+            # For position increases, show the added amount first, then total
+            added_amount = position.get('size_change', 0)
+            message = (
+                f"{side_emoji} **{wallet_address[:6]}...{wallet_address[-4:]}** ([{alias}](https://hypurrscan.io/address/{wallet_address})) "
+                f"just added **{added_amount:.2f}** to **{position['direction']}** on ${position['coin']} "
+                f"(total position: {size_str}){additional_info.replace(f'(+{added_amount:.2f} added)', '')}."
+            )
+        elif alert_type == 'NEW_POSITION':
+            message = (
+                f"{side_emoji} **{wallet_address[:6]}...{wallet_address[-4:]}** ([{alias}](https://hypurrscan.io/address/{wallet_address})) "
+                f"just {action_text} **{position['direction']}** on ${position['coin']} "
+                f"with {size_str} size{additional_info}."
+            )
+        else:
+            message = (
+                f"{side_emoji} **{wallet_address[:6]}...{wallet_address[-4:]}** ([{alias}](https://hypurrscan.io/address/{wallet_address})) "
+                f"just {action_text} **{position['direction']}** on ${position['coin']} "
+                f"with {size_str} size{additional_info}."
+            )
     
     # Send to all users tracking this wallet
     for user_id in users_to_notify:
