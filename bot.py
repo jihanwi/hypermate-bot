@@ -655,12 +655,53 @@ async def send_position_alert(wallet_address: str, alias: str, position: dict):
     else:
         # Format message differently based on alert type for clarity
         if alert_type == 'POSITION_INCREASE':
-            # For position increases, show the added amount first, then total
+            # For position increases, show detailed breakdown
             added_amount = position.get('size_change', 0)
+            
+            # Calculate USD value of added amount and current price
+            added_usd_value = ""
+            current_price = ""
+            avg_entry_price = ""
+            
+            # Try to get average entry price
+            if position.get('entry_px') and position['entry_px'] != 'N/A':
+                try:
+                    entry_px = float(position['entry_px'])
+                    avg_entry_price = f"${entry_px:,.4f}".rstrip('0').rstrip('.')
+                except (ValueError, TypeError):
+                    avg_entry_price = "N/A"
+            
+            # Calculate current price from position value and size
+            if position.get('position_value') and position['position_value'] != 'N/A' and position.get('szi'):
+                try:
+                    pos_value = abs(float(position['position_value']))
+                    total_size = abs(float(position['szi']))
+                    if total_size > 0:
+                        current_px = pos_value / total_size
+                        current_price = f"${current_px:,.4f}".rstrip('0').rstrip('.')
+                        # Calculate USD value of added amount
+                        added_value = added_amount * current_px
+                        added_usd_value = f"${added_value:,.2f}"
+                except (ValueError, TypeError, ZeroDivisionError):
+                    pass
+            
+            # Build the enhanced message
+            added_info = f"**{added_amount:.2f}**"
+            if added_usd_value:
+                added_info += f" ({added_usd_value})"
+            
+            price_info = ""
+            if current_price:
+                price_info = f" at {current_price}"
+            
+            position_details = f"Total Position Size: {size_str}"
+            if avg_entry_price and avg_entry_price != "N/A":
+                position_details += f", Average Entry: {avg_entry_price}"
+            
             message = (
                 f"{side_emoji} **{wallet_address[:6]}...{wallet_address[-4:]}** ([{alias}](https://hypurrscan.io/address/{wallet_address})) "
-                f"just added **{added_amount:.2f}** to **{position['direction']}** on ${position['coin']} "
-                f"(total position: {size_str}){additional_info.replace(f'(+{added_amount:.2f} added)', '')}."
+                f"just added {added_info} to **{position['direction']}** on ${position['coin']}"
+                f"{price_info} ({position_details})."
             )
         elif alert_type == 'NEW_POSITION':
             message = (
