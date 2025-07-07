@@ -21,6 +21,9 @@ class Config:
     # Logging Configuration
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     
+    # Wallet Encryption Configuration
+    WALLET_ENCRYPTION_KEY: str = os.getenv("WALLET_ENCRYPTION_KEY")
+    
     # Development settings
     DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
     
@@ -37,4 +40,6 @@ class Config:
     def validate_config(cls) -> None:
         """Validate that required configuration is present"""
         if not cls.BOT_TOKEN:
-            raise ValueError("BOT_TOKEN environment variable is required") 
+            raise ValueError("BOT_TOKEN environment variable is required")
+        if not cls.WALLET_ENCRYPTION_KEY:
+            raise ValueError("WALLET_ENCRYPTION_KEY environment variable is required") 

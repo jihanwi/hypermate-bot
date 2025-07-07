@@ -15,6 +15,15 @@ from typing import Dict, List, Set
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from config import Config
+from eth_account import Account
+from cryptography.fernet import Fernet
+import secrets
+import base64
+from hyperliquid.info import Info
+from hyperliquid.exchange import Exchange
+from hyperliquid.utils import constants
+import hashlib
+import aiosqlite
 
 # Load environment variables
 Config.load_env()
@@ -51,6 +60,81 @@ last_transfer_timestamps: Dict[str, int] = {}
 # Track if we've done the initial transfer scan for each wallet (to avoid alerting on existing transfers)
 initial_transfer_scan_done: Dict[str, bool] = {}
 
+# Store user-generated wallets (encrypted private keys)
+# Structure: {user_id: {"address": "0x...", "encrypted_key": "encrypted_private_key"}}
+user_generated_wallets: Dict[int, Dict[str, str]] = {}
+
+# Data file for generated wallets
+GENERATED_WALLETS_FILE = 'generated_wallets.json'
+
+# Data file for secure wallet storage
+SECURE_WALLETS_FILE = 'wallets_secure.json'
+
+# Database file
+DATABASE_FILE = 'hypermate.db'
+
+# Encryption setup for private keys
+try:
+    # Load encryption key from environment
+    encryption_key = Config.WALLET_ENCRYPTION_KEY
+    if not encryption_key:
+        raise ValueError("WALLET_ENCRYPTION_KEY environment variable is required")
+    
+    # Ensure the key is properly formatted for Fernet
+    if len(encryption_key) != 44:  # Base64 encoded 32-byte key
+        # If it's not a proper Fernet key, hash it to create one
+        key_bytes = hashlib.sha256(encryption_key.encode()).digest()
+        encryption_key = base64.urlsafe_b64encode(key_bytes).decode()
+    
+    fernet = Fernet(encryption_key)
+    logger.info("Encryption initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize encryption: {e}")
+    raise ValueError(f"Invalid encryption configuration: {e}")
+
+async def init_db() -> None:
+    """Initialize SQLite database and create tables if they don't exist."""
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            # Create tracked_wallets table
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS tracked_wallets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT,
+                    wallet_address TEXT,
+                    alias TEXT,
+                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Create created_wallets table
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS created_wallets (
+                    user_id TEXT PRIMARY KEY,
+                    wallet_address TEXT,
+                    encrypted_private_key TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Create indexes for better performance
+            await db.execute('''
+                CREATE INDEX IF NOT EXISTS idx_tracked_wallets_user_id 
+                ON tracked_wallets(user_id)
+            ''')
+            
+            await db.execute('''
+                CREATE INDEX IF NOT EXISTS idx_tracked_wallets_address 
+                ON tracked_wallets(wallet_address)
+            ''')
+            
+            await db.commit()
+            logger.info("Database initialized successfully")
+            
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
+        raise ValueError(f"Database initialization failed: {e}")
+
 # Global application instance for sending messages
 app_instance = None
 
@@ -81,6 +165,177 @@ def save_wallets() -> None:
             logger.info(f"Saved wallet data to {DATA_FILE}")
     except Exception as e:
         logger.error(f"Error saving wallet data: {e}")
+
+def load_generated_wallets() -> None:
+    """Load generated wallet data from JSON file."""
+    global user_generated_wallets
+    try:
+        if os.path.exists(GENERATED_WALLETS_FILE):
+            with open(GENERATED_WALLETS_FILE, 'r') as f:
+                # JSON keys are strings, but we need integer user_ids
+                data = json.load(f)
+                user_generated_wallets = {int(k): v for k, v in data.items()}
+                logger.info(f"Loaded {len(user_generated_wallets)} generated wallets from {GENERATED_WALLETS_FILE}")
+        else:
+            user_generated_wallets = {}
+            logger.info(f"No existing generated wallets file found")
+    except Exception as e:
+        logger.error(f"Error loading generated wallets: {e}")
+        user_generated_wallets = {}
+
+def save_generated_wallets() -> None:
+    """Save generated wallet data to JSON file."""
+    try:
+        with open(GENERATED_WALLETS_FILE, 'w') as f:
+            # Convert integer user_ids to strings for JSON serialization
+            data = {str(k): v for k, v in user_generated_wallets.items()}
+            json.dump(data, f, indent=2)
+            logger.info(f"Saved generated wallets to {GENERATED_WALLETS_FILE}")
+    except Exception as e:
+        logger.error(f"Error saving generated wallets: {e}")
+
+def load_secure_wallets() -> None:
+    """Load securely encrypted wallet data from JSON file."""
+    global user_generated_wallets
+    try:
+        if os.path.exists(SECURE_WALLETS_FILE):
+            with open(SECURE_WALLETS_FILE, 'r') as f:
+                data = json.load(f)
+                user_generated_wallets = {int(k): v for k, v in data.items()}
+                logger.info(f"Loaded {len(user_generated_wallets)} secure wallets from {SECURE_WALLETS_FILE}")
+        else:
+            user_generated_wallets = {}
+            logger.info(f"No existing secure wallets file found")
+    except Exception as e:
+        logger.error(f"Error loading secure wallets: {e}")
+        user_generated_wallets = {}
+
+def save_secure_wallets() -> None:
+    """Save securely encrypted wallet data to JSON file."""
+    try:
+        with open(SECURE_WALLETS_FILE, 'w') as f:
+            # Convert integer user_ids to strings for JSON serialization
+            data = {str(k): v for k, v in user_generated_wallets.items()}
+            json.dump(data, f, indent=2)
+            logger.info(f"Saved secure wallets to {SECURE_WALLETS_FILE}")
+    except Exception as e:
+        logger.error(f"Error saving secure wallets: {e}")
+
+def encrypt_private_key(private_key: str) -> str:
+    """Encrypt a private key using Fernet encryption."""
+    try:
+        encrypted_key = fernet.encrypt(private_key.encode()).decode()
+        return encrypted_key
+    except Exception as e:
+        logger.error(f"Error encrypting private key: {e}")
+        raise ValueError(f"Failed to encrypt private key: {e}")
+
+def decrypt_private_key(encrypted_key: str) -> str:
+    """Decrypt a private key using Fernet encryption."""
+    try:
+        decrypted_key = fernet.decrypt(encrypted_key.encode()).decode()
+        return decrypted_key
+    except Exception as e:
+        logger.error(f"Error decrypting private key: {e}")
+        raise ValueError(f"Failed to decrypt private key: {e}")
+
+async def store_user_wallet(user_id: int, address: str, private_key: str) -> None:
+    """Store a user's wallet with encrypted private key in database."""
+    try:
+        encrypted_key = encrypt_private_key(private_key)
+        user_id_str = str(user_id)  # Convert to string for database storage
+        
+        # Store in database
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            await db.execute(
+                """INSERT OR REPLACE INTO created_wallets 
+                   (user_id, wallet_address, encrypted_private_key) 
+                   VALUES (?, ?, ?)""",
+                (user_id_str, address, encrypted_key)
+            )
+            await db.commit()
+        
+        logger.info(f"Stored encrypted wallet for user {user_id}: {address}")
+    except Exception as e:
+        logger.error(f"Error storing wallet for user {user_id}: {e}")
+        raise
+
+async def get_user_private_key(user_id: int) -> str:
+    """Retrieve and decrypt a user's private key from database."""
+    try:
+        user_id_str = str(user_id)  # Convert to string for database storage
+        
+        # Get from database
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            cur = await db.execute(
+                "SELECT encrypted_private_key FROM created_wallets WHERE user_id = ?",
+                (user_id_str,)
+            )
+            result = await cur.fetchone()
+            
+            if not result:
+                raise ValueError(f"No wallet found for user {user_id}")
+            
+            encrypted_key = result[0]
+            private_key = decrypt_private_key(encrypted_key)
+            return private_key
+    except Exception as e:
+        logger.error(f"Error retrieving private key for user {user_id}: {e}")
+        raise
+
+def migrate_old_wallets() -> None:
+    """Migrate wallets from old generated_wallets.json to secure storage."""
+    try:
+        if os.path.exists(GENERATED_WALLETS_FILE) and not os.path.exists(SECURE_WALLETS_FILE):
+            logger.info("Migrating wallets from old storage to secure storage...")
+            
+            # Load old wallet data
+            with open(GENERATED_WALLETS_FILE, 'r') as f:
+                old_data = json.load(f)
+            
+            # Migrate each wallet
+            migrated_count = 0
+            for user_id_str, wallet_data in old_data.items():
+                try:
+                    user_id = int(user_id_str)
+                    address = wallet_data.get('address')
+                    encrypted_key = wallet_data.get('encrypted_key')
+                    
+                    if address and encrypted_key:
+                        # Try to decrypt with the old key and re-encrypt with new key
+                        try:
+                            # First try to decrypt (this may fail if the old encryption was different)
+                            private_key = fernet.decrypt(encrypted_key.encode()).decode()
+                            
+                            # Store using new secure storage
+                            store_user_wallet(user_id, address, private_key)
+                            migrated_count += 1
+                            logger.info(f"Migrated wallet for user {user_id}: {address}")
+                        except Exception as decrypt_error:
+                            logger.warning(f"Could not decrypt wallet for user {user_id}: {decrypt_error}")
+                            # Store the encrypted key as-is for manual recovery
+                            user_generated_wallets[user_id] = {
+                                "address": address,
+                                "encrypted_key": encrypted_key
+                            }
+                            logger.info(f"Preserved encrypted wallet for user {user_id} (manual recovery needed)")
+                            
+                except Exception as user_error:
+                    logger.error(f"Error migrating wallet for user {user_id_str}: {user_error}")
+            
+            # Save migrated data
+            if migrated_count > 0:
+                save_secure_wallets()
+                logger.info(f"Successfully migrated {migrated_count} wallets to secure storage")
+                
+                # Backup old file and remove it
+                backup_file = f"{GENERATED_WALLETS_FILE}.backup"
+                os.rename(GENERATED_WALLETS_FILE, backup_file)
+                logger.info(f"Old wallet file backed up to {backup_file}")
+            
+    except Exception as e:
+        logger.error(f"Error during wallet migration: {e}")
+        # Don't raise - allow bot to continue even if migration fails
 
 async def get_spot_transfers(wallet_address: str) -> list:
     """Query Hyperliquid API for spot transfers."""
@@ -837,8 +1092,9 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "❌ *Please provide an alias.*\n\n"
             "*Usage:* /stats <alias>\n\n"
             "*Examples:*\n"
-            "• /stats MyWallet\n"
+            "• /stats WhaleTrader\n"
             "• /stats Big Trader\n\n"
+            "📝 *Note:* Use `/mywallet` for your own HyperMate wallet!\n"
             "Use /list to see your tracked wallets and their aliases.",
             parse_mode='Markdown'
         )
@@ -852,7 +1108,9 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(
             "📭 *No wallets tracked yet.*\n\n"
             "Add a wallet first with:\n"
-            "• /add <wallet_address> <alias>",
+            "• /add <wallet_address> <alias>\n\n"
+            "📝 *Note:* Use `/mywallet` for your own HyperMate wallet!\n"
+            "This is for tracking external wallets.",
             parse_mode='Markdown'
         )
         return
@@ -961,8 +1219,9 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             "❌ **Please provide an alias.**\n\n"
             "**Usage:** `/positions <alias>`\n\n"
             "**Examples:**\n"
-            "• `/positions MyWallet`\n"
+            "• `/positions WhaleTrader`\n"
             "• `/positions Big Trader`\n\n"
+            "📝 **Note:** Use `/mywallet` for your own HyperMate wallet!\n"
             "Use `/list` to see your tracked wallets and their aliases.",
             parse_mode='Markdown'
         )
@@ -975,8 +1234,13 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if user_id not in user_wallets or not user_wallets[user_id]:
         await update.message.reply_text(
             "📭 **No wallets tracked yet.**\n\n"
-            "Add a wallet first with:\n"
-            "• `/add <wallet_address> <alias>`",
+            "Add your first wallet with:\n"
+            "• `/add <wallet_address> <alias>`\n\n"
+            "**Examples:**\n"
+            "• `/add 0x1234567890abcdef1234567890abcdef12345678 WhaleTrader`\n"
+            "• `/add 0x1234567890abcdef1234567890abcdef12345678 Big Trader`\n\n"
+            "📝 **Note:** Use `/mywallet` for your own HyperMate wallet!\n"
+            "This is for tracking external wallets.",
             parse_mode='Markdown'
         )
         return
@@ -1172,6 +1436,429 @@ async def monitor_positions_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in position monitoring: {e}")
 
+async def generate_wallet() -> tuple[str, str]:
+    """Generate a new Ethereum wallet and return (private_key, address)."""
+    # Generate a new account
+    account = Account.create()
+    private_key = account.key.hex()
+    address = account.address
+    
+    return private_key, address
+
+async def register_wallet_with_referral(private_key: str, address: str) -> bool:
+    """Register the wallet with Hyperliquid using referral code."""
+    try:
+        # Create an Account object from the private key
+        account = Account.from_key(private_key)
+        
+        # Try to create exchange instance and set referral
+        try:
+            # Method 1: Try with Account object
+            exchange = Exchange(account, constants.MAINNET_API_URL)
+            result = exchange.set_referrer("0XWIJI")
+            
+            # Check if the result indicates success
+            if isinstance(result, dict) and result.get('status') == 'err':
+                if 'does not exist' in result.get('response', ''):
+                    logger.info(f"Wallet {address} not yet registered with Hyperliquid - referral will be set on first transaction")
+                    return False  # Expected for new wallets
+                else:
+                    logger.warning(f"Referral registration failed for {address}: {result}")
+                    return False
+            else:
+                logger.info(f"Referral registration successful for {address}: {result}")
+                return True
+                
+        except Exception as method1_error:
+            logger.debug(f"Method 1 (Account object) failed: {method1_error}")
+            
+            try:
+                # Method 2: Try with clean hex string
+                clean_private_key = private_key.replace('0x', '')
+                exchange = Exchange(clean_private_key, constants.MAINNET_API_URL)
+                result = exchange.set_referrer("0XWIJI")
+                
+                # Check result
+                if isinstance(result, dict) and result.get('status') == 'err':
+                    if 'does not exist' in result.get('response', ''):
+                        logger.info(f"Wallet {address} not yet registered with Hyperliquid - referral will be set on first transaction")
+                        return False
+                    else:
+                        logger.warning(f"Referral registration failed for {address}: {result}")
+                        return False
+                else:
+                    logger.info(f"Referral registration successful for {address}: {result}")
+                    return True
+                    
+            except Exception as method2_error:
+                logger.debug(f"Method 2 (hex string) failed: {method2_error}")
+                logger.info(f"Referral registration not possible for new wallet {address} - will be applied on first use")
+                return False
+            
+    except Exception as e:
+        logger.error(f"Error in referral registration for {address}: {e}")
+        return False
+
+async def retry_referral_registration(address: str, private_key: str) -> bool:
+    """Retry setting referral code for a wallet that's now active."""
+    try:
+        account = Account.from_key(private_key)
+        exchange = Exchange(account, constants.MAINNET_API_URL)
+        result = exchange.set_referrer("0XWIJI")
+        
+        if isinstance(result, dict) and result.get('status') == 'err':
+            return False
+        else:
+            logger.info(f"Referral code successfully set for active wallet {address}: {result}")
+            return True
+    except Exception as e:
+        logger.debug(f"Referral retry failed for {address}: {e}")
+        return False
+
+async def createwallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Check for existing wallet and prompt for confirmation if needed."""
+    user_id = str(update.effective_user.id)  # Convert to string to match database storage
+    
+    try:
+        # Check if user already has a generated wallet in database
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            cur = await db.execute(
+                "SELECT wallet_address FROM created_wallets WHERE user_id = ?",
+                (user_id,)
+            )
+            existing_wallet = await cur.fetchone()
+            
+            if existing_wallet:
+                existing_address = existing_wallet[0]
+                await update.message.reply_text(
+                    f"⚠️ You already have a wallet: {existing_address}\n\n"
+                    f"Creating a new one will overwrite the existing wallet and cannot be undone.\n\n"
+                    f"If you still want to proceed, use /confirmcreate.",
+                    parse_mode='Markdown'
+                )
+                return
+        
+        # No existing wallet, create one directly
+        await generate_new_wallet_for_user(update, int(user_id))
+        
+    except Exception as e:
+        logger.error(f"Error checking existing wallet for user {user_id}: {e}")
+        await update.message.reply_text(
+            "❌ **Error checking wallet status.**\n\n"
+            "Please try again later.",
+            parse_mode='Markdown'
+        )
+
+async def confirmcreate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Generate a new wallet after user confirmation."""
+    user_id = update.effective_user.id
+    
+    # Generate new wallet (this will replace any existing one)
+    await generate_new_wallet_for_user(update, user_id)
+
+async def generate_new_wallet_for_user(update: Update, user_id: int) -> None:
+    """Generate a new Hyperliquid wallet for the user."""
+    
+    # Send initial message
+    status_message = await update.message.reply_text(
+        "🔄 **Generating new Hyperliquid wallet...**\n\n"
+        "⏳ This may take a few seconds...",
+        parse_mode='Markdown'
+    )
+    
+    try:
+        # Generate new wallet
+        private_key, address = await generate_wallet()
+        
+        # Update status
+        await status_message.edit_text(
+            "🔄 **Wallet generated! Registering with Hyperliquid...**\n\n"
+            f"Address: `{address}`\n"
+            "⏳ Setting up referral link...",
+            parse_mode='Markdown'
+        )
+        
+        # Register wallet with referral
+        registration_success = await register_wallet_with_referral(private_key, address)
+        
+        # Store wallet using secure storage
+        await store_user_wallet(user_id, address, private_key)
+        
+        # Create success message
+        success_message = (
+            f"✅ New wallet created: {address}\n\n"
+            f"Make sure to back it up using /exportkey if needed."
+        )
+        
+        await status_message.edit_text(success_message, parse_mode='Markdown')
+        
+        logger.info(f"User {user_id} created new wallet {address}")
+        
+    except Exception as e:
+        logger.error(f"Error creating wallet for user {user_id}: {e}")
+        await status_message.edit_text(
+            f"❌ **Wallet Creation Failed**\n\n"
+            f"An error occurred while creating your wallet. Please try again later.\n"
+            f"If the problem persists, please contact support.",
+            parse_mode='Markdown'
+        )
+
+async def exportkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Export the user's private key securely."""
+    user_id = update.effective_user.id
+    user_id_str = str(user_id)  # Convert to string for database storage
+    
+    try:
+        # Check if user has a generated wallet in database
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            cur = await db.execute(
+                "SELECT wallet_address FROM created_wallets WHERE user_id = ?",
+                (user_id_str,)
+            )
+            result = await cur.fetchone()
+            
+            if not result:
+                await update.message.reply_text(
+                    "❌ **No Generated Wallet Found**\n\n"
+                    "You don't have a wallet generated through this bot.\n"
+                    "Use `/createwallet` to generate a new wallet.",
+                    parse_mode='Markdown'
+                )
+                return
+            
+            address = result[0]
+        
+        # Get private key using secure storage
+        private_key = await get_user_private_key(user_id)
+        
+        # Send private key in a secure format
+        private_key_message = (
+            f"🔐 **Private Key Export**\n\n"
+            f"**Address:** `{address}`\n"
+            f"**Private Key:** `{private_key}`\n\n"
+            f"⚠️ **CRITICAL SECURITY WARNINGS:**\n"
+            f"• **NEVER share this private key with anyone**\n"
+            f"• Store it in a secure password manager\n"
+            f"• Anyone with this key can access your funds\n"
+            f"• Delete this message after backing up safely\n\n"
+            f"🔒 **Recommended Storage:**\n"
+            f"• Hardware wallet import\n"
+            f"• Encrypted password manager\n"
+            f"• Secure offline storage\n\n"
+            f"**This message will self-destruct in 5 minutes for security.**"
+        )
+        
+        # Send the private key message
+        key_message = await update.message.reply_text(private_key_message, parse_mode='Markdown')
+        
+        # Schedule message deletion after 5 minutes
+        async def delete_key_message():
+            await asyncio.sleep(300)  # 5 minutes
+            try:
+                await key_message.delete()
+                logger.info(f"Deleted private key message for user {user_id}")
+            except Exception as e:
+                logger.warning(f"Could not delete private key message: {e}")
+        
+        # Start the deletion task
+        asyncio.create_task(delete_key_message())
+        
+        logger.info(f"User {user_id} exported private key for wallet {address}")
+        
+    except Exception as e:
+        logger.error(f"Error exporting key for user {user_id}: {e}")
+        await update.message.reply_text(
+            "❌ **Export Failed**\n\n"
+            "An error occurred while retrieving your private key.\n"
+            "Please try again later.",
+            parse_mode='Markdown'
+        )
+
+async def mywallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Display the user's HyperMate wallet information and balances."""
+    user_id = update.effective_user.id
+    user_id_str = str(user_id)  # Convert to string for database storage
+    
+    try:
+        # Check if user has a generated wallet in database
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            cur = await db.execute(
+                "SELECT wallet_address FROM created_wallets WHERE user_id = ?",
+                (user_id_str,)
+            )
+            result = await cur.fetchone()
+            
+            if not result:
+                await update.message.reply_text(
+                    "❌ **No Wallet Found**\n\n"
+                    "You haven't created a wallet yet. Use `/createwallet` to get started.",
+                    parse_mode='Markdown'
+                )
+                return
+            
+            address = result[0]
+        
+        # Send loading message
+        loading_message = await update.message.reply_text(
+            "🔄 **Fetching wallet information...**",
+            parse_mode='Markdown'
+        )
+        
+        # Query the API for user state
+        user_state = await get_user_positions(address)
+        
+        if not user_state:
+            await loading_message.edit_text(
+                "❌ **Failed to fetch wallet data.**\n\n"
+                "There was an error querying the Hyperliquid API.\n"
+                "Please try again later.",
+                parse_mode='Markdown'
+            )
+            return
+        
+        # Extract margin balance
+        margin_balance = "N/A"
+        if 'marginSummary' in user_state:
+            margin_summary = user_state['marginSummary']
+            # Try different possible field names for account value
+            for field in ['accountValue', 'usdcValue', 'totalValue']:
+                if field in margin_summary:
+                    try:
+                        balance = float(margin_summary[field])
+                        margin_balance = f"${balance:,.2f}"
+                        break
+                    except (ValueError, TypeError):
+                        continue
+        
+        # Extract futures positions
+        futures_text = ""
+        futures_count = 0
+        
+        if 'assetPositions' in user_state:
+            for pos in user_state['assetPositions']:
+                if 'position' in pos:
+                    position = pos['position']
+                    coin = position.get('coin', 'Unknown')
+                    szi = position.get('szi', '0')
+                    entry_px = position.get('entryPx', 'N/A')
+                    position_value = position.get('positionValue', 'N/A')
+                    
+                    # Only show positions with non-zero size
+                    if float(szi) != 0:
+                        side = "LONG" if float(szi) > 0 else "SHORT"
+                        side_emoji = "📈" if side == "LONG" else "📉"
+                        
+                        # Format position value
+                        if position_value != 'N/A':
+                            try:
+                                pos_val = float(position_value)
+                                size_str = f"${pos_val:,.0f}"
+                            except (ValueError, TypeError):
+                                size_str = f"{abs(float(szi)):.2f}"
+                        else:
+                            size_str = f"{abs(float(szi)):.2f}"
+                        
+                        # Format entry price
+                        if entry_px != 'N/A':
+                            try:
+                                entry_price = float(entry_px)
+                                entry_str = f"${entry_price:,.4f}".rstrip('0').rstrip('.')
+                            except (ValueError, TypeError):
+                                entry_str = "N/A"
+                        else:
+                            entry_str = "N/A"
+                        
+                        # Format unrealized PnL
+                        unrealized_pnl = position.get('unrealizedPnl', 'N/A')
+                        if unrealized_pnl != 'N/A':
+                            try:
+                                pnl_val = float(unrealized_pnl)
+                                pnl_emoji = "🟢" if pnl_val >= 0 else "🔴"
+                                pnl_str = f"{pnl_emoji} ${pnl_val:,.2f}"
+                            except (ValueError, TypeError):
+                                pnl_str = "N/A"
+                        else:
+                            pnl_str = "N/A"
+                        
+                        futures_text += f"• {side_emoji} **{side}** ${coin} — Size: {size_str} — Entry: {entry_str} — PnL: {pnl_str}\n"
+                        futures_count += 1
+        
+        if futures_count == 0:
+            futures_text = "• No open futures positions"
+        
+        # Extract spot balances
+        spot_balances_text = ""
+        total_spot_value = 0
+        
+        if 'spotPositions' in user_state and user_state['spotPositions']:
+            spot_balances = []
+            for spot_pos in user_state['spotPositions']:
+                coin = spot_pos.get('coin', 'Unknown')
+                total = spot_pos.get('total', '0')
+                entry_ntl = spot_pos.get('entryNtl', '0')
+                
+                try:
+                    total_val = float(total)
+                    entry_ntl_val = float(entry_ntl)
+                    
+                    # Calculate USD value using entry notional
+                    usd_val = entry_ntl_val if entry_ntl_val > 0 else 0
+                    
+                    # Only show spot assets with >$0.01 value and non-zero total
+                    if usd_val > 0.01 and total_val > 0:
+                        spot_balances.append(f"• {coin}: {total_val:.4f} (${usd_val:,.2f})")
+                        total_spot_value += usd_val
+                except (ValueError, TypeError):
+                    continue
+            
+            if spot_balances:
+                spot_balances_text = "\n".join(spot_balances)
+            else:
+                spot_balances_text = "• No spot assets"
+        else:
+            spot_balances_text = "• No spot assets"
+        
+        # Format wallet address (shortened)
+        address_short = f"{address[:6]}...{address[-4:]}"
+        
+        # Calculate total portfolio value
+        portfolio_section = ""
+        if margin_balance != "N/A":
+            try:
+                margin_val = float(margin_balance.replace('$', '').replace(',', ''))
+                total_portfolio = margin_val + total_spot_value
+                portfolio_section = f"📊 **Total Portfolio Value:** ${total_portfolio:,.2f}"
+            except (ValueError, TypeError):
+                portfolio_section = f"📊 **Spot Value:** ${total_spot_value:,.2f}"
+        else:
+            portfolio_section = f"📊 **Spot Value:** ${total_spot_value:,.2f}"
+        
+        # Build the message
+        message = (
+            f"💳 **Your HyperMate Wallet**\n\n"
+            f"🔐 **Address:** `{address_short}`\n"
+            f"🔗 [View on Hypurrscan](https://hypurrscan.io/address/{address})\n\n"
+            f"💰 **Margin Balance:** {margin_balance}\n\n"
+            f"📈 **Futures Positions:**\n{futures_text}\n\n"
+            f"🪙 **Spot Assets:**\n{spot_balances_text}\n\n"
+            f"{portfolio_section}\n\n"
+            f"🔧 **Wallet Management:**\n"
+            f"• Export key: `/exportkey`\n"
+            f"• Refresh wallet: `/mywallet`"
+        )
+        
+        await loading_message.edit_text(message, parse_mode='Markdown')
+        logger.info(f"User {user_id} viewed wallet information for {address}")
+        
+    except Exception as e:
+        logger.error(f"Error fetching wallet info for user {user_id}: {e}")
+        await update.message.reply_text(
+            "❌ **Error Loading Wallet**\n\n"
+            "An error occurred while fetching your wallet information.\n"
+            "Please try again later.",
+            parse_mode='Markdown'
+        )
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a welcome message when the command /start is issued."""
     welcome_message = """🚀 *Welcome to HyperMate!*
@@ -1179,9 +1866,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 Your ultimate companion for Hyperliquid trading and wallet tracking.
 
 *What is HyperMate?*
-HyperMate is a powerful Telegram bot designed to help you navigate the Hyperliquid ecosystem, including both HyperCore and HyperEVM.
+HyperMate is a powerful Telegram bot designed to help you navigate the Hyperliquid ecosystem, including both HyperCore and HyperEVM. Create new wallets with built-in referral benefits or track existing ones!
 
 *🎯 Current Features:*
+• 🔐 **NEW:** Wallet creation with referral benefits
 • 📊 Real-time wallet tracking with custom aliases
 • 📈📉 Perpetual position alerts (LONG/SHORT positions)
 • 🟢🔴 Spot trading notifications (BUY/SELL orders)
@@ -1190,8 +1878,15 @@ HyperMate is a powerful Telegram bot designed to help you navigate the Hyperliqu
 • 🔄 TWAP order tracking
 • 📋 Position and balance viewing
 • 📊 Trading statistics (PnL, volume)
+• 🔒 Secure private key management
 
 *🤖 Available Commands:*
+
+*Wallet Creation:*
+• `/createwallet` - Generate a new Hyperliquid wallet  
+• `/confirmcreate` - Confirm creation of new wallet (replaces existing)
+• `/exportkey` - Export your private key securely
+• `/mywallet` - View your HyperMate wallet & balances
 
 *Wallet Management:*
 • `/add <wallet_address> <alias>` - Add a wallet to track
@@ -1203,9 +1898,10 @@ HyperMate is a powerful Telegram bot designed to help you navigate the Hyperliqu
 • `/stats <alias>` - Show trading statistics
 
 *📝 Quick Start:*
-1. Add a wallet: `/add 0x1234...5678 MyWallet`
-2. Check positions: `/positions MyWallet`
-3. View stats: `/stats MyWallet`
+1. **Create your wallet:** `/createwallet` (generates with referral benefits)
+2. **Check your wallet:** `/mywallet` (view balance, positions & manage)
+3. **Track external wallets:** `/add 0x1234...5678 WhaleTrader`
+4. **Monitor external activity:** `/positions WhaleTrader` • `/stats WhaleTrader`
 
 *🔔 Real-Time Alerts:*
 Once you add wallets, you'll automatically receive notifications for:
@@ -1244,18 +1940,12 @@ def is_valid_wallet_address(address: str) -> bool:
 
 async def add_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Add a wallet address to the user's tracking list."""
-    user_id = update.effective_user.id
+    user_id = str(update.effective_user.id)  # Convert to string to match database storage
     
     # Check if wallet address and alias are provided
     if len(context.args) < 2:
         await update.message.reply_text(
-            "❌ Please provide both a wallet address and an alias.\n\n"
-            "**Usage:** `/add <wallet_address> <alias>`\n\n"
-            "**Examples:**\n"
-            "• `/add 0x1234567890abcdef1234567890abcdef12345678 MyWallet`\n"
-            "• `/add 0x1234567890abcdef1234567890abcdef12345678 Big Trader`\n"
-            "• `/add 0x1234567890abcdef1234567890abcdef12345678 Degen Master`\n\n"
-            "📝 **Note:** Aliases are required to help you identify your wallets!",
+            "Usage: /add <address> <alias>",
             parse_mode='Markdown'
         )
         return
@@ -1268,11 +1958,7 @@ async def add_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # Validate wallet address format
     if not is_valid_wallet_address(wallet_address):
         await update.message.reply_text(
-            "❌ **Invalid wallet address.**\n\n"
-            "Wallet addresses must be:\n"
-            "• 0x-prefixed hex strings\n"
-            "• Exactly 42 characters long\n\n"
-            "**Example:** 0x1234567890abcdef1234567890abcdef12345678",
+            "Usage: /add <address> <alias>",
             parse_mode='Markdown'
         )
         return
@@ -1280,93 +1966,117 @@ async def add_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # Convert to lowercase for consistency
     wallet_address = wallet_address.lower()
     
-    # Initialize user's wallet list if not exists
-    if user_id not in user_wallets:
-        user_wallets[user_id] = []
-    
-    # Check if wallet is already being tracked
-    existing_wallet = None
-    for wallet in user_wallets[user_id]:
-        if wallet["address"] == wallet_address:
-            existing_wallet = wallet
-            break
-    
-    if existing_wallet:
+    try:
+        # Connect to database and perform checks
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            # Check if alias already exists for this user
+            cur = await db.execute(
+                "SELECT COUNT(*) FROM tracked_wallets WHERE user_id = ? AND alias = ?",
+                (user_id, alias)
+            )
+            alias_count = await cur.fetchone()
+            
+            if alias_count[0] > 0:
+                await update.message.reply_text(
+                    "You're already tracking a wallet with this alias.",
+                    parse_mode='Markdown'
+                )
+                return
+            
+            # Check if address is already being tracked by this user
+            cur = await db.execute(
+                "SELECT COUNT(*) FROM tracked_wallets WHERE user_id = ? AND wallet_address = ?",
+                (user_id, wallet_address)
+            )
+            address_count = await cur.fetchone()
+            
+            if address_count[0] > 0:
+                await update.message.reply_text(
+                    "You've already added this address.",
+                    parse_mode='Markdown'
+                )
+                return
+            
+            # Insert new wallet
+            await db.execute(
+                "INSERT INTO tracked_wallets (user_id, wallet_address, alias) VALUES (?, ?, ?)",
+                (user_id, wallet_address, alias)
+            )
+            await db.commit()
+        
+        # Success response
         await update.message.reply_text(
-            "⚠️ **You're already tracking this wallet.**\n\n"
-            f"Wallet: `{wallet_address}`\n"
-            f"Current alias: **{existing_wallet['alias']}**",
+            f"✅ Wallet added as '{alias}'",
             parse_mode='Markdown'
         )
-        return
-    
-    # Add wallet to user's tracking list
-    wallet_entry = {
-        "address": wallet_address,
-        "alias": alias
-    }
-    user_wallets[user_id].append(wallet_entry)
-    
-    # Save data to file
-    save_wallets()
-    
-    logger.info(f"User {user_id} added wallet {wallet_address} with alias '{alias}' to tracking list")
-    
-    await update.message.reply_text(
-        "✅ **Wallet added successfully!**\n\n"
-        f"Wallet: `{wallet_address}`\n"
-        f"Alias: **{alias}**\n"
-        f"Total tracked wallets: {len(user_wallets[user_id])}\n\n"
-        "🔔 *Real-time monitoring is now active!*",
-        parse_mode='Markdown'
-    )
+        
+        logger.info(f"User {user_id} added wallet {wallet_address} with alias '{alias}' to tracking list")
+        
+    except Exception as e:
+        logger.error(f"Error adding wallet for user {user_id}: {e}")
+        await update.message.reply_text(
+            "❌ **Error adding wallet.**\n\n"
+            "Please try again later.",
+            parse_mode='Markdown'
+        )
 
 async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """List all tracked wallets for the user."""
-    user_id = update.effective_user.id
+    user_id = str(update.effective_user.id)  # Convert to string to match database storage
     
-    # Check if user has any wallets
-    if user_id not in user_wallets or not user_wallets[user_id]:
+    try:
+        # Query the database for user's tracked wallets
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            cur = await db.execute(
+                "SELECT wallet_address, alias, added_at FROM tracked_wallets WHERE user_id = ? ORDER BY alias",
+                (user_id,)
+            )
+            wallets = await cur.fetchall()
+        
+        # Check if user has any wallets
+        if not wallets:
+            await update.message.reply_text(
+                "You're not tracking any wallets yet. Use /add to start.",
+                parse_mode='Markdown'
+            )
+            return
+        
+        # Build the list of wallets
+        wallet_list = []
+        for wallet_address, alias, added_at in wallets:
+            # Escape any special characters in alias for Markdown
+            escaped_alias = alias.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace(']', '\\]')
+            # Format address as requested
+            address_short = f"{wallet_address[:6]}...{wallet_address[-4:]}"
+            wallet_info = f"• {escaped_alias}: {address_short}"
+            wallet_list.append(wallet_info)
+        
+        wallets_text = "\n".join(wallet_list)
+        
         await update.message.reply_text(
-            "📭 **No wallets tracked yet.**\n\n"
-            "Add your first wallet with:\n"
-            "• `/add <wallet_address> <alias>`\n\n"
-            "**Examples:**\n"
-            "• `/add 0x1234567890abcdef1234567890abcdef12345678 MyWallet`\n"
-            "• `/add 0x1234567890abcdef1234567890abcdef12345678 Big Trader`\n\n"
-            "📝 **Note:** Aliases are required!",
+            f"Here are your tracked wallets:\n"
+            f"{wallets_text}",
             parse_mode='Markdown'
         )
-        return
-    
-    # Build the list of wallets
-    wallet_list = []
-    for i, wallet in enumerate(user_wallets[user_id], 1):
-        wallet_info = f"{i}. `{wallet['address']}`\n   🏷️ **{wallet['alias']}**"
-        wallet_list.append(wallet_info)
-    
-    wallets_text = "\n\n".join(wallet_list)
-    
-    await update.message.reply_text(
-        f"📊 **Your Tracked Wallets** ({len(user_wallets[user_id])} total)\n\n"
-        f"{wallets_text}\n\n"
-        "🔔 *Real-time monitoring is active!*",
-        parse_mode='Markdown'
-    )
+        
+        logger.info(f"User {user_id} listed {len(wallets)} tracked wallets")
+        
+    except Exception as e:
+        logger.error(f"Error listing wallets for user {user_id}: {e}")
+        await update.message.reply_text(
+            "❌ **Error loading your tracked wallets.**\n\n"
+            "Please try again later.",
+            parse_mode='Markdown'
+        )
 
 async def remove_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Remove a wallet from the user's tracking list by alias."""
-    user_id = update.effective_user.id
+    user_id = str(update.effective_user.id)  # Convert to string to match database storage
     
     # Check if alias is provided
     if len(context.args) < 1:
         await update.message.reply_text(
-            "❌ Please provide an alias to remove.\n\n"
-            "**Usage:** `/remove <alias>`\n\n"
-            "**Examples:**\n"
-            "• `/remove MyWallet`\n"
-            "• `/remove Big Trader`\n\n"
-            "Use `/list` to see all your tracked wallets and their aliases.",
+            "Usage: /remove <alias>",
             parse_mode='Markdown'
         )
         return
@@ -1374,40 +2084,34 @@ async def remove_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # Get alias (join all args as alias can contain spaces)
     alias_to_remove = " ".join(context.args).strip()
     
-    # Check if user has any wallets
-    if user_id not in user_wallets or not user_wallets[user_id]:
-        await update.message.reply_text(
-            "📭 **No wallets tracked yet.**\n\n"
-            "Add your first wallet with:\n"
-            "• `/add <wallet_address> <alias>`",
-            parse_mode='Markdown'
-        )
-        return
-    
-    # Find and remove the wallet with the matching alias
-    wallet_to_remove = None
-    for i, wallet in enumerate(user_wallets[user_id]):
-        if wallet["alias"] == alias_to_remove:
-            wallet_to_remove = user_wallets[user_id].pop(i)
-            break
-    
-    if wallet_to_remove:
-        # Save data to file
-        save_wallets()
+    try:
+        # Connect to database and remove the wallet
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            # Delete the wallet with matching user_id and alias
+            cur = await db.execute(
+                "DELETE FROM tracked_wallets WHERE user_id = ? AND alias = ?",
+                (user_id, alias_to_remove)
+            )
+            await db.commit()
+            
+            # Check if any rows were deleted
+            if cur.rowcount > 0:
+                await update.message.reply_text(
+                    f"✅ Removed '{alias_to_remove}' from your tracked wallets.",
+                    parse_mode='Markdown'
+                )
+                logger.info(f"User {user_id} removed wallet with alias '{alias_to_remove}' from tracking list")
+            else:
+                await update.message.reply_text(
+                    "Alias not found.",
+                    parse_mode='Markdown'
+                )
         
-        logger.info(f"User {user_id} removed wallet {wallet_to_remove['address']} with alias '{alias_to_remove}' from tracking list")
-        
+    except Exception as e:
+        logger.error(f"Error removing wallet for user {user_id}: {e}")
         await update.message.reply_text(
-            f"✅ **Removed {alias_to_remove} from your tracked wallets.**\n\n"
-            f"Wallet: `{wallet_to_remove['address']}`\n"
-            f"Remaining tracked wallets: {len(user_wallets[user_id])}",
-            parse_mode='Markdown'
-        )
-    else:
-        await update.message.reply_text(
-            "❌ **Alias not found.**\n\n"
-            f"'{alias_to_remove}' is not in your tracked wallets.\n\n"
-            "Use `/list` to see all your tracked wallets and their aliases.",
+            "❌ **Error removing wallet.**\n\n"
+            "Please try again later.",
             parse_mode='Markdown'
         )
 
@@ -1428,11 +2132,25 @@ def main() -> None:
         Config.validate_config()
     except ValueError as e:
         logger.error(f"Configuration error: {e}")
-        logger.error("Please set the BOT_TOKEN environment variable")
+        logger.error("Please set the BOT_TOKEN and WALLET_ENCRYPTION_KEY environment variables")
+        return
+    
+    # Initialize database
+    try:
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(init_db())
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
         return
     
     # Load existing wallet data
     load_wallets()
+    
+    # Migrate old wallets to secure storage if needed
+    migrate_old_wallets()
+    
+    # Load secure wallets
+    load_secure_wallets()
     
     # Create the Application
     application = Application.builder().token(Config.BOT_TOKEN).build()
@@ -1440,6 +2158,10 @@ def main() -> None:
 
     # Register handlers
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("createwallet", createwallet_command))
+    application.add_handler(CommandHandler("confirmcreate", confirmcreate_command))
+    application.add_handler(CommandHandler("exportkey", exportkey_command))
+    application.add_handler(CommandHandler("mywallet", mywallet_command))
     application.add_handler(CommandHandler("add", add_wallet))
     application.add_handler(CommandHandler("list", list_wallets))
     application.add_handler(CommandHandler("remove", remove_wallet))
