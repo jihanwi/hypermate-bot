@@ -283,6 +283,58 @@ async def get_user_private_key(user_id: int) -> str:
         logger.error(f"Error retrieving private key for user {user_id}: {e}")
         raise
 
+async def migrate_tracked_wallets_to_db() -> None:
+    """Migrate tracked wallets from user_wallets.json to SQLite database."""
+    try:
+        if not user_wallets:
+            logger.info("No tracked wallets to migrate")
+            return
+            
+        logger.info(f"Migrating {len(user_wallets)} users' tracked wallets to database...")
+        
+        migrated_count = 0
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            for user_id, wallets_list in user_wallets.items():
+                user_id_str = str(user_id)
+                
+                for wallet in wallets_list:
+                    address = wallet.get('address', '').lower()
+                    alias = wallet.get('alias', '')
+                    
+                    if address and alias:
+                        try:
+                            # Check if this wallet already exists in database
+                            cur = await db.execute(
+                                "SELECT COUNT(*) FROM tracked_wallets WHERE user_id = ? AND wallet_address = ? AND alias = ?",
+                                (user_id_str, address, alias)
+                            )
+                            count = await cur.fetchone()
+                            
+                            if count[0] == 0:
+                                # Insert into database
+                                await db.execute(
+                                    "INSERT INTO tracked_wallets (user_id, wallet_address, alias) VALUES (?, ?, ?)",
+                                    (user_id_str, address, alias)
+                                )
+                                migrated_count += 1
+                                logger.info(f"Migrated wallet for user {user_id}: {alias} ({address})")
+                            else:
+                                logger.debug(f"Wallet already exists in database for user {user_id}: {alias}")
+                                
+                        except Exception as wallet_error:
+                            logger.error(f"Error migrating wallet {alias} for user {user_id}: {wallet_error}")
+                            
+            await db.commit()
+            
+        if migrated_count > 0:
+            logger.info(f"Successfully migrated {migrated_count} tracked wallets to database")
+        else:
+            logger.info("No new wallets needed migration")
+            
+    except Exception as e:
+        logger.error(f"Error during tracked wallets migration: {e}")
+        # Don't raise - allow bot to continue even if migration fails
+
 def migrate_old_wallets() -> None:
     """Migrate wallets from old generated_wallets.json to secure storage."""
     try:
@@ -2208,6 +2260,13 @@ def main() -> None:
     
     # Load existing wallet data
     load_wallets()
+    
+    # Migrate tracked wallets from JSON to database
+    try:
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(migrate_tracked_wallets_to_db())
+    except Exception as e:
+        logger.error(f"Failed to migrate tracked wallets: {e}")
     
     # Migrate old wallets to secure storage if needed
     migrate_old_wallets()
