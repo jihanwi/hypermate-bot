@@ -2175,11 +2175,10 @@ async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         # Build the list of wallets
         wallet_list = []
         for wallet_address, alias, added_at in wallets:
-            # Escape any special characters in alias for Markdown
-            escaped_alias = alias.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace(']', '\\]')
-            # Format address as requested
-            address_short = f"{wallet_address[:6]}...{wallet_address[-4:]}"
-            wallet_info = f"• {escaped_alias}: {address_short}"
+            # Create clickable link to hypurrscan using the alias as link text
+            hypurrscan_link = f"[{alias}](https://hypurrscan.io/address/{wallet_address})"
+            # Show full wallet address
+            wallet_info = f"• {hypurrscan_link}: {wallet_address}"
             wallet_list.append(wallet_info)
         
         wallets_text = "\n".join(wallet_list)
