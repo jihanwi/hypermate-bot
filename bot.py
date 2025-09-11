@@ -530,6 +530,9 @@ async def check_new_transfers(wallet_address: str, alias: str) -> list:
 async def get_wallet_positions(wallet_address: str) -> dict:
     """Query Hyperliquid API for wallet positions."""
     try:
+        # Add small delay to avoid rate limiting
+        await asyncio.sleep(0.5)
+        
         url = "https://api.hyperliquid.xyz/info"
         payload = {
             "type": "clearinghouseState",
@@ -1068,14 +1071,18 @@ async def monitor_transfers_job(context: ContextTypes.DEFAULT_TYPE):
         except Exception as db_error:
             logger.error(f"Error reading wallets from database: {db_error}")
         
-        # Check transfers for each wallet
-        for wallet_address, alias in all_wallets:
+        # Check transfers for each wallet with rate limiting
+        for i, (wallet_address, alias) in enumerate(all_wallets):
             new_transfer_messages = await check_new_transfers(wallet_address, alias)
             
             # Send alerts for new transfers
             for message in new_transfer_messages:
                 await send_transfer_alert(wallet_address, alias, message)
                 await asyncio.sleep(1)  # Small delay between messages
+            
+            # Add delay between API calls to avoid rate limiting (except for last wallet)
+            if i < len(all_wallets) - 1:
+                await asyncio.sleep(2)  # 2 second delay between wallet checks
         
         logger.info(f"Completed transfer check for {len(all_wallets)} wallets")
         
@@ -1484,14 +1491,18 @@ async def monitor_positions_job(context: ContextTypes.DEFAULT_TYPE):
         except Exception as db_error:
             logger.error(f"Error reading wallets from database: {db_error}")
         
-        # Check positions for each wallet
-        for wallet_address, alias in all_wallets:
+        # Check positions for each wallet with rate limiting
+        for i, (wallet_address, alias) in enumerate(all_wallets):
             new_positions = await check_new_positions(wallet_address, alias)
             
             # Send alerts for new positions
             for position in new_positions:
                 await send_position_alert(wallet_address, alias, position)
                 await asyncio.sleep(1)  # Small delay between messages
+            
+            # Add delay between API calls to avoid rate limiting (except for last wallet)
+            if i < len(all_wallets) - 1:
+                await asyncio.sleep(2)  # 2 second delay between wallet checks
         
         logger.info(f"Completed position check for {len(all_wallets)} wallets")
         
