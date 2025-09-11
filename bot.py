@@ -497,10 +497,22 @@ def format_transfer_message(transfer: dict, wallet_address: str, alias: str) -> 
             usdc_amount = float(delta.get('usdc', 0))
             return f"💸 **{clickable_alias}** withdrew ${usdc_amount:,.2f}"
         
-        # For other types, try to detect buy/sell from spot fills
-        # This would require additional API calls to get recent fills
-        # For now, return a generic message
-        return f"📊 **{clickable_alias}** - {transfer_type}: {delta}"
+        elif transfer_type == 'vaultWithdraw':
+            requested_usd = float(delta.get('requestedUsd', 0))
+            net_withdrawn = float(delta.get('netWithdrawnUsd', 0))
+            return f"🏦 **{clickable_alias}** withdrew ${net_withdrawn:,.2f} from vault"
+        
+        elif transfer_type == 'vaultDeposit':
+            usd_amount = float(delta.get('usd', 0))
+            return f"🏦 **{clickable_alias}** deposited ${usd_amount:,.2f} to vault"
+        
+        # Skip verbose/technical transfer types that users don't need to see
+        elif transfer_type in ['vaultLeaderCommission', 'rewardsClaim', 'liquidation', 'funding']:
+            return None
+        
+        # For any remaining unhandled types, return None to skip them
+        # This prevents verbose technical messages
+        return None
         
     except Exception as e:
         logger.error(f"Error formatting transfer message: {e}")
