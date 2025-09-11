@@ -777,11 +777,28 @@ async def send_position_alert(wallet_address: str, alias: str, position: dict):
     
     # Find all users tracking this wallet
     users_to_notify = []
+    
+    # Check old in-memory storage (legacy support)
     for user_id, wallets in user_wallets.items():
         for wallet in wallets:
             if wallet['address'] == wallet_address:
                 users_to_notify.append(user_id)
                 break
+    
+    # Check database (new storage)
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            cur = await db.execute(
+                "SELECT user_id FROM tracked_wallets WHERE wallet_address = ?",
+                (wallet_address,)
+            )
+            db_users = await cur.fetchall()
+            for (user_id_str,) in db_users:
+                user_id = int(user_id_str)  # Convert back to int
+                if user_id not in users_to_notify:
+                    users_to_notify.append(user_id)
+    except Exception as db_error:
+        logger.error(f"Error reading users from database for alerts: {db_error}")
     
     if not users_to_notify:
         return
@@ -990,11 +1007,28 @@ async def send_transfer_alert(wallet_address: str, alias: str, message: str):
     
     # Find all users tracking this wallet
     users_to_notify = []
+    
+    # Check old in-memory storage (legacy support)
     for user_id, wallets in user_wallets.items():
         for wallet in wallets:
             if wallet['address'] == wallet_address:
                 users_to_notify.append(user_id)
                 break
+    
+    # Check database (new storage)
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            cur = await db.execute(
+                "SELECT user_id FROM tracked_wallets WHERE wallet_address = ?",
+                (wallet_address,)
+            )
+            db_users = await cur.fetchall()
+            for (user_id_str,) in db_users:
+                user_id = int(user_id_str)  # Convert back to int
+                if user_id not in users_to_notify:
+                    users_to_notify.append(user_id)
+    except Exception as db_error:
+        logger.error(f"Error reading users from database for alerts: {db_error}")
     
     if not users_to_notify:
         return
