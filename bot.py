@@ -2154,18 +2154,32 @@ async def add_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """List all tracked wallets for the user."""
     user_id = str(update.effective_user.id)  # Convert to string to match database storage
+    user_id_int = update.effective_user.id  # Keep integer version for JSON storage
     
     try:
+        all_wallets = {}  # Use dict to avoid duplicates: {alias: wallet_address}
+        
         # Query the database for user's tracked wallets
         async with aiosqlite.connect(DATABASE_FILE) as db:
             cur = await db.execute(
                 "SELECT wallet_address, alias, added_at FROM tracked_wallets WHERE user_id = ? ORDER BY alias",
                 (user_id,)
             )
-            wallets = await cur.fetchall()
+            db_wallets = await cur.fetchall()
+            
+            for wallet_address, alias, added_at in db_wallets:
+                all_wallets[alias] = wallet_address
+        
+        # Also check JSON storage (legacy support)
+        if user_id_int in user_wallets:
+            for wallet in user_wallets[user_id_int]:
+                alias = wallet.get('alias', '')
+                address = wallet.get('address', '')
+                if alias and address and alias not in all_wallets:
+                    all_wallets[alias] = address.lower()
         
         # Check if user has any wallets
-        if not wallets:
+        if not all_wallets:
             await update.message.reply_text(
                 "You're not tracking any wallets yet. Use /add to start.",
                 parse_mode='Markdown'
@@ -2174,7 +2188,8 @@ async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         
         # Build the list of wallets
         wallet_list = []
-        for wallet_address, alias, added_at in wallets:
+        for alias in sorted(all_wallets.keys()):
+            wallet_address = all_wallets[alias]
             # Create clickable link to hypurrscan using the alias as link text
             hypurrscan_link = f"[{alias}](https://hypurrscan.io/address/{wallet_address})"
             # Show full wallet address
@@ -2189,7 +2204,7 @@ async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             parse_mode='Markdown'
         )
         
-        logger.info(f"User {user_id} listed {len(wallets)} tracked wallets")
+        logger.info(f"User {user_id} listed {len(all_wallets)} tracked wallets")
         
     except Exception as e:
         logger.error(f"Error listing wallets for user {user_id}: {e}")
@@ -2202,6 +2217,7 @@ async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def remove_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Remove a wallet from the user's tracking list by alias."""
     user_id = str(update.effective_user.id)  # Convert to string to match database storage
+    user_id_int = update.effective_user.id  # Keep integer version for JSON storage
     
     # Check if alias is provided
     if len(context.args) < 1:
@@ -2214,8 +2230,11 @@ async def remove_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # Get alias (join all args as alias can contain spaces)
     alias_to_remove = " ".join(context.args).strip()
     
+    removed_from_db = False
+    removed_from_json = False
+    
     try:
-        # Connect to database and remove the wallet
+        # Remove from database
         async with aiosqlite.connect(DATABASE_FILE) as db:
             # Delete the wallet with matching user_id and alias
             cur = await db.execute(
@@ -2224,18 +2243,35 @@ async def remove_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
             await db.commit()
             
-            # Check if any rows were deleted
             if cur.rowcount > 0:
-                await update.message.reply_text(
-                    f"✅ Removed '{alias_to_remove}' from your tracked wallets.",
-                    parse_mode='Markdown'
-                )
-                logger.info(f"User {user_id} removed wallet with alias '{alias_to_remove}' from tracking list")
-            else:
-                await update.message.reply_text(
-                    "Alias not found.",
-                    parse_mode='Markdown'
-                )
+                removed_from_db = True
+                logger.info(f"User {user_id} removed wallet with alias '{alias_to_remove}' from database")
+        
+        # Also remove from JSON storage (legacy support)
+        if user_id_int in user_wallets:
+            original_count = len(user_wallets[user_id_int])
+            user_wallets[user_id_int] = [
+                wallet for wallet in user_wallets[user_id_int] 
+                if wallet.get('alias', '') != alias_to_remove
+            ]
+            
+            if len(user_wallets[user_id_int]) < original_count:
+                removed_from_json = True
+                # Save updated JSON
+                save_wallets()
+                logger.info(f"User {user_id} removed wallet with alias '{alias_to_remove}' from JSON storage")
+        
+        # Check if wallet was found in either storage
+        if removed_from_db or removed_from_json:
+            await update.message.reply_text(
+                f"✅ Removed '{alias_to_remove}' from your tracked wallets.",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text(
+                "Alias not found.",
+                parse_mode='Markdown'
+            )
         
     except Exception as e:
         logger.error(f"Error removing wallet for user {user_id}: {e}")
