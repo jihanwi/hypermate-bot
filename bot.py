@@ -1863,13 +1863,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a welcome message when the command /start is issued."""
     welcome_message = """🚀 *Welcome to HyperMate!*
 
-Your ultimate companion for Hyperliquid trading and wallet tracking.
+Your ultimate companion for Hyperliquid wallet tracking and monitoring.
 
 *What is HyperMate?*
-HyperMate is a powerful Telegram bot designed to help you navigate the Hyperliquid ecosystem, including both HyperCore and HyperEVM. Create new wallets with built-in referral benefits or track existing ones!
+HyperMate is a powerful Telegram bot designed to help you track and monitor wallets in the Hyperliquid ecosystem, including both HyperCore and HyperEVM.
 
 *🎯 Current Features:*
-• 🔐 **NEW:** Wallet creation with referral benefits
 • 📊 Real-time wallet tracking with custom aliases
 • 📈📉 Perpetual position alerts (LONG/SHORT positions)
 • 🟢🔴 Spot trading notifications (BUY/SELL orders)
@@ -1878,15 +1877,8 @@ HyperMate is a powerful Telegram bot designed to help you navigate the Hyperliqu
 • 🔄 TWAP order tracking
 • 📋 Position and balance viewing
 • 📊 Trading statistics (PnL, volume)
-• 🔒 Secure private key management
 
 *🤖 Available Commands:*
-
-*Wallet Creation:*
-• `/createwallet` - Generate a new Hyperliquid wallet  
-• `/confirmcreate` - Confirm creation of new wallet (replaces existing)
-• `/exportkey` - Export your private key securely
-• `/mywallet` - View your HyperMate wallet & balances
 
 *Wallet Management:*
 • `/add <wallet_address> <alias>` - Add a wallet to track
@@ -1898,10 +1890,8 @@ HyperMate is a powerful Telegram bot designed to help you navigate the Hyperliqu
 • `/stats <alias>` - Show trading statistics
 
 *📝 Quick Start:*
-1. **Create your wallet:** `/createwallet` (generates with referral benefits)
-2. **Check your wallet:** `/mywallet` (view balance, positions & manage)
-3. **Track external wallets:** `/add 0x1234...5678 WhaleTrader`
-4. **Monitor external activity:** `/positions WhaleTrader` • `/stats WhaleTrader`
+1. **Track wallets:** `/add 0x1234...5678 WhaleTrader`
+2. **Monitor activity:** `/positions WhaleTrader` • `/stats WhaleTrader`
 
 *🔔 Real-Time Alerts:*
 Once you add wallets, you'll automatically receive notifications for:
@@ -2158,10 +2148,11 @@ def main() -> None:
 
     # Register handlers
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("createwallet", createwallet_command))
-    application.add_handler(CommandHandler("confirmcreate", confirmcreate_command))
-    application.add_handler(CommandHandler("exportkey", exportkey_command))
-    application.add_handler(CommandHandler("mywallet", mywallet_command))
+    # Wallet creation features disabled
+    # application.add_handler(CommandHandler("createwallet", createwallet_command))
+    # application.add_handler(CommandHandler("confirmcreate", confirmcreate_command))
+    # application.add_handler(CommandHandler("exportkey", exportkey_command))
+    # application.add_handler(CommandHandler("mywallet", mywallet_command))
     application.add_handler(CommandHandler("add", add_wallet))
     application.add_handler(CommandHandler("list", list_wallets))
     application.add_handler(CommandHandler("remove", remove_wallet))
