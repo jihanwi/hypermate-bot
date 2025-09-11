@@ -510,18 +510,8 @@ def format_transfer_message(transfer: dict, wallet_address: str, alias: str) -> 
             # Handle liquidation events
             return f"⚠️ **{clickable_alias}** was liquidated"
         
-        elif transfer_type == 'funding':
-            # Handle funding payments
-            usdc_amount = float(delta.get('usdc', 0))
-            if usdc_amount > 0:
-                return f"💰 **{clickable_alias}** received ${usdc_amount:,.2f} funding payment"
-            elif usdc_amount < 0:
-                return f"💸 **{clickable_alias}** paid ${abs(usdc_amount):,.2f} funding payment"
-            else:
-                return f"🔄 **{clickable_alias}** funding payment processed"
-        
         # Skip verbose/technical transfer types that users don't need to see
-        elif transfer_type in ['vaultLeaderCommission', 'rewardsClaim']:
+        elif transfer_type in ['vaultLeaderCommission', 'rewardsClaim', 'funding']:
             return None
         
         # For any remaining unhandled types, return None to skip them
