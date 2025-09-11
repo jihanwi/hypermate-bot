@@ -1014,11 +1014,25 @@ async def send_transfer_alert(wallet_address: str, alias: str, message: str):
 async def monitor_transfers_job(context: ContextTypes.DEFAULT_TYPE):
     """Job function to monitor wallet transfers every 30 seconds."""
     try:
-        # Get all unique wallet addresses
+        # Get all unique wallet addresses from database
         all_wallets = set()
+        
+        # Get from old in-memory storage (legacy support)
         for user_wallets_list in user_wallets.values():
             for wallet in user_wallets_list:
                 all_wallets.add((wallet['address'], wallet['alias']))
+        
+        # Get from database (new storage)
+        try:
+            async with aiosqlite.connect(DATABASE_FILE) as db:
+                cur = await db.execute(
+                    "SELECT DISTINCT wallet_address, alias FROM tracked_wallets"
+                )
+                db_wallets = await cur.fetchall()
+                for wallet_address, alias in db_wallets:
+                    all_wallets.add((wallet_address, alias))
+        except Exception as db_error:
+            logger.error(f"Error reading wallets from database: {db_error}")
         
         # Check transfers for each wallet
         for wallet_address, alias in all_wallets:
@@ -1416,11 +1430,25 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def monitor_positions_job(context: ContextTypes.DEFAULT_TYPE):
     """Job function to monitor wallet positions every 30 seconds."""
     try:
-        # Get all unique wallet addresses
+        # Get all unique wallet addresses from database
         all_wallets = set()
+        
+        # Get from old in-memory storage (legacy support)
         for user_wallets_list in user_wallets.values():
             for wallet in user_wallets_list:
                 all_wallets.add((wallet['address'], wallet['alias']))
+        
+        # Get from database (new storage)
+        try:
+            async with aiosqlite.connect(DATABASE_FILE) as db:
+                cur = await db.execute(
+                    "SELECT DISTINCT wallet_address, alias FROM tracked_wallets"
+                )
+                db_wallets = await cur.fetchall()
+                for wallet_address, alias in db_wallets:
+                    all_wallets.add((wallet_address, alias))
+        except Exception as db_error:
+            logger.error(f"Error reading wallets from database: {db_error}")
         
         # Check positions for each wallet
         for wallet_address, alias in all_wallets:
