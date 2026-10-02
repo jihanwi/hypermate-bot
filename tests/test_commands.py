@@ -94,3 +94,56 @@ async def test_list_uses_stored_account_value_after_poll(repo, monkeypatch):
     hl.calls.clear()
     assert '$1,234.57' in (await call(commands.list_wallets, repo, hl, 3))[0]
     assert hl.calls == []
+
+
+async def test_add_scans_hip3_dexs_and_positions_show_them(repo):
+    hl = FakeHLClient()
+    hl.dexs = ['xyz', 'cash', 'para']
+    hl.clearinghouse[(A, 'xyz')] = clearinghouse(position('xyz:MU', '-100', entry_px='95', position_value='9500'),
+                                                 account_value='1500')
+    hl.clearinghouse[A] = clearinghouse(position('BTC', '1', position_value='61000'), account_value='2000')
+    out = await call(commands.add_wallet, repo, hl, 5, A, 'w')
+    assert 'HIP-3 dexs with positions: xyz' in out[0]
+    va = await repo.hl_account_id(A)
+    assert await repo.get_dexs(va) == ['xyz'] and await repo.get_cursor(va, 'dex_scan') is not None
+    view = (await call(commands.positions_command, repo, hl, 5, 'w'))[0]
+    assert '<b>LONG</b> $BTC' in view
+    assert 'Futures (xyz dex)</b> · account $1,500.00' in view and '<b>SHORT</b> $MU' in view
+    assert 'Margin Balance (all dexs):</b> $3,500.00' in view
+
+
+async def test_rescan_and_recent(repo):
+    hl = FakeHLClient()
+    await call(commands.add_wallet, repo, hl, 5, A, 'whale_1')
+    hl.dexs = ['cash']
+    hl.clearinghouse[(A, 'cash')] = clearinghouse(position('cash:CASHCAT', '-5'))
+    assert 'HIP-3 cash' in (await call(commands.rescan_command, repo, hl, 5, 'WHALE_1'))[0]
+    assert await call(commands.rescan_command, repo, hl, 5) == [texts.RESCAN_USAGE]
+
+    va = await repo.hl_account_id(A)
+    for i in range(12):
+        await repo.record_event(f'k{i}', va, 'position_increase', 1_790_000_000_000 + i * 1000,
+                                {'coin': 'BTC', 'side': 'LONG', 'notional_usd': '5000'},
+                                'suppressed_twap' if i % 2 else 'sent', 1)
+    out = (await call(commands.recent_command, repo, hl, 5, 'whale_1'))[0]
+    assert out.count('\n') == 10                        # header + 10 events (default)
+    out = (await call(commands.recent_command, repo, hl, 5, 'whale_1', '3'))[0]
+    assert out.count('\n') == 3 and 'not sent (TWAP)' in out
+    assert await call(commands.recent_command, repo, hl, 5) == [texts.RECENT_USAGE]
+
+
+async def test_twap_lists_native_twaps_and_algos(repo):
+    hl = FakeHLClient()
+    await call(commands.add_wallet, repo, hl, 5, A, 'loracle')
+    assert await call(commands.twap_command, repo, hl, 5) == ['No active TWAPs.']
+    va = await repo.hl_account_id(A)
+    await repo.upsert_twap(va, '1', {'coin': 'BTC', 'side': 'B', 'sz': '1', 'executedSz': '0.45',
+                                     'minutes': 120, 'timestamp': 1_790_000_000_000}, 1_790_000_000_000)
+    await repo.upsert_algo(va, {'coin': 'CASHCAT', 'sign': 1, 'started_ms': 1_790_000_000_000,
+                                'last_fill_ms': 1_790_000_100_000, 'fills_count': 40,
+                                'total_sz': '50000', 'total_ntl': '8500'})
+    await repo.record_event('hyperliquid:%d:algo_start:CASHCAT:1:1790000000000' % va, va, 'algo_start',
+                            1_790_000_000_000, {'verb': 'reducing', 'side': 'SHORT'}, 'sent', 1)
+    out = (await call(commands.twap_command, repo, hl, 5, 'loracle'))[0]
+    assert 'BUY $BTC · 45% (0.45/1)' in out
+    assert 'algo reducing SHORT $CASHCAT · 40 fills $8.5k' in out

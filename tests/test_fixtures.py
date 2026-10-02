@@ -36,13 +36,13 @@ def test_fills_side_dir_and_perp_classification():
     assert {f['twapId'] for f in fills} == {None}
 
 
-async def test_spot_fill_check_on_recorded_fills_advances_cursor_without_alerts():
+async def test_fetch_fills_on_recorded_fills_advances_cursor():
     fills = load_fixture('hl_userFillsByTime.json')
     hl = FakeHLClient()
     hl.fills['0xw'] = fills
     start = min(f['time'] for f in fills) - 1
-    spot, cursor = await adapter.check_spot_fills(hl, '0xw', start)
-    assert spot == []
+    new, cursor = await adapter.fetch_fills(hl, '0xw', start)
+    assert len(new) == 348 and not any(adapter.is_spot_coin(f['coin']) for f in new)
     assert cursor == max(f['time'] for f in fills)
 
 
@@ -66,7 +66,7 @@ def test_clearinghouse_state_parsing_and_views():
     positions = adapter.parse_positions(state)
     assert sorted(positions) == ['BTC', 'ETH', 'HYPE', 'SOL', 'STX']
     assert positions['BTC']['szi'] == '0.01444' and positions['BTC']['direction'] == 'LONG'
-    assert adapter.parse_account_value(state) == '453.698173'
+    assert adapter.parse_account_value(state) == Decimal('453.698173')
     assert formatter.account_value(state) == Decimal('453.698173')
 
     view = formatter.format_positions('w', '0x' + 'a' * 40, state, {'balances': []})

@@ -1,4 +1,5 @@
 import sqlite3
+from decimal import Decimal
 
 from hypermate.db.repo import ADDED, ADDRESS_EXISTS, ALIAS_EXISTS, Repo
 
@@ -62,7 +63,7 @@ async def test_cursors_start_at_add_time_and_reset_on_readd(repo):
     # second subscriber: shared state untouched
     await repo.add_subscription(2, A, 'a2', 6000)
     assert await repo.get_cursor(va, 'fills') == '5000'
-    assert await repo.get_snapshot(va) == {'BTC': {'szi': '1'}}
+    assert await repo.get_snapshot(va) == {'': {'BTC': {'szi': '1'}}}   # Phase 0 shape read as main dex
 
     # everyone leaves, someone re-adds later: no replay of the gap
     await repo.remove_subscription(1, 'a')
@@ -80,7 +81,7 @@ async def test_snapshot_and_cursor_roundtrip_survive_reconnect(repo):
     await repo.close()
     reopened = Repo(repo.path)
     await reopened.connect()
-    assert await reopened.get_snapshot(va) == {'ETH': {'szi': '-2.5', 'entry_px': '3000.1'}}
+    assert await reopened.get_snapshot(va) == {'': {'ETH': {'szi': '-2.5', 'entry_px': '3000.1'}}}
     assert await reopened.get_cursor(va, 'ledger') == '1700000000123'
     await reopened.close()
     repo.db = None
@@ -95,3 +96,57 @@ async def test_account_value_stored_as_decimal_text(repo):
     row = await (await repo.db.execute(
         'SELECT typeof(account_value) FROM snapshots WHERE venue_account_id = ?', (va,))).fetchone()
     assert row[0] == 'text'
+
+
+async def test_dex_snapshot_and_dexs_roundtrip(repo):
+    await repo.add_subscription(1, A, 'a', 1000)
+    (va, _), = await repo.tracked_accounts()
+    assert await repo.get_dexs(va) == []
+    await repo.set_dexs(va, ['xyz', 'cash', 'xyz'])
+    assert await repo.get_dexs(va) == ['cash', 'xyz']
+    snap = {'': {'BTC': {'szi': '1'}}, 'xyz': {'xyz:MU': {'szi': '-3'}}}
+    await repo.save_snapshot(va, snap, 2000, '10')
+    assert await repo.get_snapshot(va) == snap
+
+
+async def test_migration_adds_dexs_json_to_a_phase0_database(tmp_path):
+    """A DB created by Phase 0 (venue_accounts without dexs_json) gets the column on connect, data intact."""
+    path = tmp_path / 'old.db'
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE wallets (wallet_id INTEGER PRIMARY KEY, evm_address TEXT UNIQUE NOT NULL);
+        CREATE TABLE venue_accounts (venue_account_id INTEGER PRIMARY KEY, wallet_id INTEGER NOT NULL,
+          venue TEXT NOT NULL, account_ref TEXT NOT NULL, active INTEGER DEFAULT 1, last_activity_ms INTEGER,
+          UNIQUE(venue, account_ref));
+        INSERT INTO wallets VALUES (1, '%s');
+        INSERT INTO venue_accounts (venue_account_id, wallet_id, venue, account_ref) VALUES (1, 1, 'hyperliquid', '%s');
+    """ % (A, A))
+    con.commit()
+    con.close()
+    for _ in range(2):  # idempotent
+        repo = Repo(str(path))
+        await repo.connect()
+        assert await repo.get_dexs(1) == []
+        await repo.close()
+    assert 'algo_active' in {r[0] for r in sqlite3.connect(path).execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+
+
+async def test_events_sent_messages_and_algo_state(repo):
+    await repo.add_subscription(1, A, 'a', 1000)
+    (va, _), = await repo.tracked_accounts()
+    event_id = await repo.record_event('k1', va, 'position_open', 5000, {'coin': 'BTC'}, 'sent', 1)
+    assert await repo.record_event('k1', va, 'position_open', 5000, {}, 'sent', 1) is None
+    await repo.update_event_payload(event_id, {'coin': 'BTC', 'chain': {'orders': 2}})
+    assert (await repo.get_event_by_key('k1'))['payload']['chain'] == {'orders': 2}
+    assert [e['event_id'] for e in await repo.events_since(va, 4000, ['position_open'])] == [event_id]
+    assert await repo.last_event_ts(va, 'position_open', 'BTC') == 5000
+    await repo.add_sent_message(event_id, 1, 1, 77)
+    assert await repo.sent_messages(event_id) == {1: (1, 77)}
+    state = {'coin': 'BTC', 'sign': 1, 'started_ms': 1, 'last_fill_ms': 2, 'fills_count': 3,
+             'total_sz': Decimal('0.5'), 'total_ntl': Decimal('43000.10')}
+    await repo.upsert_algo(va, state)
+    stored = (await repo.active_algos(va))[('BTC', 1)]
+    assert stored['total_ntl'] == '43000.10' and stored['fills_count'] == 3
+    await repo.delete_algo(va, 'BTC', 1)
+    assert await repo.active_algos(va) == {}
