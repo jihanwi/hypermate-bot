@@ -42,7 +42,7 @@
 | # | 문제 | 설명 |
 |---|---|---|
 | S1 | Rate limit | HL REST는 IP당 1200 weight/분 [V]. 현재 지갑당 사이클: clearinghouseState(2) + userFills(20 + 20건당 1, B10 때문에 최대 120) + ledger(20) + 404 호출. 분당 2사이클이면 지갑당 84~284 weight (fills 히스토리 길이에 따라) → 활발한 지갑이면 4개, 조용한 지갑이면 14개쯤에서 429 시작. 폴링 루프가 순차 + `sleep(0.5)` + `sleep(2)` 라 지갑 12개 넘으면 사이클이 30초 초과, APScheduler 기본 max_instances=1로 사이클 스킵 |
-| S2 | 영속성 | Railway는 Volume 마운트 없으면 파일시스템이 redeploy마다 초기화. `hypermate.db` 유실 가능. (오너 결정: Railway Volume 마운트 + SQLite 유지) |
+| S2 | 영속성 | Fly.io 머신 파일시스템은 deploy마다 이미지로 초기화되므로 Volume 없으면 `hypermate.db` 유실. (오너 결정: Fly.io Volume `hypermate_data` 를 `/data` 에 마운트 + SQLite 유지. Volume은 머신 1대에만 붙으므로 머신 수 1 고정) |
 | S3 | 죽은 코드 | 지갑 생성, 개인키 암호화 저장, 레퍼럴 등록, JSON 저장소 3겹 (`user_wallets.json`, `generated_wallets.json`, `wallets_secure.json`), 마이그레이션 코드. 약 700줄. 핸들러는 주석 처리됐지만 코드와 Fernet 키 요구사항은 남아있음 |
 | S4 | 단일 파일 | 2,361줄. 베뉴 추가하면 유지 불가 |
 | S5 | 테스트 없음 | `test_connection.py` 는 빈 파일 |
@@ -342,7 +342,7 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 6. B6: `previous_positions`, `last_transfer_timestamps`, `initial_*_scan_done` 를 `snapshots`, `cursors` 테이블로. 재시작 후 initial scan 없이 cursor부터 이어서.
 7. B7: `asyncio.run()` 또는 PTB `post_init` 으로 DB init. `get_event_loop` 제거.
 8. B9: spot 판정을 `coin` 에 `/` 포함 또는 `@` 로 시작으로 변경. `@N` 은 `spotMeta` 로 이름 치환 (1시간 캐시).
-9. S2: `railway.toml` 에 볼륨 마운트 경로 문서화, `DATABASE_PATH` 환경변수 (기본 `/data/hypermate.db`). 시작 시 디렉토리 없으면 생성.
+9. S2: `fly.toml` 의 `[mounts]` 로 볼륨 마운트 (`hypermate_data` → `/data`), `DATABASE_PATH` 환경변수 (기본 `/data/hypermate.db`). 시작 시 디렉토리 없으면 생성. `Dockerfile` (python:3.12-slim, 비root 실행).
 10. 요구사항 4: `post_init` 에서 `bot.set_my_commands(...)` 호출. 커맨드 목록은 섹션 9.1. scope `BotCommandScopeAllPrivateChats`.
 11. `/help` 추가 (섹션 9.2). `/start` 는 짧은 환영 + `/help` 안내로 축소.
 12. `requirements.txt` 핀 고정. `python-telegram-bot[job-queue]>=21` (JobQueue는 extra 필요 [V 공식 문서]. 현재는 `APScheduler` 를 따로 넣어 우회 중이라 그 줄 삭제).
@@ -357,7 +357,7 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 - [ ] Telegram에서 `/` 입력 시 커맨드 메뉴 노출
 - [ ] bot.py 삭제, `python -m hypermate.main` 으로 기동
 - [ ] `pytest` 통과 (최소 diff 로직 + formatter 테스트)
-- [ ] Railway Volume 마운트 후 redeploy 해도 지갑 목록 유지 (오너가 수동 확인)
+- [ ] Fly.io Volume 마운트 후 redeploy 해도 지갑 목록 유지 (오너가 수동 확인)
 
 ---
 
@@ -699,7 +699,7 @@ $450k @ 3,120 · 5x
 - `/health` (ADMIN_USER_IDS 환경변수에 있는 유저만): 베뉴별 마지막 폴링 시각, 활성 계정 수, 큐 길이, 최근 1시간 429, WS 연결 상태, DB 크기.
 - 전송 실패 (유저가 봇 차단 등 `Forbidden`): 그 유저 subscriptions 전부 `muted_until = 무기한` 처리 + 로그. 재시도 안 함.
 - 환경변수: `BOT_TOKEN`, `DATABASE_PATH`, `ADMIN_USER_IDS`, `LOG_LEVEL`, `POLL_FAST_SEC`, `POLL_LEDGER_SEC`, `HL_WEIGHT_BUDGET` (기본 1020), `ARBISCAN_API_KEY` (선택), `STARKNET_RPC_URL` (Phase 4).
-- Railway: Volume을 `/data` 에 마운트. `railway.toml` 의 `startCommand = "python -m hypermate.main"`. healthcheck는 없음 (worker). restart `ON_FAILURE`.
+- Fly.io: 리전 `nrt`. Volume `hypermate_data` 를 `/data` 에 마운트. `Dockerfile` 의 `CMD ["python", "-m", "hypermate.main"]`. `[http_service]`/`[[services]]` 없음 (worker, 포트 안 엶, 머신 상시 가동). `kill_signal = "SIGINT"`, `kill_timeout = 30` (PTB graceful shutdown). 머신은 반드시 1대 (`fly scale count 1`, SQLite 볼륨은 머신 간 공유 불가). `BOT_TOKEN` 은 `fly secrets`.
 - 백업: 매일 1회 `hypermate.db` 를 `/data/backups/` 에 복사, 7일 보관 (`sqlite3 .backup` API 사용, 파일 복사 금지).
 
 ---
