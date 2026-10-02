@@ -133,3 +133,38 @@ def _pos(coin, szi, entry='100'):
     direction = 'LONG' if Decimal(szi) > 0 else 'SHORT'
     return {'coin': coin, 'szi': szi, 'direction': direction, 'entry_px': entry,
             'position_value': str(abs(Decimal(szi)) * 100), 'unrealized_pnl': '0'}
+
+
+def _send(user, destination, token='USDC', amount='500000.0', usdc_value='500000.0'):
+    # field set observed live for delta.type == 'send' (docs/API_NOTES.md)
+    return {'time': 1, 'hash': '0x1', 'delta': {
+        'type': 'send', 'user': user, 'destination': destination, 'sourceDex': '', 'destinationDex': '',
+        'token': token, 'amount': amount, 'usdcValue': usdc_value, 'fee': '0.0',
+        'nativeTokenFee': '0.0', 'nonce': 1, 'feeToken': ''}}
+
+
+def test_send_out_and_in():
+    out = formatter.format_transfer_message(_send(ADDR, OTHER), ADDR, 'test_wallet_1')
+    assert out.startswith('↗️') and 'sent 500,000.00 USDC ($500,000.00) to <code>0xbbbb...bbbb</code>' in out
+    inc = formatter.format_transfer_message(_send(OTHER, ADDR, token='HYPE', amount='10', usdc_value='450'),
+                                            ADDR, 'test_wallet_1')
+    assert inc.startswith('↘️') and 'received 10.00 HYPE ($450.00) from <code>0xbbbb...bbbb</code>' in inc
+    for text in (out, inc):
+        check_telegram_html(text)
+    assert formatter.format_transfer_message(_send(OTHER, '0x' + 'c' * 40), ADDR, 'w') is None
+
+
+def test_send_with_system_address_counterparty():
+    system = '0x2000000000000000000000000000000000000000'
+    out = formatter.format_transfer_message(_send(ADDR, system), ADDR, 'w')
+    assert out.endswith('to Hyperliquid system')
+    inc = formatter.format_transfer_message(_send('0x' + '0' * 40, ADDR), ADDR, 'w')
+    assert inc.endswith('from Hyperliquid system')
+
+
+def test_is_system_address():
+    assert formatter.is_system_address('0x2000000000000000000000000000000000000000')
+    assert formatter.is_system_address('0x0000000000000000000000000000000000000000')
+    assert not formatter.is_system_address('0x2000000000000000000000000000000000000001')
+    assert not formatter.is_system_address('0x1000000000000000000000000000000000000000')
+    assert not formatter.is_system_address(OTHER)

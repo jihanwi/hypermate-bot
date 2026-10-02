@@ -6,6 +6,7 @@ message (B4). Numbers are Decimal.
 
 import html
 import logging
+import re
 from decimal import Decimal
 from typing import Optional
 
@@ -37,6 +38,20 @@ def short_address(address: str) -> str:
     return f"{address[:6]}...{address[-4:]}" if len(address) > 10 else address
 
 
+_SYSTEM_ADDRESS_RE = re.compile(r'0x(?:20|00)0{38}')
+
+
+def is_system_address(address: str) -> bool:
+    """HL system addresses: 0x20 or 0x00 followed by zeros (e.g. 0x2000...0000)."""
+    return bool(_SYSTEM_ADDRESS_RE.fullmatch(address.lower()))
+
+
+def counterparty(address: str) -> str:
+    if is_system_address(address):
+        return "Hyperliquid system"
+    return f"<code>{h(short_address(address))}</code>"
+
+
 def alias_link(address: str, alias: str) -> str:
     return f'<a href="{h(hl_address_url(address))}">{h(alias)}</a>'
 
@@ -47,7 +62,8 @@ def format_transfer_message(transfer: dict, wallet_address: str, alias: str) -> 
     transfer_type = delta.get('type', 'unknown')
     who = f"<b>{alias_link(wallet_address, alias)}</b>"
 
-    if transfer_type == 'spotTransfer':
+    if transfer_type in ('spotTransfer', 'send'):
+        # 'send' is how current transfers arrive (B11); spotTransfer is kept for older history
         token = h(delta.get('token', 'Unknown'))
         amount = to_decimal(delta.get('amount')) or ZERO
         usd_value = to_decimal(delta.get('usdcValue')) or ZERO
@@ -55,10 +71,10 @@ def format_transfer_message(transfer: dict, wallet_address: str, alias: str) -> 
         user = delta.get('user', '')
         if user.lower() == wallet_address.lower():
             return (f"↗️ {who} sent {amount:,.2f} {token} ({usd(usd_value)}) "
-                    f"to <code>{h(short_address(destination))}</code>")
+                    f"to {counterparty(destination)}")
         if destination.lower() == wallet_address.lower():
             return (f"↘️ {who} received {amount:,.2f} {token} ({usd(usd_value)}) "
-                    f"from <code>{h(short_address(user))}</code>")
+                    f"from {counterparty(user)}")
         return None
 
     if transfer_type == 'accountClassTransfer':
