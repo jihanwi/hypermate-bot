@@ -160,6 +160,7 @@ class EventType(str, Enum):
     TRANSFER_IN = "transfer_in"
     TRANSFER_OUT = "transfer_out"
     ACCOUNT_CLASS_TRANSFER = "account_class_transfer"   # HL spot <-> perp, 기본 알림 off
+    DEX_COLLATERAL_TRANSFER = "dex_collateral_transfer" # HL 메인 <-> HIP-3 덱스 담보 이동, 기본 알림 off
     VAULT_DEPOSIT = "vault_deposit"
     VAULT_WITHDRAW = "vault_withdraw"
     PRIVACY_ON = "privacy_on"                # Aster 전용
@@ -222,6 +223,7 @@ CREATE TABLE venue_accounts (                 -- 한 지갑이 여러 베뉴/서
   account_ref TEXT NOT NULL,                  -- HL: address, Lighter: account_index, RISEx/Aster: address, Extended: position_id
   active INTEGER DEFAULT 1,                   -- resolve 결과 활동 없으면 0 (폴링 제외)
   last_activity_ms INTEGER,                   -- 티어 폴링용
+  dexs_json TEXT NOT NULL DEFAULT '[]',       -- HL 전용: 활동이 확인된 HIP-3 덱스 목록 (예: ["xyz","cash"]). 메인 덱스는 항상 폴링하므로 넣지 않음
   UNIQUE(venue, account_ref)
 );
 
@@ -246,7 +248,7 @@ CREATE TABLE cursors (
 
 CREATE TABLE snapshots (
   venue_account_id INTEGER PRIMARY KEY REFERENCES venue_accounts,
-  positions_json TEXT NOT NULL,                -- {coin: {szi, entry_px, position_value, ...}}
+  positions_json TEXT NOT NULL,                -- HL: {dex: {coin: {szi, entry_px, position_value, ...}}}, 메인 덱스 키는 "" . 다른 베뉴: {coin: {...}}
   account_value TEXT,                          -- Decimal 문자열 (marginSummary.accountValue). float 금지
   updated_at INTEGER
 );
@@ -379,7 +381,20 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 - ledger delta 타입 [V]: `deposit{usdc}`, `withdraw{usdc,nonce,fee}`, `internalTransfer{usdc,user,destination,fee}`, `subAccountTransfer{usdc,user,destination}`, `spotTransfer{token,amount,usdcValue,user,destination,fee}`, `accountClassTransfer{usdc,toPerp}`, `liquidation{...}`, `vaultDeposit{vault,usdc}`, `vaultWithdraw{vault,user,requestedUsd,commission,closingCost,basis,netWithdrawnUsd}`, `vaultCreate`, `vaultDistribution`, `vaultLeaderCommission`, `spotGenesis`, `rewardsClaim`, `send{user,destination,sourceDex,destinationDex,token,amount,usdcValue,fee,nativeTokenFee,nonce,feeToken}` (undocumented, 라이브 관측 [V]. 2026-10-03 기준 활발한 지갑의 이체는 전부 `send`, `internalTransfer`/`spotTransfer` 는 미관측. B11 참고). 숫자는 전부 문자열.
 - 모든 숫자 필드는 `Decimal` 로 파싱. float 금지.
 
+#### HIP-3 빌더 덱스 (PM 라이브 확인 2026-10-03)
+
+- `{"type":"perpDexs"}` [V] → `[null, "xyz", "flx", "vntl", "hyna", "km", "abcd", "cash", "para", "mkts", "io"]`. `null` 이 메인 덱스. 목록은 1시간 캐시.
+- `clearinghouseState` 에 `"dex": "xyz"` 를 주면 그 덱스의 포지션과 마진만 반환 [V]. 덱스별 `accountValue` 가 분리됨. 파라미터 없으면 메인 덱스만.
+- `userFillsByTime` 은 모든 덱스의 체결을 한 번에 반환 [V]. HIP-3 코인은 `"xyz:MU"` 처럼 `"<dex>:<coin>"` 형식.
+- `allDexsClearinghouseState` 는 REST 에서 422 (WS 전용) [V]. `webData2` 는 `dex` 파라미터를 무시하고 메인 덱스만 반환 [V]. `twapStates` 가 HIP-3 TWAP 을 포함하는지는 [?] 구현 중 확인.
+- ledger `send` 의 `destination` (또는 `user`) 이 시스템 주소(`0x2000000000000000000000000000000000000000` 등)이고 `destinationDex` (또는 `sourceDex`) 가 있으면 HIP-3 덱스 담보 이동 [V]. 상대방 이체가 아니므로 `TRANSFER_IN/OUT` 이 아니라 `DEX_COLLATERAL_TRANSFER` 이벤트 (기본 알림 off, settings 로 on).
+
 ### 5.2 이벤트 생성 규칙
+
+**HIP-3 덱스 커버리지**
+- `venue_accounts.dexs_json` 에 활동이 확인된 HIP-3 덱스 목록을 둔다 (기본 `[]`). `/add` 와 `/rescan` 시 `perpDexs` 전체를 `clearinghouseState(dex=...)` 로 1회 스캔해서 포지션이 있는 덱스를 기록. 이후 fills 에 새 `<dex>:` 접두사가 보이면 자동 추가.
+- 1차 폴링은 메인 덱스 + `dexs_json` 의 덱스만 `clearinghouseState`. snapshot 은 `{dex: {coin: ...}}` 로 덱스별 저장 (메인 덱스 키는 `""`).
+- 알림 메시지에서 HIP-3 코인은 `$MU (xyz)` 로 표시 (접두사 대신 괄호로 덱스). `/positions` 는 덱스별 소제목과 덱스별 account value.
 
 **포지션 (fills 기반)**
 - 1차 폴링에서 snapshot 대비 변화 감지된 계정만 `userFillsByTime(startTime=cursor.fills+1)`.
@@ -403,7 +418,7 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 - B3의 휴리스틱 삭제.
 
 **ledger**
-- `deposit` → `DEPOSIT`, `withdraw` → `WITHDRAW`, `internalTransfer` / `spotTransfer` / `send` / `subAccountTransfer` → `user == 본인` 이면 `TRANSFER_OUT` 아니면 `TRANSFER_IN`, meta.counterparty 기록 (Phase 3가 씀). `accountClassTransfer` → `ACCOUNT_CLASS_TRANSFER` (기본 알림 off, 설정으로 on). `vaultDeposit`/`vaultWithdraw` → `VAULT_*`. `vaultLeaderCommission`, `rewardsClaim`, `spotGenesis`, `vaultDistribution`, `vaultCreate` 는 이벤트 생성 안 함. 모르는 delta type은 경고 로그 1회 + 무시.
+- `deposit` → `DEPOSIT`, `withdraw` → `WITHDRAW`, `internalTransfer` / `spotTransfer` / `send` / `subAccountTransfer` → `user == 본인` 이면 `TRANSFER_OUT` 아니면 `TRANSFER_IN`, meta.counterparty 기록 (Phase 3가 씀). `accountClassTransfer` → `ACCOUNT_CLASS_TRANSFER` (기본 알림 off, 설정으로 on). 단 `send` 의 상대방이 시스템 주소이고 `sourceDex`/`destinationDex` 가 있으면 `DEX_COLLATERAL_TRANSFER` (기본 알림 off, 설정으로 on, meta 에 source/destination 덱스). `vaultDeposit`/`vaultWithdraw` → `VAULT_*`. `vaultLeaderCommission`, `rewardsClaim`, `spotGenesis`, `vaultDistribution`, `vaultCreate` 는 이벤트 생성 안 함. 모르는 delta type은 경고 로그 1회 + 무시.
 - 알림 안 나가는 이벤트도 events에 기록하되 `delivery` 컬럼으로 이유 표시 (`suppressed_twap`, `filtered_threshold`, `filtered_settings`, `muted`). `/recent` 가 이걸 보여준다.
 - cursor.ledger = 마지막 `time`.
 
@@ -616,7 +631,7 @@ Arbitrum 브릿지 (선택, `ARBISCAN_API_KEY` 있을 때만): 레거시 브릿�
   "events": {
     "position": true, "liquidation": true, "twap": true,
     "spot": true, "transfer": true, "deposit_withdraw": true,
-    "vault": false, "account_class_transfer": false
+    "vault": false, "account_class_transfer": false, "dex_collateral": false
   },
   "min_notional_usd": 0,
   "debounce_sec": 60,
