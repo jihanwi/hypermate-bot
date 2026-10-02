@@ -1,225 +1,134 @@
-"""Hyperliquid position / transfer change detection."""
+"""Hyperliquid change detection.
+
+Phase 0 keeps the v1 snapshot-diff logic (replaced in Phase 1). The functions
+here are stateless: the caller loads the previous snapshot / cursor and stores
+the returned one.
+"""
 
 import logging
 import time
-from typing import Dict
+from decimal import Decimal
+from typing import Optional
 
-from hypermate.core.formatter import format_spot_fill_message, format_transfer_message
-from hypermate.venues.hyperliquid.client import get_spot_fills, get_spot_transfers, get_wallet_positions
+from hypermate.core.numbers import to_decimal
+from hypermate.venues.hyperliquid.client import HyperliquidClient
 
 logger = logging.getLogger(__name__)
 
-# Track previously seen positions per wallet to detect new ones
-# Structure: {wallet_address: {position_id: position_data}}
-previous_positions: Dict[str, Dict[str, dict]] = {}
-
-# Track if we've done the initial scan for each wallet (to avoid alerting on existing positions)
-initial_scan_done: Dict[str, bool] = {}
-
-# Track last seen transfer timestamp per wallet
-# Structure: {wallet_address: last_timestamp}
-last_transfer_timestamps: Dict[str, int] = {}
-
-# Track if we've done the initial transfer scan for each wallet (to avoid alerting on existing transfers)
-initial_transfer_scan_done: Dict[str, bool] = {}
+ZERO = Decimal(0)
 
 
-async def check_new_transfers(wallet_address: str, alias: str) -> list:
-    """Check for new transfers and spot fills, return formatted messages."""
-    # Get both transfers and fills
-    transfers = await get_spot_transfers(wallet_address, last_transfer_timestamps.get(wallet_address, 0))
-    fills = await get_spot_fills(wallet_address, last_transfer_timestamps.get(wallet_address, 0))
-    
-    # Check if this is the first scan for this wallet
-    is_initial_scan = wallet_address not in initial_transfer_scan_done
-    
-    # Get the last seen timestamp for this wallet
-    last_timestamp = last_transfer_timestamps.get(wallet_address, 0)
-    new_messages = []
-    latest_timestamp = last_timestamp
-    
-    # Process transfers
-    for transfer in transfers:
-        transfer_time = transfer.get('time', 0)
-        latest_timestamp = max(latest_timestamp, transfer_time)
-        
-        # Only process transfers newer than last seen (and not on initial scan)
-        if transfer_time > last_timestamp and not is_initial_scan:
-            message = format_transfer_message(transfer, wallet_address, alias)
-            if message is not None:  # Skip filtered out message types
-                new_messages.append(message)
-    
-    # Process spot fills (buy/sell activities)
-    for fill in fills:
-        fill_time = fill.get('time', 0)
-        latest_timestamp = max(latest_timestamp, fill_time)
-        
-        # Only process fills newer than last seen (and not on initial scan)
-        if fill_time > last_timestamp and not is_initial_scan:
-            message = format_spot_fill_message(fill, wallet_address, alias)
-            new_messages.append(message)
-    
-    # Update the last seen timestamp
-    if latest_timestamp > last_timestamp:
-        last_transfer_timestamps[wallet_address] = latest_timestamp
-    
-    # Mark initial scan as done
-    if is_initial_scan:
-        initial_transfer_scan_done[wallet_address] = True
-        # If no transfers found, set timestamp to current time to avoid processing old data
-        if latest_timestamp == 0:
-            latest_timestamp = int(time.time() * 1000)  # Current time in milliseconds
-            last_transfer_timestamps[wallet_address] = latest_timestamp
-        logger.info(f"Initial transfer scan for {wallet_address} ({alias}) - recorded latest timestamp: {latest_timestamp}")
-    
-    return new_messages
+def now_ms() -> int:
+    return time.time_ns() // 1_000_000
 
-async def check_new_positions(wallet_address: str, alias: str) -> list:
-    """Check for position changes and return list of alerts."""
-    current_positions = await get_wallet_positions(wallet_address)
-    
-    if not current_positions or 'assetPositions' not in current_positions:
-        logger.debug(f"No positions data for {wallet_address}")
-        return []
-    
-    # Check if this is the first scan for this wallet
-    is_initial_scan = wallet_address not in initial_scan_done
-    
-    # Get current asset positions
-    asset_positions = current_positions.get('assetPositions', [])
-    logger.debug(f"Found {len(asset_positions)} asset positions for {wallet_address}")
-    
-    # Track active TWAP orders to suppress regular position alerts for TWAP-related changes
-    active_twap_coins = set()
-    if 'twapOrders' in current_positions:
-        for twap in current_positions['twapOrders']:
-            if twap.get('status') == 'active':
-                active_twap_coins.add(twap.get('coin', ''))
-    
-    # Create current position mapping
-    current_position_map = {}
-    for pos in asset_positions:
-        if 'position' in pos:
-            position = pos['position']
-            coin = position.get('coin', '')
-            szi = position.get('szi', '0')
-            if float(szi) != 0:
-                current_position_map[coin] = {
-                    'szi': szi,
-                    'direction': 'LONG' if float(szi) > 0 else 'SHORT',
-                    'entry_px': position.get('entryPx', 'N/A'),
-                    'position_value': position.get('positionValue', 'N/A'),
-                    'coin': coin,
-                    'unrealized_pnl': position.get('unrealizedPnl', 'N/A')
-                }
-    
-    # Get previous positions for this wallet
-    previous_position_map = previous_positions.get(wallet_address, {})
-    
-    position_alerts = []
-    
-    if is_initial_scan:
-        # First scan - record positions but don't alert
-        logger.info(f"Initial scan for {wallet_address} ({alias}) - recording {len(current_position_map)} positions")
-        initial_scan_done[wallet_address] = True
-    else:
-        # Check for NEW positions and SIZE INCREASES
-        for coin, current_pos in current_position_map.items():
-            # Skip position alerts if there's an active TWAP order for this coin
-            is_twap_related = coin in active_twap_coins
-            
-            if coin not in previous_position_map:
-                # Completely new position
-                if not is_twap_related:
-                    logger.info(f"New position detected: {coin} for {wallet_address} ({alias})")
-                    position_alerts.append({
-                        **current_pos,
-                        'alert_type': 'NEW_POSITION'
-                    })
-                else:
-                    logger.info(f"New position detected for {coin} but suppressed due to active TWAP")
-            else:
-                # Position exists - check for size changes
-                prev_szi = float(previous_position_map[coin]['szi'])
-                curr_szi = float(current_pos['szi'])
-                
-                # Check if position size increased (same direction)
-                if ((prev_szi > 0 and curr_szi > prev_szi) or 
-                    (prev_szi < 0 and curr_szi < prev_szi)):
-                    size_increase = abs(curr_szi - prev_szi)
-                    if not is_twap_related:
-                        logger.info(f"Position size increase detected: {coin} for {wallet_address} ({alias}) - added {size_increase}")
-                        position_alerts.append({
-                            **current_pos,
-                            'alert_type': 'POSITION_INCREASE',
-                            'size_change': size_increase
-                        })
-                    else:
-                        logger.info(f"Position size increase detected for {coin} but suppressed due to active TWAP")
-                
-                # Check if position size decreased (partial close)
-                elif ((prev_szi > 0 and curr_szi < prev_szi and curr_szi > 0) or 
-                      (prev_szi < 0 and curr_szi > prev_szi and curr_szi < 0)):
-                    size_decrease = abs(prev_szi - curr_szi)
-                    if not is_twap_related:
-                        logger.info(f"Position size decrease detected: {coin} for {wallet_address} ({alias}) - reduced by {size_decrease}")
-                        position_alerts.append({
-                            **current_pos,
-                            'alert_type': 'POSITION_DECREASE',
-                            'size_change': size_decrease,
-                            'remaining_size': abs(curr_szi)
-                        })
-                    else:
-                        logger.info(f"Position size decrease detected for {coin} but suppressed due to active TWAP")
-        
-        # Check for CLOSED positions and LIQUIDATIONS
-        for coin, prev_pos in previous_position_map.items():
-            if coin not in current_position_map:
-                # Position completely closed
-                prev_szi = float(prev_pos['szi'])
-                position_size = abs(prev_szi)
-                prev_direction = prev_pos['direction']
-                
-                # Get the closing PnL from the previous position
-                closing_pnl = None
-                pnl_value = 0
-                if prev_pos.get('unrealized_pnl') and prev_pos['unrealized_pnl'] != 'N/A':
-                    try:
-                        pnl_value = float(prev_pos['unrealized_pnl'])
-                        closing_pnl = pnl_value
-                    except (ValueError, TypeError):
-                        pass
-                
-                # Try to determine if this was a liquidation
-                # We'll look for rapid position changes or large unrealized losses
-                is_liquidation = False
-                if closing_pnl is not None:
-                    # If PnL was very negative (>15% loss), might be liquidation
-                    try:
-                        position_value = abs(float(prev_pos.get('position_value', 0)))
-                        if position_value > 0 and pnl_value < -0.15 * position_value:
-                            is_liquidation = True
-                    except (ValueError, TypeError):
-                        pass
-                
-                if is_liquidation:
-                    logger.info(f"Potential liquidation detected: {coin} for {wallet_address} ({alias}) - PnL: {closing_pnl}")
-                    position_alerts.append({
-                        **prev_pos,
-                        'alert_type': 'LIQUIDATION',
-                        'liquidated_size': position_size,
-                        'closing_pnl': closing_pnl
-                    })
-                else:
-                    logger.info(f"Position closed: {coin} for {wallet_address} ({alias}) - PnL: {closing_pnl}")
-                    position_alerts.append({
-                        **prev_pos,
-                        'alert_type': 'POSITION_CLOSED',
-                        'closed_size': position_size,
-                        'closing_pnl': closing_pnl
-                    })
-    
-    # Update stored positions
-    previous_positions[wallet_address] = current_position_map
-    
-    return position_alerts
+
+def is_spot_coin(coin: str) -> bool:
+    """Spot fills use "PURR/USDC" or "@107"; perp fills use the bare asset name (B9)."""
+    return '/' in coin or coin.startswith('@')
+
+
+def parse_positions(clearinghouse_state: dict) -> dict[str, dict]:
+    """Open perp positions keyed by coin. Values are kept as API strings so they serialize to JSON as-is."""
+    positions = {}
+    for pos in clearinghouse_state.get('assetPositions', []):
+        position = pos.get('position')
+        if not position:
+            continue
+        coin = position.get('coin', '')
+        szi = to_decimal(position.get('szi', '0')) or ZERO
+        if szi == 0:
+            continue
+        positions[coin] = {
+            'szi': str(position.get('szi')),
+            'direction': 'LONG' if szi > 0 else 'SHORT',
+            'entry_px': str(position.get('entryPx', 'N/A')),
+            'position_value': str(position.get('positionValue', 'N/A')),
+            'coin': coin,
+            'unrealized_pnl': str(position.get('unrealizedPnl', 'N/A')),
+        }
+    return positions
+
+
+def diff_positions(previous: dict[str, dict], current: dict[str, dict]) -> list[dict]:
+    """Position alerts from two snapshots. v1 logic (B3/B8 heuristics are fixed in Phase 1)."""
+    alerts = []
+
+    for coin, curr_pos in current.items():
+        if coin not in previous:
+            alerts.append({**curr_pos, 'alert_type': 'NEW_POSITION'})
+            continue
+
+        prev_szi = to_decimal(previous[coin]['szi'])
+        curr_szi = to_decimal(curr_pos['szi'])
+
+        # Size increased in the same direction
+        if (prev_szi > 0 and curr_szi > prev_szi) or (prev_szi < 0 and curr_szi < prev_szi):
+            alerts.append({**curr_pos, 'alert_type': 'POSITION_INCREASE',
+                           'size_change': str(abs(curr_szi - prev_szi))})
+
+        # Size decreased without closing (partial close)
+        elif ((prev_szi > 0 and 0 < curr_szi < prev_szi) or
+              (prev_szi < 0 and prev_szi < curr_szi < 0)):
+            alerts.append({**curr_pos, 'alert_type': 'POSITION_DECREASE',
+                           'size_change': str(abs(prev_szi - curr_szi)),
+                           'remaining_size': str(abs(curr_szi))})
+
+    for coin, prev_pos in previous.items():
+        if coin in current:
+            continue
+        position_size = abs(to_decimal(prev_pos['szi']))
+        # B8: last polled unrealized PnL stands in for realized PnL until Phase 1
+        closing_pnl = to_decimal(prev_pos.get('unrealized_pnl'))
+
+        # B3: "loss > 15% of position value" liquidation heuristic until Phase 1
+        is_liquidation = False
+        position_value = to_decimal(prev_pos.get('position_value'))
+        if closing_pnl is not None and position_value is not None:
+            position_value = abs(position_value)
+            if position_value > 0 and closing_pnl < Decimal('-0.15') * position_value:
+                is_liquidation = True
+
+        alert = {**prev_pos, 'closing_pnl': None if closing_pnl is None else str(closing_pnl)}
+        if is_liquidation:
+            alert.update(alert_type='LIQUIDATION', liquidated_size=str(position_size))
+        else:
+            alert.update(alert_type='POSITION_CLOSED', closed_size=str(position_size))
+        alerts.append(alert)
+
+    return alerts
+
+
+def items_after(items: list, cursor: int) -> tuple[list, int]:
+    """Items with time > cursor, sorted by time, and the advanced cursor."""
+    new_items = sorted((i for i in items if int(i.get('time', 0)) > cursor), key=lambda i: int(i['time']))
+    new_cursor = max([cursor] + [int(i['time']) for i in new_items])
+    return new_items, new_cursor
+
+
+async def check_positions(client: HyperliquidClient, address: str,
+                          previous: Optional[dict]) -> tuple[list[dict], dict]:
+    """Return (alerts, current snapshot). previous=None records a baseline without alerts."""
+    current = parse_positions(await client.clearinghouse_state(address))
+    if previous is None:
+        logger.info(f"Baseline snapshot for {address}: {len(current)} positions")
+        return [], current
+    alerts = diff_positions(previous, current)
+    for alert in alerts:
+        logger.info(f"{alert['alert_type']} {alert['coin']} for {address}")
+    return alerts, current
+
+
+async def check_ledger(client: HyperliquidClient, address: str, cursor: int) -> tuple[list[dict], int]:
+    """Ledger updates (deposits, withdrawals, transfers) since cursor (B5: info API only)."""
+    updates = await client.ledger_updates(address, cursor + 1)
+    return items_after(updates, cursor)
+
+
+async def check_spot_fills(client: HyperliquidClient, address: str, cursor: int) -> tuple[list[dict], int]:
+    """Spot fills since cursor (B10: userFillsByTime). The cursor advances over perp fills too."""
+    fills = await client.user_fills_by_time(address, cursor + 1)
+    new_fills, new_cursor = items_after(fills, cursor)
+    spot_fills = [f for f in new_fills if is_spot_coin(f.get('coin', ''))]
+    for fill in spot_fills:
+        fill['display_coin'] = await client.spot_display_name(fill['coin'])
+    return spot_fills, new_cursor
