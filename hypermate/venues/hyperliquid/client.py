@@ -12,6 +12,8 @@ from typing import Any, Optional
 
 import aiohttp
 
+from hypermate.venues.hyperliquid.scheduler import WeightBudget, item_weight, request_cost
+
 logger = logging.getLogger(__name__)
 
 _json_loads = functools.partial(json.loads, parse_float=Decimal)
@@ -21,11 +23,25 @@ class HyperliquidAPIError(Exception):
     """Non-200 response or transport failure from the Hyperliquid info API."""
 
 
+class HyperliquidRateLimited(HyperliquidAPIError):
+    """HTTP 429. The weight budget is already paused when this is raised."""
+
+
+def _retry_after(headers) -> Optional[int]:
+    """Retry-After in whole seconds (the delay-seconds form; a date form is ignored)."""
+    try:
+        return int(headers.get('Retry-After'))
+    except (TypeError, ValueError):
+        return None
+
+
 class HyperliquidClient:
     """Thin wrapper over POST /info. One aiohttp session per process."""
 
-    def __init__(self, base_url: str, spot_meta_ttl_sec: int = 3600, perp_dexs_ttl_sec: int = 3600) -> None:
+    def __init__(self, base_url: str, spot_meta_ttl_sec: int = 3600, perp_dexs_ttl_sec: int = 3600,
+                 budget: Optional[WeightBudget] = None) -> None:
         self.base_url = base_url.rstrip('/')
+        self.budget = budget
         self.spot_meta_ttl_sec = spot_meta_ttl_sec
         self.perp_dexs_ttl_sec = perp_dexs_ttl_sec
         self._perp_dexs: list[str] = []
@@ -43,16 +59,31 @@ class HyperliquidClient:
             await self._session.close()
             self._session = None
 
-    async def _info(self, payload: dict) -> Any:
+    async def _post(self, payload: dict) -> tuple[int, Any, Any]:
+        """(status, headers, parsed body or None). Separate so tests can swap the transport."""
         await self.start()
-        url = f"{self.base_url}/info"
+        async with self._session.post(f"{self.base_url}/info", json=payload) as response:
+            body = await response.json(loads=_json_loads) if response.status == 200 else None
+            return response.status, response.headers, body
+
+    async def _info(self, payload: dict) -> Any:
+        """One info request, paced by the weight budget (spec 3.5)."""
+        request_type = payload['type']
+        if self.budget is not None:
+            await self.budget.acquire(*request_cost(request_type))
         try:
-            async with self._session.post(url, json=payload) as response:
-                if response.status != 200:
-                    raise HyperliquidAPIError(f"{payload['type']} returned HTTP {response.status}")
-                return await response.json(loads=_json_loads)
+            status, headers, body = await self._post(payload)
         except aiohttp.ClientError as e:
-            raise HyperliquidAPIError(f"{payload['type']} failed: {e}") from e
+            raise HyperliquidAPIError(f"{request_type} failed: {e}") from e
+        if status == 429:
+            if self.budget is not None:
+                self.budget.rate_limited(_retry_after(headers))
+            raise HyperliquidRateLimited(f"{request_type} returned HTTP 429")
+        if status != 200:
+            raise HyperliquidAPIError(f"{request_type} returned HTTP {status}")
+        if self.budget is not None and isinstance(body, list):
+            self.budget.charge(item_weight(request_type, len(body)), request_cost(request_type)[1])
+        return body
 
     async def clearinghouse_state(self, user: str, dex: str = '') -> dict:
         """Positions and margin of one perp dex; "" is the main dex (no dex param, spec 5.1 HIP-3)."""

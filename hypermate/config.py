@@ -27,9 +27,20 @@ class Config:
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
 
-    # Polling (v1 values; Phase 1 replaces these with the weight-budget scheduler)
-    POSITIONS_POLL_SEC: int = 30
-    TRANSFERS_POLL_SEC: int = 30
+    # Polling (spec 3.5). POLL_FAST_SEC is the floor; the poller raises it when snapshot
+    # polling would need more than 40% of HL_WEIGHT_BUDGET.
+    POLL_FAST_SEC: int = int(os.getenv("POLL_FAST_SEC", "20"))
+    POLL_LEDGER_SEC: int = int(os.getenv("POLL_LEDGER_SEC", "180"))
+    POLL_LEDGER_MAX_SEC: int = 600
+    HL_WEIGHT_BUDGET: int = int(os.getenv("HL_WEIGHT_BUDGET", "1020"))   # 1200/min with a 15% margin
+    DORMANT_AFTER_MS: int = 7 * 24 * 3600 * 1000     # no activity for 7 days -> polled every 3rd cycle
+    ADMIN_USER_IDS: frozenset = frozenset(
+        int(x) for x in os.getenv("ADMIN_USER_IDS", "").replace(",", " ").split() if x.strip().isdigit())
+
+    # Daily DB backup (sqlite backup API), kept for BACKUP_KEEP_DAYS
+    BACKUP_DIR: str = os.getenv("BACKUP_DIR", "")       # default: <DATABASE_PATH dir>/backups
+    BACKUP_KEEP_DAYS: int = 7
+    BACKUP_HOUR_KST: int = 4
     SPOT_META_TTL_SEC: int = 3600
     PERP_DEXS_TTL_SEC: int = 3600
 
@@ -42,6 +53,7 @@ class Config:
         'algo_max_slice_pct': 2,
         'algo_progress_sec': 600,
         'algo_idle_sec': 600,
+        'dust_notional_usd': 10,     # /positions folds smaller positions into one line
     }
 
     @classmethod
