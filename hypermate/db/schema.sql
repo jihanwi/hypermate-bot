@@ -1,6 +1,6 @@
 -- HyperMate schema, spec section 3.4. Applied on every startup, so statements are idempotent.
--- Phase 0 uses users, wallets, venue_accounts, subscriptions, cursors, snapshots.
--- The other tables are created now for later phases.
+-- Columns added after a table was first deployed are also added by Repo.connect() (ALTER TABLE),
+-- because CREATE TABLE IF NOT EXISTS does not touch existing tables.
 
 CREATE TABLE IF NOT EXISTS users (
   user_id INTEGER PRIMARY KEY,               -- Telegram user id
@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS venue_accounts (                 -- 한 지갑이 여
   account_ref TEXT NOT NULL,                  -- HL: address, Lighter: account_index, RISEx/Aster: address, Extended: position_id
   active INTEGER DEFAULT 1,                   -- resolve 결과 활동 없으면 0 (폴링 제외)
   last_activity_ms INTEGER,                   -- 티어 폴링용
+  dexs_json TEXT NOT NULL DEFAULT '[]',       -- HL: HIP-3 dexs with activity (main dex is always polled)
   UNIQUE(venue, account_ref)
 );
 
@@ -45,7 +46,7 @@ CREATE TABLE IF NOT EXISTS cursors (
 
 CREATE TABLE IF NOT EXISTS snapshots (
   venue_account_id INTEGER PRIMARY KEY REFERENCES venue_accounts,
-  positions_json TEXT NOT NULL,                -- {coin: {szi, entry_px, position_value, ...}}
+  positions_json TEXT NOT NULL,                -- HL: {dex: {coin: {szi, entry_px, position_value, ...}}}, main dex key ""
   account_value TEXT,                          -- Decimal string (marginSummary.accountValue)
   updated_at INTEGER
 );
@@ -56,6 +57,18 @@ CREATE TABLE IF NOT EXISTS twap_active (
   state_json TEXT NOT NULL,
   started_ms INTEGER,
   PRIMARY KEY (venue_account_id, twap_id)
+);
+
+CREATE TABLE IF NOT EXISTS algo_active (     -- synthetic TWAP (external execution bot) tracking, spec 5.2
+  venue_account_id INTEGER REFERENCES venue_accounts,
+  coin TEXT NOT NULL,
+  sign INTEGER NOT NULL,                      -- +1: Open Long / Close Short, -1: Open Short / Close Long
+  started_ms INTEGER,
+  last_fill_ms INTEGER,
+  fills_count INTEGER,
+  total_sz TEXT,                              -- Decimal string
+  total_ntl TEXT,                             -- Decimal string
+  PRIMARY KEY (venue_account_id, coin, sign)
 );
 
 CREATE TABLE IF NOT EXISTS events (
