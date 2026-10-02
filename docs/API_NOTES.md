@@ -59,9 +59,22 @@ Hyperliquid facts below were checked live against `https://api.hyperliquid.xyz/i
 - webData2 is large (311 KB in the fixture). Its weight is still [I] 20.
 - **[?] Not verified: whether `twapStates` includes HIP-3 TWAPs.** `twapHistory` does include them (`xyz:MSTR` in the fixture), but the webData2 fixture's 5 active TWAPs are all main-dex coins. Needs a live check with a wallet running a HIP-3 TWAP (owner). If they are missing, HIP-3 TWAP slices will not be suppressed.
 
-### Open item for Phase 1
+### HIP-3 dexs (Phase 1 PR B)
 
-- The recorded wallets trade HIP-3 dex perps (`xyz:`, `para:`). `clearinghouseState` without a `dex` parameter returns the main dex only, so Phase 0 position alerts and `/positions` do not cover HIP-3 positions. Not verified live which `dex` values to query; left for Phase 1.
+- `perpDexs` returns a list whose first entry is `null` (the main dex). The other entries were documented as objects with `name`; the client accepts both a plain string and an object with `name`, and skips `null`. Not verified live which shape the API returns today (owner).
+- `clearinghouseState` with `{"dex": "xyz"}` returns that dex's positions only. The bot queries the main dex plus every dex in `venue_accounts.dexs_json`. Not verified live: whether `position.coin` inside a dex state is `"xyz:MU"` or `"MU"` (owner). The snapshot is keyed by dex, so either form works for change detection; `/positions` shows what the API returns.
+- Margin balance in `/positions` is the sum of `marginSummary.accountValue` over all queried dexs.
+- `webData2` mark prices (`meta.universe` / `assetCtxs`) cover the main dex only, so a HIP-3 TWAP_START shows the coin amount instead of USD.
+- Dex discovery: one scan of all `perpDexs` on `/add`, one automatic scan per existing wallet (cursor kind `dex_scan`), `/rescan` on demand, and a new dex prefix seen in fills is added automatically.
+
+### userFillsByTime (Phase 1 PR B)
+
+- One request returns fills of every dex (main, HIP-3) and spot. Spot coins are `"PURR/USDC"` or `"@107"`; HIP-3 coins are `"xyz:MU"`.
+- `tid` is not monotonic within a millisecond. Sorting same-ms fills by `tid` breaks the `startPosition` chain, so the bot keeps the API order (stable sort on `time` only).
+- `dir == "Spot Dust Conversion"` appears in spot history; it is skipped.
+- TWAP slice fills do not appear in `userFillsByTime` (fixture: 8 gaps in the `startPosition` chain, each explained by a TWAP slice in `userTwapSliceFillsByTime`). So a native TWAP never produces position alerts from fills; the START/END messages come from webData2/twapHistory as in PR A.
+- Fixture replay (`hl_userFillsByTime.json`, 348 fills): 114 orders, OPEN 38 / INCREASE 8 / DECREASE 21 / CLOSE 47 after the spot split; realized PnL total equals the sum of `closedPnl`; dexs `""` 106, `xyz` 6, `para` 2.
+- Polling: fills are fetched every transfers cycle (same cadence as Phase 0). Spec 5.2 says fetch fills only when the snapshot changed, but spot fills never change perp snapshots. The weight optimization is left for PR C (scheduler).
 
 ## Telegram
 
