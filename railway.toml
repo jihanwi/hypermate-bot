@@ -2,7 +2,7 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "python bot.py"
+startCommand = "python -m hypermate.main"
 healthcheckPath = ""
 healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE" 
