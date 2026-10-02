@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 
 async def deliver(bot: Bot, repo: Repo, account_key: int, render: Callable[[str], Optional[str]]) -> None:
     """Send one alert to every subscriber of the account, rendered with that subscriber's alias."""
-    for user_id, alias in await repo.subscribers(account_key):
+    subscribers = await repo.subscribers(account_key)
+    for i, (user_id, alias) in enumerate(subscribers):
         text = render(alias)
         if text is None:
             continue
@@ -27,7 +28,8 @@ async def deliver(bot: Bot, repo: Repo, account_key: int, render: Callable[[str]
             logger.info(f"Sent alert to user {user_id} ({alias})")
         except Exception as e:
             logger.error(f"Failed to send alert to user {user_id}: {e}")
-        await asyncio.sleep(1)
+        if i < len(subscribers) - 1:
+            await asyncio.sleep(1)
 
 
 async def _cursor(repo: Repo, account_key: int, kind: str) -> int:
@@ -48,8 +50,8 @@ async def monitor_positions_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     for i, (key, address) in enumerate(accounts):
         try:
             previous = await repo.get_snapshot(key)
-            alerts, current = await adapter.check_positions(client, address, previous)
-            await repo.save_snapshot(key, current, adapter.now_ms())
+            alerts, current, account_value = await adapter.check_positions(client, address, previous)
+            await repo.save_snapshot(key, current, adapter.now_ms(), account_value)
             for alert in alerts:
                 await deliver(context.bot, repo, key,
                               lambda alias, a=alert: format_position_alert(address, alias, a))

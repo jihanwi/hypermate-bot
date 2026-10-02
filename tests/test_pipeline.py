@@ -123,3 +123,24 @@ async def test_api_error_does_not_advance_cursor(repo, monkeypatch):
 
 async def _no_sleep(_seconds):
     return None
+
+
+async def test_deliver_sleeps_only_between_subscribers(repo, monkeypatch):
+    sleeps = []
+
+    async def record_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(pipeline.asyncio, 'sleep', record_sleep)
+    for user_id in (1, 2, 3):
+        await repo.add_subscription(user_id, A, f'w{user_id}', 1000)
+    (va, _), = await repo.tracked_accounts()
+    bot = FakeBot()
+    await pipeline.deliver(bot, repo, va, lambda alias: f'hi {alias}')
+    assert len(bot.sent) == 3 and sleeps == [1, 1]
+
+    await repo.remove_subscription(2, 'w2')
+    await repo.remove_subscription(3, 'w3')
+    sleeps.clear()
+    await pipeline.deliver(bot, repo, va, lambda alias: f'hi {alias}')
+    assert sleeps == []
