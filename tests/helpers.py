@@ -53,6 +53,8 @@ class FakeHLClient:
         self.ledger = {}
         self.fills = {}
         self.portfolios = {}
+        self.web = {}
+        self.twap_histories = {}
         self.calls = []
 
     async def clearinghouse_state(self, user):
@@ -74,6 +76,14 @@ class FakeHLClient:
     async def portfolio(self, user):
         self.calls.append(('portfolio', user))
         return self.portfolios.get(user, [])
+
+    async def web_data2(self, user):
+        self.calls.append(('webData2', user))
+        return self.web.get(user, {'twapStates': [], 'meta': {'universe': []}, 'assetCtxs': []})
+
+    async def twap_history(self, user):
+        self.calls.append(('twapHistory', user))
+        return self.twap_histories.get(user, [])
 
     async def spot_display_name(self, coin):
         return {'@107': 'HYPE', 'PURR/USDC': 'PURR'}.get(coin, coin)

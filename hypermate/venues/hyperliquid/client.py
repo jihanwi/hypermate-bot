@@ -71,6 +71,15 @@ class HyperliquidClient:
         data = await self._info({"type": "portfolio", "user": user})
         return data if isinstance(data, list) else []
 
+    async def web_data2(self, user: str) -> dict:
+        """Frontend endpoint; twapStates lists the user's active TWAPs (main dex only, spec 5.1)."""
+        return await self._info({"type": "webData2", "user": user})
+
+    async def twap_history(self, user: str) -> list:
+        """[{time (s), state, status: {status, description?}, twapId}], newest first."""
+        data = await self._info({"type": "twapHistory", "user": user})
+        return data if isinstance(data, list) else []
+
     async def spot_meta(self) -> dict:
         return await self._info({"type": "spotMeta"})
 

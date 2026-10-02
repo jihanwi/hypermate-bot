@@ -169,3 +169,44 @@ class Repo:
             "cursor = excluded.cursor, updated_at = excluded.updated_at",
             (venue_account_id, kind, value, now_ms))
         await self.db.commit()
+
+    # Events (spec 3.3: dedupe_key is the only guard against double alerts) ---
+
+    async def record_event(self, dedupe_key: str, venue_account_id: int, event_type: str, ts_ms: int,
+                           payload: dict, delivery: str, now_ms: int) -> Optional[int]:
+        """Insert an event; returns its id, or None if the dedupe_key was already recorded."""
+        cur = await self.db.execute(
+            "INSERT OR IGNORE INTO events "
+            "(dedupe_key, venue_account_id, type, ts_ms, payload_json, delivery, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (dedupe_key, venue_account_id, event_type, ts_ms,
+             json.dumps(payload, sort_keys=True, default=str), delivery, now_ms))
+        await self.db.commit()
+        return cur.lastrowid if cur.rowcount == 1 else None
+
+    async def recent_events(self, venue_account_id: int, limit: int = 30) -> list[dict]:
+        cur = await self.db.execute(
+            "SELECT event_id, dedupe_key, type, ts_ms, payload_json, delivery FROM events "
+            "WHERE venue_account_id = ? ORDER BY ts_ms DESC, event_id DESC LIMIT ?", (venue_account_id, limit))
+        return [{'event_id': r[0], 'dedupe_key': r[1], 'type': r[2], 'ts_ms': r[3],
+                 'payload': json.loads(r[4]), 'delivery': r[5]} for r in await cur.fetchall()]
+
+    # Active TWAPs ------------------------------------------------------------
+
+    async def active_twaps(self, venue_account_id: int) -> dict[str, dict]:
+        """{twap_id: last known state} for the account."""
+        cur = await self.db.execute(
+            "SELECT twap_id, state_json FROM twap_active WHERE venue_account_id = ?", (venue_account_id,))
+        return {twap_id: json.loads(state) for twap_id, state in await cur.fetchall()}
+
+    async def upsert_twap(self, venue_account_id: int, twap_id: str, state: dict, started_ms: int) -> None:
+        await self.db.execute(
+            "INSERT INTO twap_active (venue_account_id, twap_id, state_json, started_ms) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(venue_account_id, twap_id) DO UPDATE SET state_json = excluded.state_json",
+            (venue_account_id, twap_id, json.dumps(state, sort_keys=True, default=str), started_ms))
+        await self.db.commit()
+
+    async def delete_twap(self, venue_account_id: int, twap_id: str) -> None:
+        await self.db.execute(
+            "DELETE FROM twap_active WHERE venue_account_id = ? AND twap_id = ?", (venue_account_id, twap_id))
+        await self.db.commit()

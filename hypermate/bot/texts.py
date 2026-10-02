@@ -29,9 +29,9 @@ HELP = (
     "<b>Alerts</b> for every tracked wallet:\n"
     "• Perp positions opened, increased, reduced, closed or liquidated\n"
     "• Spot buys and sells\n"
-    "• Deposits, withdrawals, transfers and vault deposits/withdrawals\n\n"
-    "TWAP orders currently show up as position changes. "
-    "Start/end-only TWAP alerts come in a later update."
+    "• Deposits, withdrawals, transfers and vault deposits/withdrawals\n"
+    "• TWAP orders: one alert when a TWAP starts and one when it ends. "
+    "Position changes from a running TWAP are not alerted."
 )
 
 EXAMPLE_ADDRESS = "0x1234567890abcdef1234567890abcdef12345678"
