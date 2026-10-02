@@ -107,7 +107,7 @@ def test_stats_view():
 def test_list_and_summary_lines():
     perp = clearinghouse(position('BTC', '1', position_value='90000'), position('ETH', '-1', position_value='3000'),
                          account_value='5000')
-    assert formatter.format_list_line('w_1', ADDR, perp).endswith('· $5,000.00')
+    assert formatter.format_list_line('w_1', ADDR, Decimal('5000')).endswith('· $5,000.00')
     assert formatter.format_list_line('w_1', ADDR, None).endswith('· n/a')
     summary = formatter.format_positions_summary_line('w_1', ADDR, perp)
     assert '$5,000.00 · 2 positions · largest LONG $BTC $90,000' in summary

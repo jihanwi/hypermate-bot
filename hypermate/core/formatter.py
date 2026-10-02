@@ -309,9 +309,8 @@ def account_value(perp_state: dict) -> Optional[Decimal]:
     return to_decimal(perp_state.get('marginSummary', {}).get('accountValue'))
 
 
-def format_list_line(alias: str, address: str, perp_state: Optional[dict]) -> str:
-    """/list row. perp_state None means the API call failed."""
-    value = account_value(perp_state) if perp_state is not None else None
+def format_list_line(alias: str, address: str, value: Optional[Decimal]) -> str:
+    """/list row. value None means unknown (not polled yet and the API call failed)."""
     value_str = usd(value) if value is not None else "n/a"
     return f"• {alias_link(address, alias)}: {h(address)} · {value_str}"
 

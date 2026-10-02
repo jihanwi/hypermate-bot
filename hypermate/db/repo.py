@@ -136,14 +136,25 @@ class Repo:
         row = await cur.fetchone()
         return json.loads(row[0]) if row else None
 
-    async def save_snapshot(self, venue_account_id: int, positions: dict, now_ms: int) -> None:
-        # account_value stays NULL in Phase 0: the column is REAL and nothing reads it yet.
+    async def save_snapshot(self, venue_account_id: int, positions: dict, now_ms: int,
+                            account_value: Optional[str] = None) -> None:
+        """account_value is a Decimal string (TEXT column), never a float."""
         await self.db.execute(
-            "INSERT INTO snapshots (venue_account_id, positions_json, updated_at) VALUES (?, ?, ?) "
-            "ON CONFLICT(venue_account_id) DO UPDATE SET "
-            "positions_json = excluded.positions_json, updated_at = excluded.updated_at",
-            (venue_account_id, json.dumps(positions, sort_keys=True), now_ms))
+            "INSERT INTO snapshots (venue_account_id, positions_json, account_value, updated_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(venue_account_id) DO UPDATE SET positions_json = excluded.positions_json, "
+            "account_value = excluded.account_value, updated_at = excluded.updated_at",
+            (venue_account_id, json.dumps(positions, sort_keys=True), account_value, now_ms))
         await self.db.commit()
+
+    async def hl_account_value(self, address: str) -> Optional[str]:
+        """Last polled HL account value for the address, or None if not polled yet."""
+        cur = await self.db.execute(
+            "SELECT s.account_value FROM snapshots s "
+            "JOIN venue_accounts va USING (venue_account_id) "
+            "WHERE va.venue = ? AND va.account_ref = ?", (HYPERLIQUID, address))
+        row = await cur.fetchone()
+        return row[0] if row else None
 
     async def get_cursor(self, venue_account_id: int, kind: str) -> Optional[str]:
         cur = await self.db.execute(

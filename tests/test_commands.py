@@ -72,3 +72,25 @@ async def test_hl_api_error_message(repo):
     await call(commands.add_wallet, repo, hl, 1, A, 'w')
     assert await call(commands.positions_command, repo, hl, 1, 'w') == [texts.HL_API_ERROR]
     assert '· n/a' in (await call(commands.list_wallets, repo, hl, 1))[0]
+
+
+async def test_list_uses_stored_account_value_after_poll(repo, monkeypatch):
+    from hypermate.core import pipeline
+    from tests.helpers import FakeBot
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(pipeline.asyncio, 'sleep', no_sleep)
+    hl = FakeHLClient()
+    hl.clearinghouse[A] = clearinghouse(account_value='1234.5678')
+    await call(commands.add_wallet, repo, hl, 3, A, 'w')
+    # not polled yet: falls back to a live call
+    assert '$1,234.57' in (await call(commands.list_wallets, repo, hl, 3))[0]
+    assert ('clearinghouseState', A) in hl.calls
+
+    await pipeline.monitor_positions_job(make_context({'repo': repo, 'hl': hl}, bot=FakeBot()))
+    hl.clearinghouse[A] = clearinghouse(account_value='99')   # live value now differs
+    hl.calls.clear()
+    assert '$1,234.57' in (await call(commands.list_wallets, repo, hl, 3))[0]
+    assert hl.calls == []

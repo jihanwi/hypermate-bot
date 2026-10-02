@@ -11,6 +11,7 @@ from telegram.ext import ContextTypes
 from hypermate.bot import texts
 from hypermate.core import formatter
 from hypermate.core.formatter import h
+from hypermate.core.numbers import to_decimal
 from hypermate.db.repo import ADDED, ALIAS_EXISTS, Repo
 from hypermate.venues.hyperliquid.adapter import now_ms
 from hypermate.venues.hyperliquid.client import HyperliquidAPIError, HyperliquidClient
@@ -90,9 +91,18 @@ async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not wallets:
         await reply(update, texts.NO_WALLETS)
         return
-    lines = [formatter.format_list_line(alias, address, await _perp_state_or_none(context, address))
+    lines = [formatter.format_list_line(alias, address, await _account_value(context, address))
              for alias, address in wallets]
     await reply(update, texts.LIST_HEADER + "\n" + "\n".join(lines))
+
+
+async def _account_value(context: ContextTypes.DEFAULT_TYPE, address: str):
+    """Account value from the last positions poll; live clearinghouseState only if not polled yet."""
+    stored = to_decimal(await _repo(context).hl_account_value(address))
+    if stored is not None:
+        return stored
+    state = await _perp_state_or_none(context, address)
+    return formatter.account_value(state) if state is not None else None
 
 
 async def remove_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

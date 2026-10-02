@@ -84,3 +84,14 @@ async def test_snapshot_and_cursor_roundtrip_survive_reconnect(repo):
     assert await reopened.get_cursor(va, 'ledger') == '1700000000123'
     await reopened.close()
     repo.db = None
+
+
+async def test_account_value_stored_as_decimal_text(repo):
+    await repo.add_subscription(1, A, 'a', 1000)
+    (va, _), = await repo.tracked_accounts()
+    assert await repo.hl_account_value(A) is None
+    await repo.save_snapshot(va, {}, 2000, '10500.123456789012345')
+    assert await repo.hl_account_value(A) == '10500.123456789012345'
+    row = await (await repo.db.execute(
+        'SELECT typeof(account_value) FROM snapshots WHERE venue_account_id = ?', (va,))).fetchone()
+    assert row[0] == 'text'

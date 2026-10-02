@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS cursors (
 CREATE TABLE IF NOT EXISTS snapshots (
   venue_account_id INTEGER PRIMARY KEY REFERENCES venue_accounts,
   positions_json TEXT NOT NULL,                -- {coin: {szi, entry_px, position_value, ...}}
-  account_value REAL,
+  account_value TEXT,                          -- Decimal string (marginSummary.accountValue)
   updated_at INTEGER
 );
 

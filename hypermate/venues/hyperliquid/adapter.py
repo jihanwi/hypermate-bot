@@ -105,17 +105,25 @@ def items_after(items: list, cursor: int) -> tuple[list, int]:
     return new_items, new_cursor
 
 
+def parse_account_value(clearinghouse_state: dict) -> Optional[str]:
+    """marginSummary.accountValue as a Decimal string, or None."""
+    value = to_decimal(clearinghouse_state.get('marginSummary', {}).get('accountValue'))
+    return None if value is None else str(value)
+
+
 async def check_positions(client: HyperliquidClient, address: str,
-                          previous: Optional[dict]) -> tuple[list[dict], dict]:
-    """Return (alerts, current snapshot). previous=None records a baseline without alerts."""
-    current = parse_positions(await client.clearinghouse_state(address))
+                          previous: Optional[dict]) -> tuple[list[dict], dict, Optional[str]]:
+    """Return (alerts, current snapshot, account value). previous=None records a baseline without alerts."""
+    state = await client.clearinghouse_state(address)
+    current = parse_positions(state)
+    account_value = parse_account_value(state)
     if previous is None:
         logger.info(f"Baseline snapshot for {address}: {len(current)} positions")
-        return [], current
+        return [], current, account_value
     alerts = diff_positions(previous, current)
     for alert in alerts:
         logger.info(f"{alert['alert_type']} {alert['coin']} for {address}")
-    return alerts, current
+    return alerts, current, account_value
 
 
 async def check_ledger(client: HyperliquidClient, address: str, cursor: int) -> tuple[list[dict], int]:
