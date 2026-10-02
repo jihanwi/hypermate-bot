@@ -4,10 +4,10 @@ import asyncio
 import logging
 import os
 
-from telegram import Update
+from telegram import BotCommand, BotCommandScopeAllPrivateChats, Update
 from telegram.ext import Application, CommandHandler
 
-from hypermate.bot import commands
+from hypermate.bot import commands, texts
 from hypermate.config import Config
 from hypermate.core import pipeline
 from hypermate.db.repo import Repo
@@ -37,6 +37,11 @@ async def post_init(application: Application) -> None:
     client = HyperliquidClient(Config.HYPERLIQUID_API_URL, Config.SPOT_META_TTL_SEC)
     await client.start()
     application.bot_data['hl'] = client
+    # "/" autocomplete menu in private chats (spec 9.1, Phase 0 commands only)
+    await application.bot.set_my_commands(
+        [BotCommand(command, description) for command, description in texts.MENU_COMMANDS],
+        scope=BotCommandScopeAllPrivateChats())
+    logger.info(f"Registered {len(texts.MENU_COMMANDS)} menu commands")
 
 
 async def post_shutdown(application: Application) -> None:
@@ -51,6 +56,7 @@ def build_application() -> Application:
                    .post_init(post_init).post_shutdown(post_shutdown).build())
 
     application.add_handler(CommandHandler("start", commands.start))
+    application.add_handler(CommandHandler("help", commands.help_command))
     application.add_handler(CommandHandler("add", commands.add_wallet))
     application.add_handler(CommandHandler("list", commands.list_wallets))
     application.add_handler(CommandHandler("remove", commands.remove_wallet))

@@ -7,13 +7,14 @@ The v2 upgrade plan is in [docs/HYPERMATE_V2_SPEC.md](docs/HYPERMATE_V2_SPEC.md)
 ## Commands
 
 - `/start` - Short welcome
+- `/help` - Commands and alert types
 - `/add <wallet_address> <alias>` - Track a wallet
-- `/list` - Show your tracked wallets
+- `/list` - Your tracked wallets with account value
 - `/remove <alias>` - Stop tracking a wallet
-- `/positions <alias>` - Current positions and balances
+- `/positions [alias]` - Positions and balances for one wallet, or a one-line summary per wallet without an alias
 - `/stats <alias>` - PnL and volume
 
-Aliases are matched case-insensitively.
+Aliases are matched case-insensitively. On startup the bot registers `add`, `remove`, `list`, `positions`, `stats` and `help` as the Telegram `/` command menu for private chats.
 
 ## Running locally
 

@@ -27,7 +27,17 @@ def _hl(context: ContextTypes.DEFAULT_TYPE) -> HyperliquidClient:
 
 
 async def reply(update: Update, text: str) -> None:
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    """Reply in HTML, split into several messages if over Telegram's 4096 character limit."""
+    for chunk in formatter.split_message(text):
+        await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
+
+
+async def _perp_state_or_none(context: ContextTypes.DEFAULT_TYPE, address: str):
+    try:
+        return await _hl(context).clearinghouse_state(address)
+    except HyperliquidAPIError as e:
+        logger.error(f"clearinghouseState {address}: {e}")
+        return None
 
 
 async def reply_internal_error(update: Update, where: str, error: Exception) -> None:
@@ -43,6 +53,10 @@ def is_valid_wallet_address(address: str) -> bool:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await reply(update, texts.WELCOME)
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await reply(update, texts.HELP)
 
 
 async def add_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -76,7 +90,8 @@ async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not wallets:
         await reply(update, texts.NO_WALLETS)
         return
-    lines = [f"• {formatter.alias_link(address, alias)}: {h(address)}" for alias, address in wallets]
+    lines = [formatter.format_list_line(alias, address, await _perp_state_or_none(context, address))
+             for alias, address in wallets]
     await reply(update, texts.LIST_HEADER + "\n" + "\n".join(lines))
 
 
@@ -99,10 +114,10 @@ async def remove_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not context.args:
-        await reply(update, texts.POSITIONS_USAGE)
-        return
     user_id = update.effective_user.id
+    if not context.args:
+        await positions_summary(update, context)
+        return
     subscription = await _repo(context).find_subscription(user_id, " ".join(context.args).strip())
     if subscription is None:
         await reply(update, texts.ALIAS_NOT_FOUND.format(alias=h(" ".join(context.args))))
@@ -117,6 +132,17 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     await reply(update, formatter.format_positions(alias, address, perp_state, spot_state))
     logger.info(f"User {user_id} checked positions for {address} ({alias})")
+
+
+async def positions_summary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/positions without an alias: one line per tracked wallet."""
+    wallets = await _repo(context).list_subscriptions(update.effective_user.id)
+    if not wallets:
+        await reply(update, texts.NO_WALLETS)
+        return
+    lines = [formatter.format_positions_summary_line(alias, address, await _perp_state_or_none(context, address))
+             for alias, address in wallets]
+    await reply(update, texts.POSITIONS_SUMMARY_HEADER + "\n" + "\n".join(lines))
 
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

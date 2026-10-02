@@ -263,3 +263,58 @@ def format_stats(alias: str, address: str, portfolio: list) -> Optional[str]:
         f"📈 <b>Volume:</b> {volume_str}\n"
         f"📝 <b>Note:</b> Win/loss data not available from API"
     )
+
+
+TELEGRAM_MESSAGE_LIMIT = 4096
+
+
+def split_message(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
+    """Split on line boundaries into chunks of at most limit characters."""
+    chunks, current = [], ''
+    for line in text.split('\n'):
+        while len(line) > limit:  # a single overlong line is cut hard
+            if current:
+                chunks.append(current)
+                current = ''
+            chunks.append(line[:limit])
+            line = line[limit:]
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def account_value(perp_state: dict) -> Optional[Decimal]:
+    return to_decimal(perp_state.get('marginSummary', {}).get('accountValue'))
+
+
+def format_list_line(alias: str, address: str, perp_state: Optional[dict]) -> str:
+    """/list row. perp_state None means the API call failed."""
+    value = account_value(perp_state) if perp_state is not None else None
+    value_str = usd(value) if value is not None else "n/a"
+    return f"• {alias_link(address, alias)}: {h(address)} · {value_str}"
+
+
+def format_positions_summary_line(alias: str, address: str, perp_state: Optional[dict]) -> str:
+    """/positions (no alias) row: account value, position count, largest position."""
+    if perp_state is None:
+        return f"• {alias_link(address, alias)}: Hyperliquid API error"
+    value = account_value(perp_state)
+    value_str = usd(value) if value is not None else "n/a"
+    open_positions = []
+    for pos in perp_state.get('assetPositions', []):
+        position = pos.get('position') or {}
+        szi = to_decimal(position.get('szi')) or ZERO
+        if szi != 0:
+            notional = abs(to_decimal(position.get('positionValue')) or ZERO)
+            open_positions.append((notional, 'LONG' if szi > 0 else 'SHORT', position.get('coin', '?')))
+    line = f"• {alias_link(address, alias)}: {value_str} · {len(open_positions)} positions"
+    if open_positions:
+        notional, side, coin = max(open_positions, key=lambda p: p[0])
+        line += f" · largest {side} ${h(coin)} {usd(notional, 0)}"
+    return line
