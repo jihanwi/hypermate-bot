@@ -78,6 +78,13 @@ Hyperliquid facts below were checked live against `https://api.hyperliquid.xyz/i
 - Fixture `hl_userFillsByTime_algo.json` (PM recording, loracle): 1,068 fills over 834 oids in one hour, `twapId` null on every fill. BTC Open Long and CASHCAT Close Short. `hl_clearinghouseState_algo.json` is the state at the end of that hour; its BTC and CASHCAT sizes equal the fills' last `startPosition + sz`. Replay with 30 s cycles: 2 ALGO_START, 2 ALGO_END, no fill message.
 - Polling: fills are fetched every transfers cycle (same cadence as Phase 0). Spec 5.2 says fetch fills only when the snapshot changed, but spot fills never change perp snapshots. The weight optimization is left for PR C (scheduler).
 
+### Rate limit and weights (Phase 1 PR C)
+
+- Weights used by the budget (spec 3.5 table, from the HL docs): `clearinghouseState` 2, `spotClearinghouseState` 2, `userFillsByTime` 20 + 1 per 20 fills returned, `twapHistory` 20 + 1 per 20 entries, `userNonFundingLedgerUpdates` 20, `webData2` 20 [I], `perpDexs` / `spotMeta` / `portfolio` 20 (not listed explicitly in the docs, the default for info requests).
+- The budget charges the per-item part after the response, so a large fills page can push the bucket into debt for a moment; the next request waits it out.
+- **[?] Not verified live: whether HL sends a `Retry-After` header on 429.** The client reads it as whole seconds and falls back to a 30 s pause. The response body of a 429 was not recorded either. Owner: capture one 429 response (status, headers) if it ever happens in production; the `/health` 429 counter shows whether it did.
+- The 50-address, 30-minute completion criterion is a simulation (`tests/test_poller.py`): a fake HL that counts weight like the documented limit (1200 per rolling minute) and answers 429 above it. Not run against the live API from the dev environment (api.hyperliquid.xyz is blocked there).
+
 ## Telegram
 
 - `setMyCommands` is called once in `post_init` with `BotCommandScopeAllPrivateChats`. The request shape was checked against a local fake Bot API server. Whether the menu shows up in the Telegram client needs a check with the real bot token.
