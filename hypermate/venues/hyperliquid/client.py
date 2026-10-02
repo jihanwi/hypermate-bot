@@ -29,7 +29,7 @@ class HyperliquidClient:
         self.spot_meta_ttl_sec = spot_meta_ttl_sec
         self._session: Optional[aiohttp.ClientSession] = None
         self._spot_names: dict[str, str] = {}
-        self._spot_names_fetched_at = 0.0
+        self._spot_names_fetched_at: Optional[float] = None
 
     async def start(self) -> None:
         if self._session is None:
@@ -79,7 +79,8 @@ class HyperliquidClient:
 
         Falls back to the raw coin string if spotMeta is unavailable or has no entry.
         """
-        if time.monotonic() - self._spot_names_fetched_at > self.spot_meta_ttl_sec:
+        if (self._spot_names_fetched_at is None
+                or time.monotonic() - self._spot_names_fetched_at > self.spot_meta_ttl_sec):
             try:
                 self._spot_names = build_spot_names(await self.spot_meta())
                 self._spot_names_fetched_at = time.monotonic()
