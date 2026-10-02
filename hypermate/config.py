@@ -3,7 +3,6 @@ Configuration module for HyperMate bot
 """
 
 import os
-from typing import Optional
 
 class Config:
     """Configuration class for bot settings"""
@@ -15,14 +14,8 @@ class Config:
     HYPERLIQUID_API_URL: str = os.getenv("HYPERLIQUID_API_URL", "https://api.hyperliquid.xyz")
     HYPERLIQUID_TESTNET_URL: str = os.getenv("HYPERLIQUID_TESTNET_URL", "https://api.hyperliquid-testnet.xyz")
     
-    # Database Configuration (for future use)
-    DATABASE_URL: Optional[str] = os.getenv("DATABASE_URL")
-    
     # Logging Configuration
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
-    
-    # Wallet Encryption Configuration
-    WALLET_ENCRYPTION_KEY: str = os.getenv("WALLET_ENCRYPTION_KEY")
     
     # Development settings
     DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
@@ -41,5 +34,3 @@ class Config:
         """Validate that required configuration is present"""
         if not cls.BOT_TOKEN:
             raise ValueError("BOT_TOKEN environment variable is required")
-        if not cls.WALLET_ENCRYPTION_KEY:
-            raise ValueError("WALLET_ENCRYPTION_KEY environment variable is required") 

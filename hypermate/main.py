@@ -18,7 +18,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from hypermate import legacy  # noqa: E402
 from hypermate.bot import commands  # noqa: E402
 from hypermate.core import pipeline  # noqa: E402
 from hypermate.db import repo  # noqa: E402
@@ -30,7 +29,7 @@ def main() -> None:
         Config.validate_config()
     except ValueError as e:
         logger.error(f"Configuration error: {e}")
-        logger.error("Please set the BOT_TOKEN and WALLET_ENCRYPTION_KEY environment variables")
+        logger.error("Please set the BOT_TOKEN environment variable")
         return
     
     # Initialize database
@@ -41,33 +40,12 @@ def main() -> None:
         logger.error(f"Failed to initialize database: {e}")
         return
     
-    # Load existing wallet data
-    legacy.load_wallets()
-    
-    # Migrate tracked wallets from JSON to database
-    try:
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(legacy.migrate_tracked_wallets_to_db())
-    except Exception as e:
-        logger.error(f"Failed to migrate tracked wallets: {e}")
-    
-    # Migrate old wallets to secure storage if needed
-    legacy.migrate_old_wallets()
-    
-    # Load secure wallets
-    legacy.load_secure_wallets()
-    
     # Create the Application
     application = Application.builder().token(Config.BOT_TOKEN).build()
     pipeline.app_instance = application
 
     # Register handlers
     application.add_handler(CommandHandler("start", commands.start))
-    # Wallet creation features disabled
-    # application.add_handler(CommandHandler("createwallet", createwallet_command))
-    # application.add_handler(CommandHandler("confirmcreate", confirmcreate_command))
-    # application.add_handler(CommandHandler("exportkey", exportkey_command))
-    # application.add_handler(CommandHandler("mywallet", mywallet_command))
     application.add_handler(CommandHandler("add", commands.add_wallet))
     application.add_handler(CommandHandler("list", commands.list_wallets))
     application.add_handler(CommandHandler("remove", commands.remove_wallet))

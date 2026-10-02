@@ -16,10 +16,6 @@ previous_positions: Dict[str, Dict[str, dict]] = {}
 # Track if we've done the initial scan for each wallet (to avoid alerting on existing positions)
 initial_scan_done: Dict[str, bool] = {}
 
-# Track TWAP order states per wallet
-# Structure: {wallet_address: {twap_id: twap_status}}
-previous_twap_states: Dict[str, Dict[str, str]] = {}
-
 # Track last seen transfer timestamp per wallet
 # Structure: {wallet_address: last_timestamp}
 last_transfer_timestamps: Dict[str, int] = {}
@@ -223,79 +219,7 @@ async def check_new_positions(wallet_address: str, alias: str) -> list:
                         'closing_pnl': closing_pnl
                     })
     
-    # Check for TWAP orders (if present in the API response)
-    if 'twapOrders' in current_positions:
-        twap_alerts = await check_twap_orders(wallet_address, alias, current_positions['twapOrders'])
-        position_alerts.extend(twap_alerts)
-    
     # Update stored positions
     previous_positions[wallet_address] = current_position_map
     
     return position_alerts
-
-async def check_twap_orders(wallet_address: str, alias: str, twap_orders: list) -> list:
-    """Check for TWAP order status changes."""
-    twap_alerts = []
-    
-    # Create current TWAP state mapping
-    current_twap_states = {}
-    for twap in twap_orders:
-        twap_id = twap.get('id', f"{twap.get('coin', 'unknown')}_{twap.get('startTime', 'unknown')}")
-        current_twap_states[twap_id] = {
-            'status': twap.get('status', 'unknown'),
-            'coin': twap.get('coin', 'Unknown'),
-            'direction': 'LONG' if float(twap.get('sz', 0)) > 0 else 'SHORT',
-            'size': twap.get('sz', '0'),
-            'filled': twap.get('filled', '0'),
-            'remaining': twap.get('remaining', '0')
-        }
-    
-    # Get previous TWAP states for this wallet
-    previous_twap_state_map = previous_twap_states.get(wallet_address, {})
-    
-    # Check for TWAP status changes
-    for twap_id, current_twap in current_twap_states.items():
-        if twap_id not in previous_twap_state_map:
-            # New TWAP order detected
-            if current_twap['status'] == 'active':
-                logger.info(f"New TWAP order started: {current_twap['coin']} for {wallet_address} ({alias})")
-                twap_alerts.append({
-                    **current_twap,
-                    'alert_type': 'TWAP_STARTED'
-                })
-        else:
-            # TWAP exists, check for status changes
-            prev_status = previous_twap_state_map[twap_id]['status']
-            curr_status = current_twap['status']
-            
-            if prev_status != curr_status:
-                if curr_status == 'completed':
-                    logger.info(f"TWAP order completed: {current_twap['coin']} for {wallet_address} ({alias})")
-                    twap_alerts.append({
-                        **current_twap,
-                        'alert_type': 'TWAP_COMPLETED'
-                    })
-                elif curr_status == 'cancelled':
-                    logger.info(f"TWAP order cancelled: {current_twap['coin']} for {wallet_address} ({alias})")
-                    twap_alerts.append({
-                        **current_twap,
-                        'alert_type': 'TWAP_CANCELLED'
-                    })
-                elif curr_status == 'active' and prev_status in ['paused', 'stopped']:
-                    logger.info(f"TWAP order resumed: {current_twap['coin']} for {wallet_address} ({alias})")
-                    twap_alerts.append({
-                        **current_twap,
-                        'alert_type': 'TWAP_RESUMED'
-                    })
-                elif curr_status in ['paused', 'stopped']:
-                    logger.info(f"TWAP order paused/stopped: {current_twap['coin']} for {wallet_address} ({alias})")
-                    twap_alerts.append({
-                        **current_twap,
-                        'alert_type': 'TWAP_PAUSED'
-                    })
-    
-    # Update stored TWAP states
-    previous_twap_states[wallet_address] = current_twap_states
-    
-    return twap_alerts
-

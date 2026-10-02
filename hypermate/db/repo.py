@@ -24,16 +24,6 @@ async def init_db() -> None:
                 )
             ''')
             
-            # Create created_wallets table
-            await db.execute('''
-                CREATE TABLE IF NOT EXISTS created_wallets (
-                    user_id TEXT PRIMARY KEY,
-                    wallet_address TEXT,
-                    encrypted_private_key TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
             # Create indexes for better performance
             await db.execute('''
                 CREATE INDEX IF NOT EXISTS idx_tracked_wallets_user_id 
