@@ -50,6 +50,15 @@ Hyperliquid facts below were checked live against `https://api.hyperliquid.xyz/i
 - `twapHistory`: statuses observed: `activated`, `finished`, `terminated`, `error` (`error` carries `status.description`, e.g. "Insufficient margin to place order."). `time` is in seconds, `state.timestamp` in ms. TWAPs on HIP-3 coins (`xyz:MSTR`) appear too. Fixture: `hl_twapHistory.json`
 - `userTwapSliceFillsByTime`: `[{fill: {...same fields as userFills...}, twapId}]`. Every slice twapId in the fixture is in webData2 `twapStates`. Fixture: `hl_userTwapSliceFillsByTime.json`
 
+### TWAP tracking (Phase 1 PR A)
+
+- Active TWAPs: `webData2.twapStates` (main dex only, per the PM's 2026-10-03 check). The bot calls webData2 only in cycles where the positions snapshot changed or `twap_active` has rows for the account.
+- TWAP_START size in USD uses `sz * markPx`, with `markPx` from webData2: `meta.universe[i].name` and `assetCtxs[i].markPx` are parallel arrays (234 entries in the fixture). Without a mark price the message shows the coin amount.
+- TWAP_END status comes from the newest non-`activated` `twapHistory` entry for the twapId. Its `state` carries the final `executedSz` / `executedNtl`; `time` (seconds) is used as the end time.
+- If the TWAP left `twapStates` but `twapHistory` has no final entry yet, the bot waits one more polling cycle before reporting status `unknown` (spec says report `unknown` immediately; the extra cycle covers a possible lag between the two endpoints, not verified live).
+- webData2 is large (311 KB in the fixture). Its weight is still [I] 20.
+- **[?] Not verified: whether `twapStates` includes HIP-3 TWAPs.** `twapHistory` does include them (`xyz:MSTR` in the fixture), but the webData2 fixture's 5 active TWAPs are all main-dex coins. Needs a live check with a wallet running a HIP-3 TWAP (owner). If they are missing, HIP-3 TWAP slices will not be suppressed.
+
 ### Open item for Phase 1
 
 - The recorded wallets trade HIP-3 dex perps (`xyz:`, `para:`). `clearinghouseState` without a `dex` parameter returns the main dex only, so Phase 0 position alerts and `/positions` do not cover HIP-3 positions. Not verified live which `dex` values to query; left for Phase 1.
