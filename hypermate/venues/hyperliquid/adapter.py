@@ -86,6 +86,22 @@ async def fetch_snapshot(client: HyperliquidClient, address: str,
     return snapshot, (str(sum(values, ZERO)) if values else None), states
 
 
+def parse_spot_balances(spot_state: dict) -> dict[str, str]:
+    """{coin: total} for non-zero spot balances (change detection only, spec 3.5)."""
+    balances = {}
+    for balance in spot_state.get('balances', []):
+        total = to_decimal(balance.get('total')) or ZERO
+        if total != 0:
+            balances[str(balance.get('coin', ''))] = str(total)
+    return balances
+
+
+def spot_changed(previous: Optional[dict], current: dict) -> bool:
+    if previous is None:
+        return False
+    return {c: to_decimal(v) for c, v in previous.items()} != {c: to_decimal(v) for c, v in current.items()}
+
+
 def snapshot_changed(previous: Optional[dict], current: dict) -> bool:
     """True if any position size differs (account value / price moves alone do not count)."""
     def sizes(snapshot):

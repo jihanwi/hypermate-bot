@@ -44,6 +44,11 @@ class Repo:
         if 'dexs_json' not in columns:
             await self.db.execute("ALTER TABLE venue_accounts ADD COLUMN dexs_json TEXT NOT NULL DEFAULT '[]'")
             logger.info("Migrated venue_accounts: added dexs_json")
+        cur = await self.db.execute("PRAGMA table_info(snapshots)")
+        columns = {row[1] for row in await cur.fetchall()}
+        if 'spot_json' not in columns:
+            await self.db.execute("ALTER TABLE snapshots ADD COLUMN spot_json TEXT")
+            logger.info("Migrated snapshots: added spot_json")
 
     async def close(self) -> None:
         if self.db is not None:
@@ -76,8 +81,8 @@ class Repo:
             return ADDRESS_EXISTS
 
         await db.execute(
-            "INSERT OR IGNORE INTO venue_accounts (wallet_id, venue, account_ref) VALUES (?, ?, ?)",
-            (wallet_id, HYPERLIQUID, address))
+            "INSERT OR IGNORE INTO venue_accounts (wallet_id, venue, account_ref, last_activity_ms) "
+            "VALUES (?, ?, ?, ?)", (wallet_id, HYPERLIQUID, address, now_ms))
         cur = await db.execute(
             "SELECT venue_account_id FROM venue_accounts WHERE venue = ? AND account_ref = ?",
             (HYPERLIQUID, address))
@@ -121,13 +126,30 @@ class Repo:
 
     async def tracked_accounts(self) -> list[tuple[int, str]]:
         """[(venue_account_id, address)] for active HL accounts with at least one subscriber."""
+        return [(key, address) for key, address, _ in await self.tracked_accounts_with_activity()]
+
+    async def tracked_accounts_with_activity(self) -> list[tuple[int, str, Optional[int]]]:
+        """[(venue_account_id, address, last_activity_ms)] (tier polling, spec 3.5)."""
         cur = await self.db.execute(
-            "SELECT va.venue_account_id, w.evm_address FROM venue_accounts va "
+            "SELECT va.venue_account_id, w.evm_address, va.last_activity_ms FROM venue_accounts va "
             "JOIN wallets w USING (wallet_id) "
             "WHERE va.venue = ? AND va.active = 1 "
             "AND EXISTS (SELECT 1 FROM subscriptions s WHERE s.wallet_id = va.wallet_id) "
             "ORDER BY va.venue_account_id", (HYPERLIQUID,))
-        return [(va_id, address) for va_id, address in await cur.fetchall()]
+        return [(va_id, address, last) for va_id, address, last in await cur.fetchall()]
+
+    async def touch_activity(self, venue_account_id: int, now_ms: int) -> None:
+        await self.db.execute("UPDATE venue_accounts SET last_activity_ms = ? WHERE venue_account_id = ?",
+                              (now_ms, venue_account_id))
+        await self.db.commit()
+
+    async def counts(self) -> dict:
+        """Row counts for /health: active twaps and algos."""
+        out = {}
+        for name, table in (('twaps', 'twap_active'), ('algos', 'algo_active')):
+            cur = await self.db.execute(f"SELECT COUNT(*) FROM {table}")
+            (out[name],) = await cur.fetchone()
+        return out
 
     async def subscribers(self, venue_account_id: int) -> list[tuple[int, str]]:
         """[(user_id, alias)] subscribed to the venue account's wallet."""
@@ -152,15 +174,28 @@ class Repo:
         return snapshot
 
     async def save_snapshot(self, venue_account_id: int, positions: dict, now_ms: int,
-                            account_value: Optional[str] = None) -> None:
-        """account_value is a Decimal string (TEXT column), never a float."""
+                            account_value: Optional[str] = None, spot: Optional[dict] = None) -> None:
+        """account_value is a Decimal string (TEXT column), never a float. spot is {coin: total} or None."""
         await self.db.execute(
-            "INSERT INTO snapshots (venue_account_id, positions_json, account_value, updated_at) "
-            "VALUES (?, ?, ?, ?) "
+            "INSERT INTO snapshots (venue_account_id, positions_json, account_value, spot_json, updated_at) "
+            "VALUES (?, ?, ?, ?, ?) "
             "ON CONFLICT(venue_account_id) DO UPDATE SET positions_json = excluded.positions_json, "
-            "account_value = excluded.account_value, updated_at = excluded.updated_at",
-            (venue_account_id, json.dumps(positions, sort_keys=True), account_value, now_ms))
+            "account_value = excluded.account_value, spot_json = excluded.spot_json, "
+            "updated_at = excluded.updated_at",
+            (venue_account_id, json.dumps(positions, sort_keys=True), account_value,
+             json.dumps(spot, sort_keys=True) if spot is not None else None, now_ms))
         await self.db.commit()
+
+    async def get_spot_snapshot(self, venue_account_id: int) -> Optional[dict]:
+        cur = await self.db.execute(
+            "SELECT spot_json FROM snapshots WHERE venue_account_id = ?", (venue_account_id,))
+        row = await cur.fetchone()
+        return json.loads(row[0]) if row and row[0] else None
+
+    async def backup(self, target_path: str) -> None:
+        """Consistent copy of the live DB via the sqlite backup API (safe while WAL writers run)."""
+        async with aiosqlite.connect(target_path) as target:
+            await self.db.backup(target)
 
     async def hl_account_id(self, address: str) -> Optional[int]:
         cur = await self.db.execute(

@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
   venue_account_id INTEGER PRIMARY KEY REFERENCES venue_accounts,
   positions_json TEXT NOT NULL,                -- HL: {dex: {coin: {szi, entry_px, position_value, ...}}}, main dex key ""
   account_value TEXT,                          -- Decimal string (marginSummary.accountValue)
+  spot_json TEXT,                              -- HL: {coin: total} spot balances, for change detection (spec 3.5)
   updated_at INTEGER
 );
 
