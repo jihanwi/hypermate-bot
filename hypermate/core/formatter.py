@@ -7,7 +7,8 @@ message (B4). Numbers are Decimal.
 import html
 import logging
 import re
-from decimal import Decimal
+from datetime import datetime, timedelta, timezone
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
 from hypermate.core.links import hl_address_url
@@ -333,3 +334,98 @@ def format_positions_summary_line(alias: str, address: str, perp_state: Optional
         notional, side, coin = max(open_positions, key=lambda p: p[0])
         line += f" · largest {side} ${h(coin)} {usd(notional, 0)}"
     return line
+
+
+# TWAP alerts (spec 10 format) -----------------------------------------------
+
+KST = timezone(timedelta(hours=9), 'KST')
+VENUE_BADGE_HL = '[HL]'
+
+
+def _sig(value: Decimal, digits: int) -> str:
+    """Round to `digits` significant digits, plain notation, no trailing zeros."""
+    if value == 0:
+        return '0'
+    quantized = value.quantize(Decimal(1).scaleb(value.adjusted() - digits + 1), rounding=ROUND_HALF_UP)
+    text = format(quantized, 'f')
+    return text.rstrip('0').rstrip('.') if '.' in text else text
+
+
+def compact_usd(value: Decimal) -> str:
+    """$1.2k / $45k / $1.25M style (3 significant digits)."""
+    sign = '-' if value < 0 else ''
+    v = abs(value)
+    for size, suffix in ((Decimal(10) ** 9, 'B'), (Decimal(10) ** 6, 'M'), (Decimal(10) ** 3, 'k')):
+        if v >= size:
+            return f"{sign}${_sig(v / size, 3)}{suffix}"
+    return f"{sign}${_sig(v, 3)}"
+
+
+def quantity(value: Decimal) -> str:
+    """Up to 4 significant digits, thousands separators for the integer part."""
+    text = _sig(value, 4)
+    whole, _, frac = text.partition('.')
+    whole = f"{int(whole):,}" if whole.lstrip('-').isdigit() else whole
+    return f"{whole}.{frac}" if frac else whole
+
+
+def plain_price(value: Decimal) -> str:
+    """86,281 / 48.06 / 0.3633 (no dollar sign)."""
+    if abs(value) >= 1000:
+        return f"{value:,.0f}"
+    if abs(value) >= 1:
+        return f"{value:,.2f}"
+    return _sig(value, 4)
+
+
+def kst_time(ms: int, now_ms: Optional[int] = None) -> str:
+    """HH:MM KST, with the date when it is not within the next 24 hours."""
+    moment = datetime.fromtimestamp(ms / 1000, tz=KST)
+    if now_ms is not None and abs(ms - now_ms) >= 24 * 3600 * 1000:
+        return moment.strftime('%m-%d %H:%M KST')
+    return moment.strftime('%H:%M KST')
+
+
+def _twap_side(state: dict) -> str:
+    return 'BUY' if state.get('side') == 'B' else 'SELL'
+
+
+def format_twap_start(wallet_address: str, alias: str, state: dict,
+                      mark_px: Optional[Decimal], now_ms: int) -> str:
+    sz = to_decimal(state.get('sz')) or ZERO
+    minutes = int(state.get('minutes') or 0)
+    started = int(state.get('timestamp') or now_ms)
+    coin = h(state.get('coin', '?'))
+    size = compact_usd(sz * mark_px) if mark_px is not None else f"{quantity(sz)} {coin}"
+    details = [f"{size} over {minutes} min", f"ends ~{kst_time(started + minutes * 60_000, now_ms)}"]
+    if state.get('reduceOnly'):
+        details.append('reduce-only')
+    return (f"{VENUE_BADGE_HL} ⏳ <b>{alias_link(wallet_address, alias)}</b> started TWAP {_twap_side(state)} ${coin}\n"
+            + " · ".join(details))
+
+
+_TWAP_END_HEADERS = {
+    'finished': ('✅', 'TWAP done'),
+    'terminated': ('⏹️', 'TWAP stopped'),
+    'error': ('⚠️', 'TWAP error'),
+}
+
+
+def format_twap_end(wallet_address: str, alias: str, state: dict, status: str,
+                    description: Optional[str], ended_ms: int) -> str:
+    emoji, title = _TWAP_END_HEADERS.get(status, ('❔', 'TWAP ended'))
+    coin = h(state.get('coin', '?'))
+    executed_sz = to_decimal(state.get('executedSz')) or ZERO
+    executed_ntl = to_decimal(state.get('executedNtl')) or ZERO
+    started = int(state.get('timestamp') or ended_ms)
+    took = max(0, (ended_ms - started) // 60_000)
+    if executed_sz > 0:
+        filled = (f"filled {compact_usd(executed_ntl)} ({quantity(executed_sz)} {coin}) "
+                  f"avg {plain_price(executed_ntl / executed_sz)}")
+    else:
+        filled = "nothing filled"
+    line = f"{filled} · {took} min · status {h(status)}"
+    if description:
+        line += f"\n{h(description)}"
+    return (f"{VENUE_BADGE_HL} {emoji} <b>{alias_link(wallet_address, alias)}</b> {title} "
+            f"{_twap_side(state)} ${coin}\n{line}")
