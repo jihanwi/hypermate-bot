@@ -34,10 +34,10 @@ async def post_init(application: Application) -> None:
     repo = Repo(Config.DATABASE_PATH)
     await repo.connect()
     application.bot_data['repo'] = repo
-    client = HyperliquidClient(Config.HYPERLIQUID_API_URL, Config.SPOT_META_TTL_SEC)
+    client = HyperliquidClient(Config.HYPERLIQUID_API_URL, Config.SPOT_META_TTL_SEC, Config.PERP_DEXS_TTL_SEC)
     await client.start()
     application.bot_data['hl'] = client
-    # "/" autocomplete menu in private chats (spec 9.1, Phase 0 commands only)
+    # "/" autocomplete menu in private chats (spec 9.1, commands implemented so far)
     await application.bot.set_my_commands(
         [BotCommand(command, description) for command, description in texts.MENU_COMMANDS],
         scope=BotCommandScopeAllPrivateChats())
@@ -62,6 +62,9 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("remove", commands.remove_wallet))
     application.add_handler(CommandHandler("positions", commands.positions_command))
     application.add_handler(CommandHandler("stats", commands.stats_command))
+    application.add_handler(CommandHandler("recent", commands.recent_command))
+    application.add_handler(CommandHandler("twap", commands.twap_command))
+    application.add_handler(CommandHandler("rescan", commands.rescan_command))
     application.add_error_handler(commands.error_handler)
 
     job_queue = application.job_queue
