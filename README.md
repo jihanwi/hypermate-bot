@@ -71,10 +71,12 @@ The bot runs as a single Fly Machine in `nrt` (Tokyo) with the SQLite DB on the 
 fly launch --no-deploy --copy-config
 fly volumes create hypermate_data --region nrt --size 1
 fly secrets set BOT_TOKEN=...
-fly deploy
+fly deploy --ha=false
 fly logs
 ```
 
+- **Fly trial accounts stop the machine every 5 minutes** ("Trial machine stopping. To run for longer than 5m0s, add a credit card"). Add a payment method to the Fly organization to run the bot continuously.
+- After `fly deploy` (or `fly secrets set`), check `fly status` that the machine is `started`; if it is `stopped`, run `fly machine start <machine-id>`.
 - **Keep exactly one machine: `fly scale count 1`.** A volume attaches to one machine only, and SQLite cannot be shared between machines. Check with `fly status` after deploys and scale back to 1 if Fly created more.
 - `fly.toml` has no `[http_service]` / `[[services]]`. The bot is a worker that opens no ports, so Fly keeps the machine running instead of auto-stopping it.
 - `kill_signal = "SIGINT"`, `kill_timeout = 30`: python-telegram-bot stops polling and runs `post_shutdown` (closes the DB and HTTP session) on SIGINT.
