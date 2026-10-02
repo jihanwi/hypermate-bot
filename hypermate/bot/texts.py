@@ -13,6 +13,7 @@ MENU_COMMANDS = [
     ("rescan", "Re-detect venues for a wallet: /rescan alias"),
     ("help", "Commands and examples"),
 ]
+# not in the menu: /health (admins only)
 
 WELCOME = (
     "🚀 <b>Welcome to HyperMate!</b>\n\n"
@@ -44,6 +45,7 @@ EXAMPLE_ADDRESS = "0x1234567890abcdef1234567890abcdef12345678"
 ADD_USAGE = f"Usage: /add 0x... alias\nExample: <code>/add {EXAMPLE_ADDRESS} whale1</code>"
 REMOVE_USAGE = "Usage: /remove alias\nExample: <code>/remove whale1</code>"
 STATS_USAGE = "Usage: /stats alias\nExample: <code>/stats whale1</code>"
+ADMIN_ONLY = "This command is for admins (ADMIN_USER_IDS)."
 RECENT_USAGE = "Usage: /recent alias [n]\nExample: <code>/recent whale1 20</code>"
 RESCAN_USAGE = "Usage: /rescan alias\nExample: <code>/rescan whale1</code>"
 RESCAN_RESULT = "🔎 <b>{alias}</b>: Hyperliquid main dex{dexs}"

@@ -9,7 +9,8 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from hypermate.bot import texts
-from hypermate.core import formatter
+from hypermate.config import Config
+from hypermate.core import formatter, poller
 from hypermate.core.events import HYPERLIQUID, EventType, dedupe_key
 from hypermate.core.formatter import h
 from hypermate.core.pipeline import algo_source
@@ -151,7 +152,8 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         logger.error(f"positions {address}: {e}")
         await reply(update, texts.HL_API_ERROR)
         return
-    await reply(update, formatter.format_positions(alias, address, perp_states, spot_state))
+    dust = to_decimal(Config.DEFAULT_SETTINGS['dust_notional_usd'])
+    await reply(update, formatter.format_positions(alias, address, perp_states, spot_state, dust))
     logger.info(f"User {user_id} checked positions for {address} ({alias})")
 
 
@@ -271,6 +273,16 @@ async def rescan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     dexs = await _scan_dexs(context, address)
     await reply(update, texts.RESCAN_RESULT.format(
         alias=h(alias), dexs=(" + HIP-3 " + h(", ".join(dexs))) if dexs else ", no HIP-3 dex positions"))
+
+
+async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/health (admins only, spec 11): polling state, weight budget, DB size, uptime."""
+    if update.effective_user.id not in Config.ADMIN_USER_IDS:
+        await reply(update, texts.ADMIN_ONLY)
+        return
+    repo = _repo(context)
+    report = poller.health_report(context, await repo.counts(), repo.path)
+    await reply(update, formatter.format_health(report, now_ms()))
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
