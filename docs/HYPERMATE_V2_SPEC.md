@@ -119,7 +119,7 @@ docs/
   API_NOTES.md           # 구현 중 확인한 API 사실 기록
 ```
 
-진입점은 `python -m hypermate.main`. `Procfile`, `railway.toml` 의 startCommand 갱신.
+진입점은 `python -m hypermate.main`. `Dockerfile` 의 CMD, `fly.toml` 에 반영.
 
 ### 3.2 VenueAdapter 인터페이스
 
@@ -724,7 +724,7 @@ $450k @ 3,120 · 5x
 3. 알림 언어: 영어 유지 (지인 포함 유저 구성 때문) vs 한국어. 기본값 결정.
 4. `min_notional_usd` 전역 기본값: 0 (전부) vs 1k. 지갑이 50개면 0은 시끄러울 수 있음.
 5. spot / transfer 알림 기본 on 유지 여부.
-6. Railway Volume 현재 마운트 상태. 안 돼있으면 Phase 0에서 오너가 직접 마운트 (코드로 못 함).
+6. Fly.io Volume (`hypermate_data`, `/data`) 생성/마운트 상태. 안 돼있으면 Phase 0에서 오너가 직접 생성 (`fly volumes create`, 코드로 못 함).
 7. 테스트용 지갑: 각 베뉴에서 소액으로 체결 테스트 가능한 본인 지갑이 있는지. 없으면 활발한 공개 지갑 관찰로 대체 (시간 더 걸림).
 8. 알림 받는 유저 수 (지인 몇 명). Telegram 전송 큐 설계에는 영향 없지만 `/settings default` 를 유저별로 둘지 전역으로 둘지 결정.
 
