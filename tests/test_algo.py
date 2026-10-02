@@ -81,12 +81,14 @@ async def test_loracle_hour_gives_two_algo_starts_and_two_ends(repo, clock):
     assert {e['payload']['coin']: (e['payload']['verb'], e['payload']['side']) for e in starts} == {
         'BTC': ('accumulating', 'LONG'), 'CASHCAT': ('reducing', 'SHORT')}
 
-    # Only two messages so far, and both are algo messages: the debounced message of the first
-    # cycles was edited into the START, and every later order is suppressed_algo
-    assert len(bot.sent) == 2
+    # Per algo: the debounced fill message of the cycles before detection, then the START as a new
+    # message (owner decision); every later order is suppressed_algo
+    assert len(bot.sent) == 4
     texts = [m['text'] for m in bot.sent]
-    assert any('algo accumulating LONG $BTC' in t for t in texts)
-    assert any('algo reducing SHORT $CASHCAT' in t for t in texts)
+    assert sum('algo accumulating LONG $BTC' in t for t in texts) == 1
+    assert sum('algo reducing SHORT $CASHCAT' in t for t in texts) == 1
+    assert sum('added to LONG $BTC' in t for t in texts) == 1
+    assert sum('reduced SHORT $CASHCAT' in t for t in texts) == 1
     for text in texts:
         check_telegram_html(text)
     position_events = [e for e in events if e['type'].startswith('position_')]
@@ -96,7 +98,7 @@ async def test_loracle_hour_gives_two_algo_starts_and_two_ends(repo, clock):
 
     # idle 10 minutes after the last fill -> two ENDs
     await run_cycles(repo, hl, bot, clock, T0 + 72 * 60_000)
-    ends = [m['text'] for m in bot.sent[2:]]
+    ends = [m['text'] for m in bot.sent[4:]]
     assert len(ends) == 2
     assert any('algo done accumulating LONG $BTC' in t for t in ends)
     assert any('algo done reducing SHORT $CASHCAT' in t for t in ends)
@@ -112,13 +114,13 @@ async def test_opposite_side_and_full_close_still_alert_during_algo(repo, clock)
     hl, bot = FakeHLClient(), FakeBot()
     hl.fills[W] = [f for f in loracle_fills(10) if f['coin'] == 'BTC']
     await run_cycles(repo, hl, bot, clock, T0 + 10 * 60_000)
-    assert len(bot.sent) == 1 and 'algo accumulating LONG $BTC' in bot.sent[0]['text']
+    assert len(bot.sent) == 2 and 'algo accumulating LONG $BTC' in bot.sent[1]['text']
     t = clock.ms
     hl.fills[W].append(fill('BTC', 'Close Long', '50', '86500', t + 1000, '420', oid=9001, closed_pnl='100'))
     hl.fills[W].append(fill('DOGE', 'Close Long', '10', '0.2', t + 2000, '10', oid=9002,
                             liquidation={'markPx': '0.2', 'method': 'market'}))
     await run_cycles(repo, hl, bot, clock, t + CYCLE_MS)
-    texts = [m['text'] for m in bot.sent[1:]]
+    texts = [m['text'] for m in bot.sent[2:]]
     assert any('reduced LONG $BTC' in x for x in texts)          # opposite direction
     assert any('LIQUIDATED LONG $DOGE' in x for x in texts)
     (va, _), = await repo.tracked_accounts()
@@ -139,7 +141,8 @@ async def test_algo_survives_restart(tmp_path, clock):
     await repo.connect()
     await run_cycles(repo, hl, bot, clock, T0 + 32 * 60_000)
     texts = [m['text'] for m in bot.sent]
-    assert len(texts) == 2 and 'algo accumulating' in texts[0] and 'algo done accumulating LONG $BTC' in texts[1]
+    assert len(texts) == 3 and 'added to LONG $BTC' in texts[0] and 'algo accumulating' in texts[1] \
+        and 'algo done accumulating LONG $BTC' in texts[2]
     (va, _), = await repo.tracked_accounts()
     assert len(await repo.events_since(va, 0, ['algo_start'])) == 1
     await repo.close()
@@ -158,7 +161,8 @@ async def test_manual_trades_do_not_start_an_algo(repo, clock):
 
 
 async def test_recorded_algo_fixture_sends_two_starts_and_two_ends(repo, clock):
-    """PM measurement: exactly 4 sends (algo_start 2, algo_end 2) and no individual fill message."""
+    """PM expectation: 4 algo sends (2 START, 2 END) plus the one fill message per key sent before
+    detection (BTC 1, CASHCAT 1) = 6, and nothing else."""
     fills = load_fixture('hl_userFillsByTime_algo.json')
     times = [int(f['time']) for f in fills]
     assert len(fills) == 1068 and all(f.get('twapId') is None for f in fills)
@@ -170,7 +174,9 @@ async def test_recorded_algo_fixture_sends_two_starts_and_two_ends(repo, clock):
 
     await run_cycles(repo, hl, bot, clock, max(times) + 12 * 60_000)
     texts = [m['text'] for m in bot.sent]
-    assert len(texts) == 4
+    assert len(texts) == 6
+    assert sum('added to LONG $BTC' in t for t in texts) == 1
+    assert sum('reduced SHORT $CASHCAT' in t for t in texts) == 1
     assert sum('algo accumulating LONG $BTC' in t for t in texts) == 1
     assert sum('algo reducing SHORT $CASHCAT' in t for t in texts) == 1
     assert sum('algo done accumulating LONG $BTC' in t for t in texts) == 1

@@ -193,7 +193,7 @@ def test_algo_messages():
              'total_sz': '0.4757', 'total_ntl': '41000'}
     verb, side = formatter.algo_label(1, Decimal('416.5'))
     assert (verb, side) == ('accumulating', 'LONG')
-    text = formatter.format_algo_progress(ADDR, 'loracle', state, verb, side, Decimal('416.5'), 300_000)
+    text = formatter.format_algo_progress(ADDR, 'loracle', state, verb, side, Decimal('416.5'))
     check_telegram_html(text)
     assert '🤖' in text and 'algo accumulating LONG $BTC\n12 fills +$41k in 5m · pos $35.9M avg 86,189' in text
     assert formatter.algo_label(1, Decimal('-5000')) == ('reducing', 'SHORT')
@@ -216,3 +216,29 @@ def test_recent_view_marks_unsent_events():
     assert 'position open LONG $BTC $1.25M' in lines[0] and '<i>' not in lines[0]
     assert lines[1].startswith('<i>') and 'not sent (TWAP)' in lines[1]
     assert 'No events' in formatter.format_recent('w', [])
+
+
+def test_positions_folds_dust_and_puts_funding_on_the_line():
+    perp = clearinghouse(
+        position('BTC', '1', position_value='90000', upnl='100'),
+        position('ENA', '-13', position_value='3.06'),
+        position('PONS', '-14', position_value='6.5'),
+    )
+    perp['assetPositions'][0]['position']['cumFunding'] = {'sinceOpen': '-49800'}   # negative = received
+    text = formatter.format_positions('w', ADDR, perp, {'balances': []}, Decimal(10))
+    check_telegram_html(text)
+    assert 'LONG</b> $BTC' in text and '· funding +$49.8k' in text
+    assert '$ENA' not in text and '$PONS' not in text
+    assert '- + 2 dust positions (under $10)' in text
+    perp['assetPositions'][0]['position']['cumFunding'] = {'sinceOpen': '120'}
+    assert '· funding -$120' in formatter.format_positions('w', ADDR, perp, {'balances': []}, Decimal(10))
+    # threshold 0 shows everything
+    assert 'dust' not in formatter.format_positions('w', ADDR, perp, {'balances': []}, Decimal(0))
+
+
+def test_algo_progress_elapsed_runs_to_the_last_fill():
+    state = {'coin': 'BTC', 'sign': 1, 'started_ms': 0, 'last_fill_ms': 52 * 60_000, 'fills_count': 411,
+             'total_sz': Decimal('8.382'), 'total_ntl': Decimal('709000')}
+    progress = formatter.format_algo_progress(ADDR, 'loracle', state, 'accumulating', 'LONG', Decimal('429'))
+    end = formatter.format_algo_end(ADDR, 'loracle', state, 'accumulating', 'LONG')
+    assert '411 fills +$709k in 52m' in progress and '· 411 fills · 52m' in end

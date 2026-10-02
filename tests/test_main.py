@@ -66,3 +66,16 @@ def test_missing_bot_token_exits_cleanly(tmp_path):
     assert proc.returncode == 0
     assert 'BOT_TOKEN environment variable is required' in proc.stderr
     assert 'WALLET_ENCRYPTION_KEY' not in proc.stderr
+
+
+def test_noisy_loggers_are_quiet_and_health_is_registered(tmp_path, monkeypatch):
+    import logging
+    monkeypatch.setattr(Config, 'BOT_TOKEN', '123:TEST')
+    hm_main.quiet_noisy_loggers()
+    assert logging.getLogger('httpx').level == logging.WARNING
+    assert logging.getLogger('apscheduler').level == logging.WARNING
+    app = hm_main.build_application()
+    registered = {h.commands for group in app.handlers.values() for h in group if isinstance(h, CommandHandler)}
+    assert frozenset({'health'}) in registered
+    jobs = {j.name for j in app.job_queue.jobs()}
+    assert {'poll_job', 'weight_log_job', 'backup_job'} <= jobs
