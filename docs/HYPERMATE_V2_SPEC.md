@@ -35,6 +35,7 @@
 | B8 | L729-735 | 마지막 폴링 시점의 `unrealizedPnl` 을 청산 PnL로 사용 | 실제 realized PnL과 다름. fills의 `closedPnl` 써야 함 |
 | B9 | `get_spot_fills` L444, `format_spot_fill_message` L528 | `coin.endswith('USDC')` 로 spot 판정, 표시 시 `.replace('USDC','')` | HL spot 코인 표기는 `PURR/USDC` 또는 `@107` 형태. `@` 인덱스 코인은 전부 누락, `PURR/USDC` 는 `PURR/` 로 표시 |
 | B10 | `get_spot_fills` L428-436 | `userFills` 에 `startTime` 을 넘기지만 그 파라미터는 `userFillsByTime` 전용이라 무시됨 | 매 사이클 최근 fills 최대 2000건 전체 수신. weight 20 + 최대 100. S1의 주범 |
+| B11 | `format_transfer_message` L453-523 | send 타입 미처리로 이체 알림 전무. 현재 HL 이체는 ledger `delta.type == 'send'` 로 옴 [V], `internalTransfer`/`spotTransfer` 는 관측 안 됨 | 추적 지갑의 입출금 이체 알림이 하나도 안 나감. Phase 0에서 수정 |
 
 ### 1.2 구조/운영 리스크
 
@@ -246,7 +247,7 @@ CREATE TABLE cursors (
 CREATE TABLE snapshots (
   venue_account_id INTEGER PRIMARY KEY REFERENCES venue_accounts,
   positions_json TEXT NOT NULL,                -- {coin: {szi, entry_px, position_value, ...}}
-  account_value REAL,
+  account_value TEXT,                          -- Decimal 문자열 (marginSummary.accountValue). float 금지
   updated_at INTEGER
 );
 
@@ -329,7 +330,7 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 
 ## 4. Phase 0: 안정화와 정리
 
-목적: 기준선 확보. B1, B4, B5, B6, B7, B9, B10 수정, 죽은 코드 제거, 영속성, 커맨드 메뉴. B2, B3, B8은 이벤트 엔진 교체가 전제라 Phase 1에서 해결. 새 기능은 없음.
+목적: 기준선 확보. B1, B4, B5, B6, B7, B9, B10, B11 수정, 죽은 코드 제거, 영속성, 커맨드 메뉴. B2, B3, B8은 이벤트 엔진 교체가 전제라 Phase 1에서 해결. 새 기능은 없음.
 
 ### 4.1 작업
 
@@ -375,7 +376,7 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 - TWAP 메커니즘 [V]: 슬라이스 최소 30초 간격, 지속 5분~7일, 최소 $100.
 - `clearinghouseState` top-level 키 [V]: `assetPositions, crossMaintenanceMarginUsed, crossMarginSummary, marginSummary, time, withdrawable`. `twapOrders` 없음.
 - 청산 [V]: fills의 `liquidation: {liquidatedUser?, markPx, method: "market"|"backstop"}`. ledger의 `{"type":"liquidation", accountValue, leverageType, liquidatedPositions:[{coin, szi}]}`.
-- ledger delta 타입 [V]: `deposit{usdc}`, `withdraw{usdc,nonce,fee}`, `internalTransfer{usdc,user,destination,fee}`, `subAccountTransfer{usdc,user,destination}`, `spotTransfer{token,amount,usdcValue,user,destination,fee}`, `accountClassTransfer{usdc,toPerp}`, `liquidation{...}`, `vaultDeposit{vault,usdc}`, `vaultWithdraw{vault,user,requestedUsd,commission,closingCost,basis,netWithdrawnUsd}`, `vaultCreate`, `vaultDistribution`, `vaultLeaderCommission`, `spotGenesis`, `rewardsClaim`, `send{user,destination,sourceDex,destinationDex,token,amount,usdcValue,fee,...}` (undocumented, 라이브 관측). 숫자는 전부 문자열.
+- ledger delta 타입 [V]: `deposit{usdc}`, `withdraw{usdc,nonce,fee}`, `internalTransfer{usdc,user,destination,fee}`, `subAccountTransfer{usdc,user,destination}`, `spotTransfer{token,amount,usdcValue,user,destination,fee}`, `accountClassTransfer{usdc,toPerp}`, `liquidation{...}`, `vaultDeposit{vault,usdc}`, `vaultWithdraw{vault,user,requestedUsd,commission,closingCost,basis,netWithdrawnUsd}`, `vaultCreate`, `vaultDistribution`, `vaultLeaderCommission`, `spotGenesis`, `rewardsClaim`, `send{user,destination,sourceDex,destinationDex,token,amount,usdcValue,fee,nativeTokenFee,nonce,feeToken}` (undocumented, 라이브 관측 [V]. 2026-10-03 기준 활발한 지갑의 이체는 전부 `send`, `internalTransfer`/`spotTransfer` 는 미관측. B11 참고). 숫자는 전부 문자열.
 - 모든 숫자 필드는 `Decimal` 로 파싱. float 금지.
 
 ### 5.2 이벤트 생성 규칙
