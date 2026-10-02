@@ -1,0 +1,2084 @@
+[
+ {
+  "time": 1790878227,
+  "state": {
+   "coin": "ETH",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.0374",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790878227063,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2276392
+ },
+ {
+  "time": 1790878222,
+  "state": {
+   "coin": "HYPE",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "1.15",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790878222471,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2276390
+ },
+ {
+  "time": 1790878219,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.85",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790878219269,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2276389
+ },
+ {
+  "time": 1790878213,
+  "state": {
+   "coin": "STX",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "262.3",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790878213738,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2276388
+ },
+ {
+  "time": 1790878210,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00119",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790878210368,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2276387
+ },
+ {
+  "time": 1790689722,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00119",
+   "executedSz": "0.00119",
+   "executedNtl": "100.20108",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790191600889,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2248297
+ },
+ {
+  "time": 1790685807,
+  "state": {
+   "coin": "ETH",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.0377",
+   "executedSz": "0.0377",
+   "executedNtl": "101.62932",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790191615074,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2248301
+ },
+ {
+  "time": 1790679616,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.88",
+   "executedSz": "0.88",
+   "executedNtl": "104.9791",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790191605082,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2248298
+ },
+ {
+  "time": 1790346904,
+  "state": {
+   "coin": "HYPE",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "1.07",
+   "executedSz": "0.39",
+   "executedNtl": "36.40013",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790191610531,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2248300
+ },
+ {
+  "time": 1790346901,
+  "state": {
+   "coin": "STX",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "327.2",
+   "executedSz": "111.5",
+   "executedNtl": "34.997296",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790191593329,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2248296
+ },
+ {
+  "time": 1790191615,
+  "state": {
+   "coin": "ETH",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.0377",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790191615074,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2248301
+ },
+ {
+  "time": 1790191610,
+  "state": {
+   "coin": "HYPE",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "1.07",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790191610531,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2248300
+ },
+ {
+  "time": 1790191605,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.88",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790191605082,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2248298
+ },
+ {
+  "time": 1790191600,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00119",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790191600889,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2248297
+ },
+ {
+  "time": 1790191593,
+  "state": {
+   "coin": "STX",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "327.2",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790191593329,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2248296
+ },
+ {
+  "time": 1790163359,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "2.57",
+   "executedSz": "0.4",
+   "executedNtl": "47.122",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790088922783,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2243365
+ },
+ {
+  "time": 1790163358,
+  "state": {
+   "coin": "ETH",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.0948",
+   "executedSz": "0.0526",
+   "executedNtl": "141.66672",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789851080187,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2232349
+ },
+ {
+  "time": 1790163357,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00319",
+   "executedSz": "0.00233",
+   "executedNtl": "193.33194",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789728980784,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2226794
+ },
+ {
+  "time": 1790088922,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "2.57",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790088922783,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2243365
+ },
+ {
+  "time": 1790088361,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "2.21",
+   "executedSz": "1.18",
+   "executedNtl": "133.5157",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789775512075,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2229824
+ },
+ {
+  "time": 1790088355,
+  "state": {
+   "coin": "HYPE",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "2.76",
+   "executedSz": "1.69",
+   "executedNtl": "156.59865",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789728992718,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2226796
+ },
+ {
+  "time": 1790086059,
+  "state": {
+   "coin": "STX",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "898.1",
+   "executedSz": "557.4",
+   "executedNtl": "175.027257",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789728988445,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2226795
+ },
+ {
+  "time": 1790073161,
+  "state": {
+   "coin": "ETH",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.0908",
+   "executedSz": "0.0043",
+   "executedNtl": "11.83016",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790071493714,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2242563
+ },
+ {
+  "time": 1790073157,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00308",
+   "executedSz": "0.00161",
+   "executedNtl": "133.15608",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789775507962,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2229823
+ },
+ {
+  "time": 1790071493,
+  "state": {
+   "coin": "ETH",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.0908",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1790071493714,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2242563
+ },
+ {
+  "time": 1790001467,
+  "state": {
+   "coin": "STX",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "1000.0",
+   "executedSz": "438.0",
+   "executedNtl": "140.026962",
+   "minutes": 7200,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789822776688,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2231389
+ },
+ {
+  "time": 1790001452,
+  "state": {
+   "coin": "ETH",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.0382",
+   "executedSz": "0.0135",
+   "executedNtl": "35.44855",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789822808038,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2231392
+ },
+ {
+  "time": 1790001448,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.99",
+   "executedSz": "0.66",
+   "executedNtl": "72.297",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789654355461,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2223134
+ },
+ {
+  "time": 1790001442,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00131",
+   "executedSz": "0.00076",
+   "executedNtl": "60.53784",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789654351416,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2223133
+ },
+ {
+  "time": 1789851080,
+  "state": {
+   "coin": "ETH",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.0948",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789851080187,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2232349
+ },
+ {
+  "time": 1789822808,
+  "state": {
+   "coin": "ETH",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.0382",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789822808038,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2231392
+ },
+ {
+  "time": 1789822776,
+  "state": {
+   "coin": "STX",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "1000.0",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 7200,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789822776688,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2231389
+ },
+ {
+  "time": 1789775512,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "2.21",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789775512075,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2229824
+ },
+ {
+  "time": 1789775507,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00308",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789775507962,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2229823
+ },
+ {
+  "time": 1789728992,
+  "state": {
+   "coin": "HYPE",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "2.76",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789728992718,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2226796
+ },
+ {
+  "time": 1789728988,
+  "state": {
+   "coin": "STX",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "898.1",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789728988445,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2226795
+ },
+ {
+  "time": 1789728980,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00319",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789728980784,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2226794
+ },
+ {
+  "time": 1789654355,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.99",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789654355461,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2223134
+ },
+ {
+  "time": 1789654351,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00131",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789654351416,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2223133
+ },
+ {
+  "time": 1789620036,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.0013",
+   "executedSz": "0.0013",
+   "executedNtl": "100.02891",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789178014134,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2208612
+ },
+ {
+  "time": 1789423560,
+  "state": {
+   "coin": "HYPE",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "1.16",
+   "executedSz": "1.16",
+   "executedNtl": "93.53155",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1788959458574,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2200369
+ },
+ {
+  "time": 1789413239,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.96",
+   "executedSz": "0.96",
+   "executedNtl": "97.91988",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1788959577045,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2200375
+ },
+ {
+  "time": 1789407160,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00127",
+   "executedSz": "0.00127",
+   "executedNtl": "99.07026",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1788959468963,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2200370
+ },
+ {
+  "time": 1789401414,
+  "state": {
+   "coin": "STX",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "359.2",
+   "executedSz": "359.2",
+   "executedNtl": "95.790457",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1788959572261,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2200374
+ },
+ {
+  "time": 1789178014,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.0013",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1789178014134,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2208612
+ },
+ {
+  "time": 1788959577,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.96",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1788959577045,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2200375
+ },
+ {
+  "time": 1788959572,
+  "state": {
+   "coin": "STX",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "359.2",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1788959572261,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2200374
+ },
+ {
+  "time": 1788959468,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00127",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1788959468963,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2200370
+ },
+ {
+  "time": 1788959458,
+  "state": {
+   "coin": "HYPE",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "1.16",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1788959458574,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2200369
+ },
+ {
+  "time": 1788935920,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00128",
+   "executedSz": "0.00128",
+   "executedNtl": "101.62016",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1788439748098,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2176326
+ },
+ {
+  "time": 1788930589,
+  "state": {
+   "coin": "HYPE",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "1.22",
+   "executedSz": "1.22",
+   "executedNtl": "104.12485",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1788439757499,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2176327
+ },
+ {
+  "time": 1788916983,
+  "state": {
+   "coin": "STX",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "386.2",
+   "executedSz": "386.2",
+   "executedNtl": "103.588228",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1788439771101,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2176328
+ },
+ {
+  "time": 1788626401,
+  "state": {
+   "coin": "xyz:MSTR",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.795",
+   "executedSz": "0.258",
+   "executedNtl": "35.20703",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1788439918879,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2176337
+ },
+ {
+  "time": 1788439918,
+  "state": {
+   "coin": "xyz:MSTR",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.795",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1788439918879,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2176337
+ },
+ {
+  "time": 1788439771,
+  "state": {
+   "coin": "STX",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "386.2",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1788439771101,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2176328
+ },
+ {
+  "time": 1788439757,
+  "state": {
+   "coin": "HYPE",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "1.22",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1788439757499,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2176327
+ },
+ {
+  "time": 1788439748,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00128",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1788439748098,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2176326
+ },
+ {
+  "time": 1788364104,
+  "state": {
+   "coin": "HYPE",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "1.81",
+   "executedSz": "1.81",
+   "executedNtl": "149.59174",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1787829442434,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2152493
+ },
+ {
+  "time": 1788355459,
+  "state": {
+   "coin": "STX",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "588.3",
+   "executedSz": "588.3",
+   "executedNtl": "148.051626",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1787829557316,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2152501
+ },
+ {
+  "time": 1788332758,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "1.43",
+   "executedSz": "1.43",
+   "executedNtl": "148.0302",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1787829416366,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2152489
+ },
+ {
+  "time": 1788315248,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00188",
+   "executedSz": "0.00188",
+   "executedNtl": "147.31398",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1787829426443,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2152490
+ },
+ {
+  "time": 1788299415,
+  "state": {
+   "coin": "JTO",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "287.0",
+   "executedSz": "287.0",
+   "executedNtl": "134.38332",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1787829433027,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2152491
+ },
+ {
+  "time": 1788293237,
+  "state": {
+   "coin": "xyz:MSTR",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.729",
+   "executedSz": "0.729",
+   "executedNtl": "94.57187",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": false,
+   "timestamp": 1787849355750,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2153598
+ },
+ {
+  "time": 1788292208,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.95",
+   "executedSz": "0.95",
+   "executedNtl": "97.9523",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1787840166358,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2152945
+ },
+ {
+  "time": 1788273563,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00127",
+   "executedSz": "0.00127",
+   "executedNtl": "99.742",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": false,
+   "timestamp": 1787840151784,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2152943
+ },
+ {
+  "time": 1788273493,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00127",
+   "executedSz": "0.00127",
+   "executedNtl": "99.73635",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": false,
+   "timestamp": 1787840081836,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2152939
+ },
+ {
+  "time": 1787849355,
+  "state": {
+   "coin": "xyz:MSTR",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.729",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": false,
+   "timestamp": 1787849355750,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2153598
+ },
+ {
+  "time": 1787840166,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.95",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1787840166358,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2152945
+ },
+ {
+  "time": 1787840151,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00127",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": false,
+   "timestamp": 1787840151784,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2152943
+ },
+ {
+  "time": 1787840081,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00127",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": false,
+   "timestamp": 1787840081836,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2152939
+ },
+ {
+  "time": 1787829557,
+  "state": {
+   "coin": "STX",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "588.3",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1787829557316,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2152501
+ },
+ {
+  "time": 1787829442,
+  "state": {
+   "coin": "HYPE",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "1.81",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1787829442434,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2152493
+ },
+ {
+  "time": 1787829433,
+  "state": {
+   "coin": "JTO",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "287.0",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1787829433027,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2152491
+ },
+ {
+  "time": 1787829426,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00188",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1787829426443,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2152490
+ },
+ {
+  "time": 1787829416,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "1.43",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1787829416366,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2152489
+ },
+ {
+  "time": 1787829378,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00128",
+   "executedSz": "0.0003",
+   "executedNtl": "23.62065",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": false,
+   "timestamp": 1787741750748,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2148529
+ },
+ {
+  "time": 1787829376,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "1.03",
+   "executedSz": "0.24",
+   "executedNtl": "23.829",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": false,
+   "timestamp": 1787741744837,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2148528
+ },
+ {
+  "time": 1787829375,
+  "state": {
+   "coin": "HYPE",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "1.21",
+   "executedSz": "0.29",
+   "executedNtl": "23.84645",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": false,
+   "timestamp": 1787741774409,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2148532
+ },
+ {
+  "time": 1787829375,
+  "state": {
+   "coin": "STX",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "377.4",
+   "executedSz": "89.3",
+   "executedNtl": "23.346326",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": false,
+   "timestamp": 1787741763958,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "terminated"
+  },
+  "twapId": 2148531
+ },
+ {
+  "time": 1787741774,
+  "state": {
+   "coin": "HYPE",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "1.21",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": false,
+   "timestamp": 1787741774409,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2148532
+ },
+ {
+  "time": 1787741763,
+  "state": {
+   "coin": "STX",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "377.4",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": false,
+   "timestamp": 1787741763958,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2148531
+ },
+ {
+  "time": 1787741750,
+  "state": {
+   "coin": "BTC",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "0.00128",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": false,
+   "timestamp": 1787741750748,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2148529
+ },
+ {
+  "time": 1787741744,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "1.03",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 10080,
+   "reduceOnly": false,
+   "randomize": false,
+   "timestamp": 1787741744837,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2148528
+ },
+ {
+  "time": 1784844094,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "136.62",
+   "executedSz": "121.96",
+   "executedNtl": "9250.35406",
+   "minutes": 270,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1784829602500,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "error",
+   "description": "Insufficient margin to place order."
+  },
+  "twapId": 2052843
+ },
+ {
+  "time": 1784829602,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "136.62",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 270,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1784829602500,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2052843
+ },
+ {
+  "time": 1784605420,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "282.7",
+   "executedSz": "268.03",
+   "executedNtl": "20864.51581",
+   "minutes": 510,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1784576378875,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "error",
+   "description": "Insufficient margin to place order."
+  },
+  "twapId": 2045544
+ },
+ {
+  "time": 1784576378,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "282.7",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 510,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1784576378875,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2045544
+ },
+ {
+  "time": 1784213595,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "100.0",
+   "executedSz": "68.62",
+   "executedNtl": "5245.00082",
+   "minutes": 150,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1784207383959,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "error",
+   "description": "Insufficient margin to place order."
+  },
+  "twapId": 2035871
+ },
+ {
+  "time": 1784207383,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "100.0",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 150,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1784207383959,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2035871
+ },
+ {
+  "time": 1784169242,
+  "state": {
+   "coin": "ETH",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "3.0",
+   "executedSz": "3.0",
+   "executedNtl": "5760.37534",
+   "minutes": 240,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1784154870114,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2034595
+ },
+ {
+  "time": 1784154870,
+  "state": {
+   "coin": "ETH",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "3.0",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 240,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1784154870114,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2034595
+ },
+ {
+  "time": 1784148403,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "250.0",
+   "executedSz": "250.0",
+   "executedNtl": "19386.07077",
+   "minutes": 270,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1784132201734,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2033629
+ },
+ {
+  "time": 1784132201,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "250.0",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 270,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1784132201734,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2033629
+ },
+ {
+  "time": 1783956828,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "50.0",
+   "executedSz": "50.0",
+   "executedNtl": "3797.78268",
+   "minutes": 90,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1783951426418,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2026382
+ },
+ {
+  "time": 1783951426,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "50.0",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 90,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1783951426418,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2026382
+ },
+ {
+  "time": 1783921221,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "200.0",
+   "executedSz": "200.0",
+   "executedNtl": "15233.64365",
+   "minutes": 240,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1783906819274,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2024892
+ },
+ {
+  "time": 1783906819,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "200.0",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 240,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1783906819274,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2024892
+ },
+ {
+  "time": 1783904469,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "40.83",
+   "executedSz": "40.83",
+   "executedNtl": "3150.24314",
+   "minutes": 120,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1783897297681,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "finished"
+  },
+  "twapId": 2024520
+ },
+ {
+  "time": 1783897297,
+  "state": {
+   "coin": "SOL",
+   "user": "0xeb6eac57da5d1333895faab287c2c7fb58ff5e5e",
+   "side": "B",
+   "sz": "40.83",
+   "executedSz": "0.0",
+   "executedNtl": "0.0",
+   "minutes": 120,
+   "reduceOnly": false,
+   "randomize": true,
+   "timestamp": 1783897297681,
+   "trigger": null,
+   "stopPx": null
+  },
+  "status": {
+   "status": "activated"
+  },
+  "twapId": 2024520
+ }
+]
