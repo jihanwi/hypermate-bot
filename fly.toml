@@ -25,3 +25,9 @@ kill_timeout = 30
 [[vm]]
   size = "shared-cpu-1x"
   memory = "256mb"
+
+# Restart the machine whenever the process exits, including exit code 0
+# (e.g. main() returns 0 when BOT_TOKEN is missing), so it never stays stopped.
+# No retries limit: `retries` only applies to the "on-failure" policy.
+[[restart]]
+  policy = "always"
