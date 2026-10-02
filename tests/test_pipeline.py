@@ -8,7 +8,7 @@ from telegram.constants import ParseMode
 from hypermate.core import pipeline
 from hypermate.db.repo import Repo
 from hypermate.venues.hyperliquid import adapter
-from tests.helpers import FakeBot, FakeHLClient, check_telegram_html, clearinghouse, fill, make_context, position
+from tests.helpers import FakeBot, FakeHLClient, check_telegram_html, clearinghouse, fill, load_fixture, make_context, position
 
 A = '0x' + 'a' * 40
 T0 = 1_790_000_000_000
@@ -66,6 +66,31 @@ async def test_sweep_of_one_order_is_one_message(repo, clock):
     await fills_cycle(repo, hl, bot)
     assert len(bot.sent) == 1
     assert '60 fills' in bot.sent[0]['text'] and 'bought 90' in bot.sent[0]['text']
+
+
+async def test_recorded_sweep_fixture(repo, clock):
+    """PM measurement: 243 fills over 4 oids -> 4 events, 2 sends (BTC close of 160 fills, spot sells merged)."""
+    fills = load_fixture('hl_userFillsByTime_sweep.json')
+    times = [int(f['time']) for f in fills]
+    clock.ms = min(times) - 1000
+    await repo.add_subscription(7, A, 'cl', clock.ms)
+    hl, bot = FakeHLClient(), FakeBot()
+    hl.fills[A] = fills
+    hl.now = clock
+    while clock.ms < max(times) + 120_000:
+        clock.ms += 30_000
+        await fills_cycle(repo, hl, bot)
+
+    (va, _), = await repo.tracked_accounts()
+    events = await repo.events_since(va, 0)
+    assert sorted(e['type'] for e in events) == ['position_close', 'spot_sell', 'spot_sell', 'spot_sell']
+    assert all(e['delivery'] == 'sent' for e in events)
+    assert len(bot.sent) == 2
+    close, spot = (m['text'] for m in bot.sent)
+    assert 'closed LONG $BTC' in close and '(80 BTC)' in close and '· 160 fills' in close
+    assert 'sold 6,038 $HYPE' in spot and '· 83 fills' in spot
+    for text in (close, spot):
+        check_telegram_html(text)
 
 
 async def test_split_buys_one_minute_apart_edit_one_message(repo, clock):
@@ -148,8 +173,8 @@ async def test_spot_fills_with_display_names(repo, clock):
     await fills_cycle(repo, hl, bot)
     texts = [m['text'] for m in bot.sent]
     assert len(texts) == 3
-    assert 'bought 10 HYPE $HYPE\n$400 @ 40.00' in texts[1]
-    assert 'sold 100 PURR $PURR\n$20 @ 0.2' in texts[2]
+    assert 'bought 10 $HYPE\n$400 @ 40.00' in texts[1]
+    assert 'sold 100 $PURR\n$20 @ 0.2' in texts[2]
     (va, _), = await repo.tracked_accounts()
     assert await repo.get_cursor(va, 'fills') == str(T0 + 700)
     bot.sent.clear()

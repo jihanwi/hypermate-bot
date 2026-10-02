@@ -1,7 +1,7 @@
 """Synthetic TWAP (external execution bot) detection, spec 5.2 합성 TWAP.
 
-The loracle pattern is simulated here (BTC Open Long and CASHCAT Close Short every few seconds for an
-hour, no native TWAP). Replay of the recorded hl_userFillsByTime_algo.json is added with that fixture.
+The loracle pattern is simulated (BTC Open Long and CASHCAT Close Short every few seconds for an hour,
+no native TWAP) and replayed from the recording (hl_userFillsByTime_algo.json, 1,068 fills).
 """
 
 from decimal import Decimal
@@ -11,7 +11,7 @@ import pytest
 from hypermate.core import aggregator, pipeline
 from hypermate.db.repo import Repo
 from hypermate.venues.hyperliquid import adapter
-from tests.helpers import FakeBot, FakeHLClient, check_telegram_html, fill, make_context
+from tests.helpers import FakeBot, FakeHLClient, check_telegram_html, fill, load_fixture, make_context
 
 W = '0x' + 'c' * 40
 T0 = 1_790_000_000_000
@@ -98,7 +98,7 @@ async def test_loracle_hour_gives_two_algo_starts_and_two_ends(repo, clock):
     await run_cycles(repo, hl, bot, clock, T0 + 72 * 60_000)
     ends = [m['text'] for m in bot.sent[2:]]
     assert len(ends) == 2
-    assert any('algo done LONG $BTC' in t for t in ends)
+    assert any('algo done accumulating LONG $BTC' in t for t in ends)
     assert any('algo done reducing SHORT $CASHCAT' in t for t in ends)
     assert await repo.active_algos(va) == {}
     end_btc = next(e for e in await repo.events_since(va, 0, ['algo_end']) if e['payload']['coin'] == 'BTC')
@@ -139,7 +139,7 @@ async def test_algo_survives_restart(tmp_path, clock):
     await repo.connect()
     await run_cycles(repo, hl, bot, clock, T0 + 32 * 60_000)
     texts = [m['text'] for m in bot.sent]
-    assert len(texts) == 2 and 'algo accumulating' in texts[0] and 'algo done LONG $BTC' in texts[1]
+    assert len(texts) == 2 and 'algo accumulating' in texts[0] and 'algo done accumulating LONG $BTC' in texts[1]
     (va, _), = await repo.tracked_accounts()
     assert len(await repo.events_since(va, 0, ['algo_start'])) == 1
     await repo.close()
@@ -155,6 +155,45 @@ async def test_manual_trades_do_not_start_an_algo(repo, clock):
     (va, _), = await repo.tracked_accounts()
     assert await repo.events_since(va, 0, ['algo_start']) == []
     assert len(bot.sent) == 1
+
+
+async def test_recorded_algo_fixture_sends_two_starts_and_two_ends(repo, clock):
+    """PM measurement: exactly 4 sends (algo_start 2, algo_end 2) and no individual fill message."""
+    fills = load_fixture('hl_userFillsByTime_algo.json')
+    times = [int(f['time']) for f in fills]
+    assert len(fills) == 1068 and all(f.get('twapId') is None for f in fills)
+    clock.ms = min(times) - 1000
+    await repo.add_subscription(7, W, 'loracle', clock.ms)
+    hl, bot = FakeHLClient(), FakeBot()
+    hl.fills[W] = fills
+    (va, _), = await repo.tracked_accounts()
+
+    await run_cycles(repo, hl, bot, clock, max(times) + 12 * 60_000)
+    texts = [m['text'] for m in bot.sent]
+    assert len(texts) == 4
+    assert sum('algo accumulating LONG $BTC' in t for t in texts) == 1
+    assert sum('algo reducing SHORT $CASHCAT' in t for t in texts) == 1
+    assert sum('algo done accumulating LONG $BTC' in t for t in texts) == 1
+    assert sum('algo done reducing SHORT $CASHCAT' in t for t in texts) == 1
+    for text in texts:
+        check_telegram_html(text)
+    events = await repo.events_since(va, 0)
+    assert sorted(e['type'] for e in events if e['type'].startswith('algo_')) == [
+        'algo_end', 'algo_end', 'algo_start', 'algo_start']
+    # every order of the hour is counted in its algo (834 oids)
+    ends = {e['payload']['coin']: e['payload'] for e in events if e['type'] == 'algo_end'}
+    assert sum(int(p['fills_count']) for p in ends.values()) == len({f['oid'] for f in fills})
+    for coin, payload in ends.items():
+        coin_fills = [f for f in fills if f['coin'] == coin]
+        assert Decimal(payload['total_sz']) == sum(Decimal(f['sz']) for f in coin_fills)
+    assert await repo.active_algos(va) == {}
+
+    # the recorded positions at the end of the hour match the fills: both keys only move the position
+    # up (+ sign), so the final size is the largest startPosition + sz
+    state = load_fixture('hl_clearinghouseState_algo.json')
+    final = {p['position']['coin']: Decimal(p['position']['szi']) for p in state['assetPositions']}
+    for coin in ('BTC', 'CASHCAT'):
+        assert max(Decimal(f['startPosition']) + Decimal(f['sz']) for f in fills if f['coin'] == coin) == final[coin]
 
 
 def _order(ts, poll, notional, start='1', after='2', price='100', size='1'):

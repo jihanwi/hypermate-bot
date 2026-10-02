@@ -170,7 +170,7 @@ def test_hip3_coin_label_and_spot_display_name():
     chain = chain_of(fill('@107', 'Buy', '10', '41.5', 1, '0', side='B'))
     chain['meta']['display_coin'] = 'HYPE'
     text = formatter.format_fill_message(ADDR, 'w', chain)
-    assert '🟢' in text and 'bought 10 HYPE $HYPE\n$415 @ 41.50' in text
+    assert '🟢' in text and 'bought 10 $HYPE\n$415 @ 41.50' in text
 
 
 def test_merged_chain_shows_totals_and_fill_count():
@@ -198,7 +198,7 @@ def test_algo_messages():
     assert '🤖' in text and 'algo accumulating LONG $BTC\n12 fills +$41k in 5m · pos $35.9M avg 86,189' in text
     assert formatter.algo_label(1, Decimal('-5000')) == ('reducing', 'SHORT')
     end = formatter.format_algo_end(ADDR, 'loracle', {**state, 'last_fill_ms': 58 * 60_000}, verb, side)
-    assert 'algo done LONG $BTC\n+$41k (0.4757 BTC) avg 86,189 · 12 fills · 58m' in end
+    assert 'algo done accumulating LONG $BTC\n+$41k (0.4757 BTC) avg 86,189 · 12 fills · 58m' in end
     end = formatter.format_algo_end(ADDR, 'x', {**state, 'coin': 'CASHCAT'}, 'reducing', 'SHORT')
     assert 'algo done reducing SHORT $CASHCAT' in end
 

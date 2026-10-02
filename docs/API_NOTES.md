@@ -57,12 +57,12 @@ Hyperliquid facts below were checked live against `https://api.hyperliquid.xyz/i
 - TWAP_END status comes from the newest non-`activated` `twapHistory` entry for the twapId. Its `state` carries the final `executedSz` / `executedNtl`; `time` (seconds) is used as the end time.
 - If the TWAP left `twapStates` but `twapHistory` has no final entry yet, the bot waits one more polling cycle before reporting status `unknown` (spec says report `unknown` immediately; the extra cycle covers a possible lag between the two endpoints, not verified live).
 - webData2 is large (311 KB in the fixture). Its weight is still [I] 20.
-- **[?] Not verified: whether `twapStates` includes HIP-3 TWAPs.** `twapHistory` does include them (`xyz:MSTR` in the fixture), but the webData2 fixture's 5 active TWAPs are all main-dex coins. Needs a live check with a wallet running a HIP-3 TWAP (owner). If they are missing, HIP-3 TWAP slices will not be suppressed.
+- **[?] Not verified (still open after the PM live check 2026-10-03): whether `twapStates` includes HIP-3 TWAPs.** `twapHistory` does include them (`xyz:MSTR` in the fixture), but the webData2 fixture's 5 active TWAPs are all main-dex coins. Needs a live check with a wallet running a HIP-3 TWAP (owner). If they are missing, HIP-3 TWAP slices will not be suppressed.
 
 ### HIP-3 dexs (Phase 1 PR B)
 
-- `perpDexs` returns a list whose first entry is `null` (the main dex). The other entries were documented as objects with `name`; the client accepts both a plain string and an object with `name`, and skips `null`. Not verified live which shape the API returns today (owner).
-- `clearinghouseState` with `{"dex": "xyz"}` returns that dex's positions only. The bot queries the main dex plus every dex in `venue_accounts.dexs_json`. Not verified live: whether `position.coin` inside a dex state is `"xyz:MU"` or `"MU"` (owner). The snapshot is keyed by dex, so either form works for change detection; `/positions` shows what the API returns.
+- `perpDexs` (PM live check 2026-10-03): `[null, {name, fullName, deployer, oracleUpdater, feeRecipient, assetToStreamingOiCap, ...}, ...]`. The first entry `null` is the main dex; the others are objects. The client reads `name` and skips `null` (it still accepts a plain string).
+- `clearinghouseState` with `{"dex": "xyz"}` returns that dex's positions only. The bot queries the main dex plus every dex in `venue_accounts.dexs_json`. `position.coin` inside a dex state is `"xyz:MU"` (PM live check 2026-10-03), the same form as in fills.
 - Margin balance in `/positions` is the sum of `marginSummary.accountValue` over all queried dexs.
 - `webData2` mark prices (`meta.universe` / `assetCtxs`) cover the main dex only, so a HIP-3 TWAP_START shows the coin amount instead of USD.
 - Dex discovery: one scan of all `perpDexs` on `/add`, one automatic scan per existing wallet (cursor kind `dex_scan`), `/rescan` on demand, and a new dex prefix seen in fills is added automatically.
@@ -74,6 +74,8 @@ Hyperliquid facts below were checked live against `https://api.hyperliquid.xyz/i
 - `dir == "Spot Dust Conversion"` appears in spot history; it is skipped.
 - TWAP slice fills do not appear in `userFillsByTime` (fixture: 8 gaps in the `startPosition` chain, each explained by a TWAP slice in `userTwapSliceFillsByTime`). So a native TWAP never produces position alerts from fills; the START/END messages come from webData2/twapHistory as in PR A.
 - Fixture replay (`hl_userFillsByTime.json`, 348 fills): 114 orders, OPEN 38 / INCREASE 8 / DECREASE 21 / CLOSE 47 after the spot split; realized PnL total equals the sum of `closedPnl`; dexs `""` 106, `xyz` 6, `para` 2.
+- Fixture `hl_userFillsByTime_sweep.json` (PM recording): 243 fills over 4 oids. One BTC Close Long market order of 160 fills in the same millisecond, then 3 `@107` (HYPE) spot sells within 34 s. Replay: 4 events, 2 messages (the 3 spot orders merge by debounce).
+- Fixture `hl_userFillsByTime_algo.json` (PM recording, loracle): 1,068 fills over 834 oids in one hour, `twapId` null on every fill. BTC Open Long and CASHCAT Close Short. `hl_clearinghouseState_algo.json` is the state at the end of that hour; its BTC and CASHCAT sizes equal the fills' last `startPosition + sz`. Replay with 30 s cycles: 2 ALGO_START, 2 ALGO_END, no fill message.
 - Polling: fills are fetched every transfers cycle (same cadence as Phase 0). Spec 5.2 says fetch fills only when the snapshot changed, but spot fills never change perp snapshots. The weight optimization is left for PR C (scheduler).
 
 ## Telegram

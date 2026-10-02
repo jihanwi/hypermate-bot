@@ -426,7 +426,7 @@ def format_fill_message(wallet_address: str, alias: str, chain: dict, held_ms: O
 
     if event_type in ('spot_buy', 'spot_sell'):
         emoji, verb = ('🟢', 'bought') if event_type == 'spot_buy' else ('🔴', 'sold')
-        return (f"{VENUE_BADGE_HL} {emoji} {who} {verb} {qty} {coin_label(coin, display)}\n"
+        return (f"{VENUE_BADGE_HL} {emoji} {who} {verb} {quantity(size)} {coin_label(coin, display)}\n"
                 f"{compact_usd(notional)}{at}{tail}")
 
     side = chain.get('side') or ''
@@ -499,13 +499,12 @@ def format_algo_end(wallet_address: str, alias: str, state: dict, verb: str, sid
     total_sz = to_decimal(state.get('total_sz')) or ZERO
     vwap = total / total_sz if total_sz else None
     signed = f"{'+' if int(state['sign']) > 0 else '-'}{compact_usd(total)}"
-    label = side if verb == 'accumulating' else f"{verb} {side}"
     line = f"{signed} ({quantity(total_sz)} {h(base_coin(state['coin']))})"
     if vwap is not None:
         line += f" avg {plain_price(vwap)}"
     line += (f" · {int(state['fills_count'])} fills · "
              f"{humanize_ms(int(state['last_fill_ms']) - int(state['started_ms']))}")
-    return (f"{VENUE_BADGE_HL} ✅ <b>{alias_link(wallet_address, alias)}</b> algo done {label} "
+    return (f"{VENUE_BADGE_HL} ✅ <b>{alias_link(wallet_address, alias)}</b> algo done {verb} {side} "
             f"{coin_label(state['coin'])}\n{line}")
 
 
