@@ -23,7 +23,7 @@ Requires Python 3.10+.
 ```bash
 pip install -r requirements.txt
 export BOT_TOKEN=your_bot_token_here
-export DATABASE_PATH=./hypermate.db   # default is /data/hypermate.db (Railway volume)
+export DATABASE_PATH=./hypermate.db   # default is /data/hypermate.db (Fly.io volume)
 python -m hypermate.main
 ```
 
@@ -56,13 +56,39 @@ python scripts/migrate_v1.py --target /data/hypermate.db
 - The v1 table and the legacy JSON files (`user_wallets.json`, `generated_wallets.json`, `wallets_secure.json`) are not modified. The bot does not read the JSON files; it logs a warning if it finds them.
 - Migrated wallets start alerting from the time of migration. Past activity is not replayed.
 
-On Railway the v1 DB lives in the container filesystem, which is replaced on redeploy. Copy it out of the running v1 service before deploying v2 if you want to migrate it.
+The v1 DB lives in the old Railway service's container filesystem. Copy it out before that service is shut down if you want to migrate it. On Fly.io, upload it to the volume and run the script as the app user:
 
-## Railway deployment
+```bash
+fly ssh sftp shell            # then: put hypermate_v1.db /data/hypermate_v1.db
+fly ssh console -C "setpriv --reuid=app --regid=app --init-groups python /app/scripts/migrate_v1.py --source /data/hypermate_v1.db"
+```
 
-1. Attach a Volume to the service with mount path `/data` (service, Settings, Volumes). Without it the DB is lost on every redeploy.
-2. Set `BOT_TOKEN`. `DATABASE_PATH` can stay at its default.
-3. Deploy. `railway.toml` and `Procfile` start `python -m hypermate.main`.
+## Fly.io deployment
+
+The bot runs as a single Fly Machine in `nrt` (Tokyo) with the SQLite DB on the `hypermate_data` volume mounted at `/data`. Config is in `fly.toml`, the image in `Dockerfile`.
+
+```bash
+fly launch --no-deploy --copy-config
+fly volumes create hypermate_data --region nrt --size 1
+fly secrets set BOT_TOKEN=...
+fly deploy
+fly logs
+```
+
+- **Keep exactly one machine: `fly scale count 1`.** A volume attaches to one machine only, and SQLite cannot be shared between machines. Check with `fly status` after deploys and scale back to 1 if Fly created more.
+- `fly.toml` has no `[http_service]` / `[[services]]`. The bot is a worker that opens no ports, so Fly keeps the machine running instead of auto-stopping it.
+- `kill_signal = "SIGINT"`, `kill_timeout = 30`: python-telegram-bot stops polling and runs `post_shutdown` (closes the DB and HTTP session) on SIGINT.
+- `DATABASE_PATH` and `LOG_LEVEL` are set in `fly.toml` `[env]`. `BOT_TOKEN` is a Fly secret.
+- The container starts as root only long enough for `docker-entrypoint.sh` to `chown` the volume (Fly mounts it owned by root), then runs the bot as the unprivileged `app` user.
+
+### DB backup
+
+```bash
+fly ssh console -C "sqlite3 /data/hypermate.db '.backup /data/backup.db'"
+fly ssh sftp get /data/backup.db
+```
+
+`.backup` uses SQLite's online backup API, so it is safe while the bot is running. Do not copy `hypermate.db` directly (WAL mode keeps recent writes in `hypermate.db-wal`).
 
 ## Layout
 
@@ -80,4 +106,7 @@ hypermate/
   bot/commands.py         command handlers
   bot/texts.py            command texts
 scripts/migrate_v1.py     v1 to v2 data migration
+Dockerfile                image (python:3.12-slim, non-root)
+docker-entrypoint.sh      chown /data, then drop to the app user
+fly.toml                  Fly.io app config
 ```

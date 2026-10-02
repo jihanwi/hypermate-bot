@@ -19,7 +19,7 @@ _load_dotenv()
 class Config:
     BOT_TOKEN: str = os.getenv("BOT_TOKEN")
 
-    # SQLite file. On Railway a Volume is mounted at /data so it survives redeploys.
+    # SQLite file. On Fly.io the hypermate_data volume is mounted at /data so it survives redeploys.
     DATABASE_PATH: str = os.getenv("DATABASE_PATH", "/data/hypermate.db")
 
     HYPERLIQUID_API_URL: str = os.getenv("HYPERLIQUID_API_URL", "https://api.hyperliquid.xyz")

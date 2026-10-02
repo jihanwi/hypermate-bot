@@ -1,0 +1,16 @@
+.git
+.gitignore
+tests/
+docs/
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+__pycache__/
+*.py[cod]
+.pytest_cache/
+requirements-dev.txt
+pytest.ini
+fly.toml
+README.md

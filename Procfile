@@ -1,1 +1,0 @@
-worker: python -m hypermate.main 
