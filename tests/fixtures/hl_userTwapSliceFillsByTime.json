@@ -1,0 +1,202 @@
+[
+ {
+  "fill": {
+   "coin": "BTC",
+   "px": "84854.0",
+   "sz": "0.00014",
+   "side": "B",
+   "time": 1790878212047,
+   "startPosition": "0.01416",
+   "dir": "Open Long",
+   "closedPnl": "0.0",
+   "hash": "0x8b910a7945c24b57eb0c568f108ef9c63898c909000000000000000000000000",
+   "oid": 562676821063,
+   "crossed": true,
+   "fee": "0.005345",
+   "tid": 668277586873125,
+   "feeToken": "USDC",
+   "twapId": null
+  },
+  "twapId": 2276387
+ },
+ {
+  "fill": {
+   "coin": "STX",
+   "px": "0.38545",
+   "sz": "30.3",
+   "side": "B",
+   "time": 1790878215022,
+   "startPosition": "2495.6",
+   "dir": "Open Long",
+   "closedPnl": "0.0",
+   "hash": "0x8b910a7945c24b57eb0c568f108ef9c63898c909000000000000000000000000",
+   "oid": 562676863227,
+   "crossed": true,
+   "fee": "0.005255",
+   "tid": 7809952976627,
+   "feeToken": "USDC",
+   "twapId": null
+  },
+  "twapId": 2276388
+ },
+ {
+  "fill": {
+   "coin": "SOL",
+   "px": "118.43",
+   "sz": "0.1",
+   "side": "B",
+   "time": 1790878221004,
+   "startPosition": "6.46",
+   "dir": "Open Long",
+   "closedPnl": "0.0",
+   "hash": "0x8b910a7945c24b57eb0c568f108ef9c63898c909000000000000000000000000",
+   "oid": 562676941108,
+   "crossed": true,
+   "fee": "0.005329",
+   "tid": 489756926089727,
+   "feeToken": "USDC",
+   "twapId": null
+  },
+  "twapId": 2276389
+ },
+ {
+  "fill": {
+   "coin": "HYPE",
+   "px": "87.774",
+   "sz": "0.14",
+   "side": "B",
+   "time": 1790878224029,
+   "startPosition": "6.27",
+   "dir": "Open Long",
+   "closedPnl": "0.0",
+   "hash": "0x8b910a7945c24b57eb0c568f108ef9c63898c909000000000000000000000000",
+   "oid": 562676975072,
+   "crossed": true,
+   "fee": "0.005529",
+   "tid": 595900764005597,
+   "feeToken": "USDC",
+   "twapId": null
+  },
+  "twapId": 2276390
+ },
+ {
+  "fill": {
+   "coin": "ETH",
+   "px": "2700.7",
+   "sz": "0.0044",
+   "side": "B",
+   "time": 1790878229021,
+   "startPosition": "0.1081",
+   "dir": "Open Long",
+   "closedPnl": "0.0",
+   "hash": "0x8b910a7945c24b57eb0c568f108ef9c63898c909000000000000000000000000",
+   "oid": 562677045030,
+   "crossed": true,
+   "fee": "0.005347",
+   "tid": 301562665220405,
+   "feeToken": "USDC",
+   "twapId": null
+  },
+  "twapId": 2276392
+ },
+ {
+  "fill": {
+   "coin": "STX",
+   "px": "0.37001",
+   "sz": "31.5",
+   "side": "B",
+   "time": 1790948085060,
+   "startPosition": "2525.9",
+   "dir": "Open Long",
+   "closedPnl": "0.0",
+   "hash": "0x8b910a7945c24b57eb0c568f108ef9c63898c909000000000000000000000000",
+   "oid": 563479152344,
+   "crossed": true,
+   "fee": "0.005244",
+   "tid": 494862083209761,
+   "feeToken": "USDC",
+   "twapId": null
+  },
+  "twapId": 2276388
+ },
+ {
+  "fill": {
+   "coin": "BTC",
+   "px": "86689.0",
+   "sz": "0.00014",
+   "side": "B",
+   "time": 1790949342031,
+   "startPosition": "0.0143",
+   "dir": "Open Long",
+   "closedPnl": "0.0",
+   "hash": "0x8b910a7945c24b57eb0c568f108ef9c63898c909000000000000000000000000",
+   "oid": 563513074935,
+   "crossed": true,
+   "fee": "0.005461",
+   "tid": 868947078129311,
+   "feeToken": "USDC",
+   "twapId": null
+  },
+  "twapId": 2276387
+ },
+ {
+  "fill": {
+   "coin": "ETH",
+   "px": "2748.5",
+   "sz": "0.0043",
+   "side": "B",
+   "time": 1790949359057,
+   "startPosition": "0.1125",
+   "dir": "Open Long",
+   "closedPnl": "0.0",
+   "hash": "0x8b910a7945c24b57eb0c568f108ef9c63898c909000000000000000000000000",
+   "oid": 563513447054,
+   "crossed": true,
+   "fee": "0.005318",
+   "tid": 172815776249490,
+   "feeToken": "USDC",
+   "twapId": null
+  },
+  "twapId": 2276392
+ },
+ {
+  "fill": {
+   "coin": "SOL",
+   "px": "122.25",
+   "sz": "0.1",
+   "side": "B",
+   "time": 1790949381051,
+   "startPosition": "6.56",
+   "dir": "Open Long",
+   "closedPnl": "0.0",
+   "hash": "0x8b910a7945c24b57eb0c568f108ef9c63898c909000000000000000000000000",
+   "oid": 563513991879,
+   "crossed": true,
+   "fee": "0.005501",
+   "tid": 270213651907402,
+   "feeToken": "USDC",
+   "twapId": null
+  },
+  "twapId": 2276389
+ },
+ {
+  "fill": {
+   "coin": "HYPE",
+   "px": "89.679",
+   "sz": "0.13",
+   "side": "B",
+   "time": 1790951844009,
+   "startPosition": "6.41",
+   "dir": "Open Long",
+   "closedPnl": "0.0",
+   "hash": "0x8b910a7945c24b57eb0c568f108ef9c63898c909000000000000000000000000",
+   "oid": 563570307222,
+   "crossed": true,
+   "fee": "0.005246",
+   "tid": 541620103878450,
+   "feeToken": "USDC",
+   "twapId": null
+  },
+  "twapId": 2276390
+ }
+]

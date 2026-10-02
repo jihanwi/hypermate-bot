@@ -1,0 +1,33 @@
+# Fly.io config. `fly launch --no-deploy --copy-config` overwrites the app name.
+app = "hypermate-bot"
+primary_region = "nrt"
+
+# PTB stops polling and runs post_shutdown on SIGINT
+kill_signal = "SIGINT"
+kill_timeout = 30
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  DATABASE_PATH = "/data/hypermate.db"
+  LOG_LEVEL = "INFO"
+
+# SQLite lives on this volume. A volume attaches to one machine only:
+# keep exactly one machine (fly scale count 1).
+[mounts]
+  source = "hypermate_data"
+  destination = "/data"
+
+# No [http_service] / [[services]]: this is a worker that opens no ports,
+# so Fly does not auto-stop the machine.
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+# Restart the machine whenever the process exits, including exit code 0
+# (e.g. main() returns 0 when BOT_TOKEN is missing), so it never stays stopped.
+# No retries limit: `retries` only applies to the "on-failure" policy.
+[[restart]]
+  policy = "always"
