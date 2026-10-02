@@ -11,10 +11,20 @@ The v2 upgrade plan is in [docs/HYPERMATE_V2_SPEC.md](docs/HYPERMATE_V2_SPEC.md)
 - `/add <wallet_address> <alias>` - Track a wallet
 - `/list` - Your tracked wallets with account value
 - `/remove <alias>` - Stop tracking a wallet
-- `/positions [alias]` - Positions and balances for one wallet, or a one-line summary per wallet without an alias
+- `/positions [alias]` - Positions and balances for one wallet (main dex and HIP-3 dexs), or a one-line summary per wallet without an alias
+- `/twap [alias]` - Active native TWAPs and detected bot (algo) executions
+- `/recent <alias> [n]` - Last n events (default 10, max 30), including ones that were not sent and why
 - `/stats <alias>` - PnL and volume
+- `/rescan <alias>` - Look for Hyperliquid HIP-3 dex positions again
 
-Aliases are matched case-insensitively. On startup the bot registers `add`, `remove`, `list`, `positions`, `stats` and `help` as the Telegram `/` command menu for private chats.
+Aliases are matched case-insensitively. On startup the bot registers these commands as the Telegram `/` command menu for private chats.
+
+### Alerts
+
+- One alert per order: fills of the same order (coin, direction, oid) are summed (size, notional, VWAP, realized PnL from `closedPnl`). Further orders for the same coin and direction within 60 s edit that alert instead of sending a new one.
+- Native TWAPs: one alert at start and one at the end; fills in the same direction while it runs are not alerted.
+- Bot-driven executions (repeated small orders from an external bot, no native TWAP) are detected and shown as one "algo" alert that is updated every 10 minutes, plus an end alert after 10 idle minutes.
+- HIP-3 dex coins are shown as `$MU (xyz)`. Collateral moves between the main account and a HIP-3 dex, spot/perp class transfers and vault deposits/withdrawals are recorded but not sent (off by default, spec 9.4).
 
 ## Running locally
 

@@ -24,9 +24,12 @@ class HyperliquidAPIError(Exception):
 class HyperliquidClient:
     """Thin wrapper over POST /info. One aiohttp session per process."""
 
-    def __init__(self, base_url: str, spot_meta_ttl_sec: int = 3600) -> None:
+    def __init__(self, base_url: str, spot_meta_ttl_sec: int = 3600, perp_dexs_ttl_sec: int = 3600) -> None:
         self.base_url = base_url.rstrip('/')
         self.spot_meta_ttl_sec = spot_meta_ttl_sec
+        self.perp_dexs_ttl_sec = perp_dexs_ttl_sec
+        self._perp_dexs: list[str] = []
+        self._perp_dexs_fetched_at: Optional[float] = None
         self._session: Optional[aiohttp.ClientSession] = None
         self._spot_names: dict[str, str] = {}
         self._spot_names_fetched_at: Optional[float] = None
@@ -51,8 +54,21 @@ class HyperliquidClient:
         except aiohttp.ClientError as e:
             raise HyperliquidAPIError(f"{payload['type']} failed: {e}") from e
 
-    async def clearinghouse_state(self, user: str) -> dict:
-        return await self._info({"type": "clearinghouseState", "user": user})
+    async def clearinghouse_state(self, user: str, dex: str = '') -> dict:
+        """Positions and margin of one perp dex; "" is the main dex (no dex param, spec 5.1 HIP-3)."""
+        payload = {"type": "clearinghouseState", "user": user}
+        if dex:
+            payload["dex"] = dex
+        return await self._info(payload)
+
+    async def perp_dexs(self) -> list[str]:
+        """HIP-3 builder dex names (the main dex, null in the response, is left out). Cached."""
+        if (self._perp_dexs_fetched_at is None
+                or time.monotonic() - self._perp_dexs_fetched_at > self.perp_dexs_ttl_sec):
+            data = await self._info({"type": "perpDexs"})
+            self._perp_dexs = [d['name'] if isinstance(d, dict) else d for d in data or [] if d]
+            self._perp_dexs_fetched_at = time.monotonic()
+        return list(self._perp_dexs)
 
     async def spot_clearinghouse_state(self, user: str) -> dict:
         return await self._info({"type": "spotClearinghouseState", "user": user})

@@ -33,8 +33,17 @@ class Repo:
         await self.db.execute('PRAGMA journal_mode=WAL')
         await self.db.execute('PRAGMA foreign_keys=ON')
         await self.db.executescript(SCHEMA_PATH.read_text())
+        await self._migrate()
         await self.db.commit()
         logger.info(f"Database ready at {self.path}")
+
+    async def _migrate(self) -> None:
+        """Add columns introduced after the first deploy (idempotent)."""
+        cur = await self.db.execute("PRAGMA table_info(venue_accounts)")
+        columns = {row[1] for row in await cur.fetchall()}
+        if 'dexs_json' not in columns:
+            await self.db.execute("ALTER TABLE venue_accounts ADD COLUMN dexs_json TEXT NOT NULL DEFAULT '[]'")
+            logger.info("Migrated venue_accounts: added dexs_json")
 
     async def close(self) -> None:
         if self.db is not None:
@@ -131,10 +140,16 @@ class Repo:
     # Polling state (B6) -----------------------------------------------------
 
     async def get_snapshot(self, venue_account_id: int) -> Optional[dict]:
+        """{dex: {coin: position}} (main dex key ""). Phase 0 rows ({coin: position}) are read as main dex."""
         cur = await self.db.execute(
             "SELECT positions_json FROM snapshots WHERE venue_account_id = ?", (venue_account_id,))
         row = await cur.fetchone()
-        return json.loads(row[0]) if row else None
+        if not row:
+            return None
+        snapshot = json.loads(row[0])
+        if any(isinstance(v, dict) and 'szi' in v for v in snapshot.values()):
+            return {'': snapshot}
+        return snapshot
 
     async def save_snapshot(self, venue_account_id: int, positions: dict, now_ms: int,
                             account_value: Optional[str] = None) -> None:
@@ -145,6 +160,23 @@ class Repo:
             "ON CONFLICT(venue_account_id) DO UPDATE SET positions_json = excluded.positions_json, "
             "account_value = excluded.account_value, updated_at = excluded.updated_at",
             (venue_account_id, json.dumps(positions, sort_keys=True), account_value, now_ms))
+        await self.db.commit()
+
+    async def hl_account_id(self, address: str) -> Optional[int]:
+        cur = await self.db.execute(
+            "SELECT venue_account_id FROM venue_accounts WHERE venue = ? AND account_ref = ?", (HYPERLIQUID, address))
+        row = await cur.fetchone()
+        return row[0] if row else None
+
+    async def get_dexs(self, venue_account_id: int) -> list[str]:
+        cur = await self.db.execute(
+            "SELECT dexs_json FROM venue_accounts WHERE venue_account_id = ?", (venue_account_id,))
+        row = await cur.fetchone()
+        return json.loads(row[0]) if row and row[0] else []
+
+    async def set_dexs(self, venue_account_id: int, dexs: list[str]) -> None:
+        await self.db.execute("UPDATE venue_accounts SET dexs_json = ? WHERE venue_account_id = ?",
+                              (json.dumps(sorted(set(dexs))), venue_account_id))
         await self.db.commit()
 
     async def hl_account_value(self, address: str) -> Optional[str]:
@@ -209,4 +241,81 @@ class Repo:
     async def delete_twap(self, venue_account_id: int, twap_id: str) -> None:
         await self.db.execute(
             "DELETE FROM twap_active WHERE venue_account_id = ? AND twap_id = ?", (venue_account_id, twap_id))
+        await self.db.commit()
+
+    async def get_event(self, event_id: int) -> Optional[dict]:
+        cur = await self.db.execute(
+            "SELECT event_id, dedupe_key, type, ts_ms, payload_json, delivery FROM events WHERE event_id = ?",
+            (event_id,))
+        r = await cur.fetchone()
+        return ({'event_id': r[0], 'dedupe_key': r[1], 'type': r[2], 'ts_ms': r[3],
+                 'payload': json.loads(r[4]), 'delivery': r[5]} if r else None)
+
+    async def get_event_by_key(self, dedupe_key: str) -> Optional[dict]:
+        cur = await self.db.execute("SELECT event_id FROM events WHERE dedupe_key = ?", (dedupe_key,))
+        row = await cur.fetchone()
+        return await self.get_event(row[0]) if row else None
+
+    async def update_event_payload(self, event_id: int, payload: dict) -> None:
+        await self.db.execute("UPDATE events SET payload_json = ? WHERE event_id = ?",
+                              (json.dumps(payload, sort_keys=True, default=str), event_id))
+        await self.db.commit()
+
+    async def events_since(self, venue_account_id: int, since_ms: int, types: Optional[list[str]] = None) -> list[dict]:
+        """Events with ts_ms >= since_ms, oldest first."""
+        sql = ("SELECT event_id, dedupe_key, type, ts_ms, payload_json, delivery FROM events "
+               "WHERE venue_account_id = ? AND ts_ms >= ?")
+        params: list = [venue_account_id, since_ms]
+        if types:
+            sql += f" AND type IN ({','.join('?' * len(types))})"
+            params += types
+        cur = await self.db.execute(sql + " ORDER BY ts_ms, event_id", params)
+        return [{'event_id': r[0], 'dedupe_key': r[1], 'type': r[2], 'ts_ms': r[3],
+                 'payload': json.loads(r[4]), 'delivery': r[5]} for r in await cur.fetchall()]
+
+    async def last_event_ts(self, venue_account_id: int, event_type: str, coin: str) -> Optional[int]:
+        """ts_ms of the newest event of this type for the coin (e.g. last POSITION_OPEN, for 'held')."""
+        cur = await self.db.execute(
+            "SELECT MAX(ts_ms) FROM events WHERE venue_account_id = ? AND type = ? "
+            "AND json_extract(payload_json, '$.coin') = ?", (venue_account_id, event_type, coin))
+        row = await cur.fetchone()
+        return row[0] if row else None
+
+    # Sent messages (edits for debounce and algo progress) ---------------------
+
+    async def add_sent_message(self, event_id: int, user_id: int, chat_id: int, message_id: int) -> None:
+        await self.db.execute(
+            "INSERT OR REPLACE INTO sent_messages (event_id, user_id, chat_id, message_id) VALUES (?, ?, ?, ?)",
+            (event_id, user_id, chat_id, message_id))
+        await self.db.commit()
+
+    async def sent_messages(self, event_id: int) -> dict[int, tuple[int, int]]:
+        """{user_id: (chat_id, message_id)} for the event."""
+        cur = await self.db.execute(
+            "SELECT user_id, chat_id, message_id FROM sent_messages WHERE event_id = ?", (event_id,))
+        return {u: (c, m) for u, c, m in await cur.fetchall()}
+
+    # Synthetic TWAP (algo) state ----------------------------------------------
+
+    async def active_algos(self, venue_account_id: int) -> dict[tuple[str, int], dict]:
+        cur = await self.db.execute(
+            "SELECT coin, sign, started_ms, last_fill_ms, fills_count, total_sz, total_ntl "
+            "FROM algo_active WHERE venue_account_id = ?", (venue_account_id,))
+        return {(coin, sign): {'coin': coin, 'sign': sign, 'started_ms': started, 'last_fill_ms': last,
+                               'fills_count': count, 'total_sz': sz, 'total_ntl': ntl}
+                for coin, sign, started, last, count, sz, ntl in await cur.fetchall()}
+
+    async def upsert_algo(self, venue_account_id: int, state: dict) -> None:
+        await self.db.execute(
+            "INSERT INTO algo_active (venue_account_id, coin, sign, started_ms, last_fill_ms, fills_count, "
+            "total_sz, total_ntl) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(venue_account_id, coin, sign) DO UPDATE SET last_fill_ms = excluded.last_fill_ms, "
+            "fills_count = excluded.fills_count, total_sz = excluded.total_sz, total_ntl = excluded.total_ntl",
+            (venue_account_id, state['coin'], state['sign'], state['started_ms'], state['last_fill_ms'],
+             state['fills_count'], str(state['total_sz']), str(state['total_ntl'])))
+        await self.db.commit()
+
+    async def delete_algo(self, venue_account_id: int, coin: str, sign: int) -> None:
+        await self.db.execute("DELETE FROM algo_active WHERE venue_account_id = ? AND coin = ? AND sign = ?",
+                              (venue_account_id, coin, sign))
         await self.db.commit()

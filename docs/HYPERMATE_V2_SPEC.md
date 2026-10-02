@@ -161,6 +161,8 @@ class EventType(str, Enum):
     TRANSFER_OUT = "transfer_out"
     ACCOUNT_CLASS_TRANSFER = "account_class_transfer"   # HL spot <-> perp, 기본 알림 off
     DEX_COLLATERAL_TRANSFER = "dex_collateral_transfer" # HL 메인 <-> HIP-3 덱스 담보 이동, 기본 알림 off
+    ALGO_START = "algo_start"                # 합성 TWAP (외부 실행봇의 반복 소액 체결) 감지, 5.2 "합성 TWAP"
+    ALGO_END = "algo_end"
     VAULT_DEPOSIT = "vault_deposit"
     VAULT_WITHDRAW = "vault_withdraw"
     PRIVACY_ON = "privacy_on"                # Aster 전용
@@ -259,6 +261,18 @@ CREATE TABLE twap_active (
   state_json TEXT NOT NULL,
   started_ms INTEGER,
   PRIMARY KEY (venue_account_id, twap_id)
+);
+
+CREATE TABLE algo_active (                    -- 합성 TWAP 추적 (5.2 "합성 TWAP")
+  venue_account_id INTEGER REFERENCES venue_accounts,
+  coin TEXT NOT NULL,
+  sign INTEGER NOT NULL,                      -- fill 이 포지션에 주는 변화 부호: +1 (Open Long, Close Short) / -1 (Open Short, Close Long)
+  started_ms INTEGER,
+  last_fill_ms INTEGER,
+  fills_count INTEGER,
+  total_sz TEXT,                              -- Decimal 문자열
+  total_ntl TEXT,                             -- Decimal 문자열
+  PRIMARY KEY (venue_account_id, coin, sign)
 );
 
 CREATE TABLE events (
@@ -392,17 +406,40 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 ### 5.2 이벤트 생성 규칙
 
 **HIP-3 덱스 커버리지**
-- `venue_accounts.dexs_json` 에 활동이 확인된 HIP-3 덱스 목록을 둔다 (기본 `[]`). `/add` 와 `/rescan` 시 `perpDexs` 전체를 `clearinghouseState(dex=...)` 로 1회 스캔해서 포지션이 있는 덱스를 기록. 이후 fills 에 새 `<dex>:` 접두사가 보이면 자동 추가.
+- `venue_accounts.dexs_json` 에 활동이 확인된 HIP-3 덱스 목록을 둔다 (기본 `[]`). `/add` 와 `/rescan` 시 `perpDexs` 전체를 `clearinghouseState(dex=...)` 로 1회 스캔해서 포지션이 있는 덱스를 기록. 이후 fills 에 새 `<dex>:` 접두사가 보이면 자동 추가. Phase 1 의 `/rescan` 은 HL 덱스 스캔만 (다른 베뉴 resolve 는 Phase 2). 기존 추적 지갑은 배포 후 첫 폴링에서 1회 자동 스캔.
 - 1차 폴링은 메인 덱스 + `dexs_json` 의 덱스만 `clearinghouseState`. snapshot 은 `{dex: {coin: ...}}` 로 덱스별 저장 (메인 덱스 키는 `""`).
 - 알림 메시지에서 HIP-3 코인은 `$MU (xyz)` 로 표시 (접두사 대신 괄호로 덱스). `/positions` 는 덱스별 소제목과 덱스별 account value.
 
 **포지션 (fills 기반)**
 - 1차 폴링에서 snapshot 대비 변화 감지된 계정만 `userFillsByTime(startTime=cursor.fills+1)`.
 - perp fill(coin에 `/` 없고 `@` 로 시작 안 함)을 `dir` 로 분류: Open → `POSITION_OPEN` (단, `startPosition != 0` 이면 `POSITION_INCREASE`), Close → `startPosition - sz == 0` 이면 `POSITION_CLOSE` 아니면 `POSITION_DECREASE`, `Long > Short` / `Short > Long` → `POSITION_FLIP`. `liquidation` 필드 있으면 `LIQUIDATION` 으로 승격.
-- 같은 폴링 윈도우 안의 같은 (coin, 분류) fills는 **1건으로 집계**: size 합, notional 합, VWAP, `realized_pnl` 합, `position_after` 는 마지막 fill 기준. 알림 1건.
+- 같은 폴링 윈도우 안의 fills 는 아래 "체결 집계" 규칙으로 묶는다: size 합, notional 합, VWAP, `realized_pnl` 합, `position_after` 는 마지막 fill 기준.
 - 집계 윈도우를 넘어서 이어지는 체결(예: 수동으로 1분 간격 분할 매수)은 별도 알림. 단, `settings.debounce_sec` (기본 60) 안에 같은 (coin, 분류) 이벤트가 또 오면 직전 메시지를 edit해서 누적 (sent_messages 참조). 메시지 edit 실패 시 새 메시지.
 - cursor.fills = 처리한 마지막 fill의 `time`.
 - 1차 폴링에서 변화가 감지됐는데 fills가 비어있으면 (funding, 가격 변동으로 accountValue만 변한 경우) 알림 없이 snapshot만 갱신.
+
+**체결 집계** (PM 라이브 확인 2026-10-03)
+- 같은 폴링 윈도우 안의 fills 를 먼저 `(coin, dir, oid)` 로 묶는다. 시장가 주문 1개가 호가 수십 개를 쓸면 fills N건이 되는데, 이를 메시지 1건으로 만든다 (size 합, VWAP, notional 합).
+- 실사례: cl 지갑이 30초 동안 oid 4개로 HYPE spot 243건 체결 → v1 은 알림 수십 건. 기대 결과 4건. fixture: `tests/fixtures/hl_userFillsByTime_sweep.json` (243건, oid 4개).
+- 그 다음 `(coin, dir)` 기준으로 기존 debounce edit 누적 규칙(위 `settings.debounce_sec`)을 적용한다.
+
+**합성 TWAP (외부 실행봇)** (PM 라이브 확인 2026-10-03)
+- 배경: 네이티브 TWAP 없이 외부 봇이 소액 주문을 반복하는 경우. 실사례: loracle 지갑이 `twapStates` 빈 배열, hypurrscan TWAP 없음 상태에서 1시간에 1,068건, 3~10초마다 BTC Open Long 0.02~0.09, CASHCAT Close Short 수백~수천 개. 전부 서명된 개별 주문(hash 정상)이라 네이티브 TWAP 억제가 걸리지 않는다. fixture: `tests/fixtures/hl_userFillsByTime_algo.json` (1,068건), `tests/fixtures/hl_clearinghouseState_algo.json` (같은 시점 포지션).
+- 규칙은 settings 로 조정 가능 (9.4 기본값).
+- 상태 키: `(venue_account, coin, 방향부호)`. 방향부호는 fill 이 포지션에 주는 변화 부호 (Open Long / Close Short = `+`, Open Short / Close Long = `-`).
+- 진입 조건 (모두 충족):
+  - 최근 `algo_window_sec` (300) 안에 서로 다른 폴링 사이클 3개 이상에서 같은 키의 fills 가 있음
+  - 누적 fills 수 >= `algo_min_fills` (8)
+  - 각 fill notional 의 중앙값이 그 coin 현재 포지션 notional 의 `algo_max_slice_pct` (2%) 미만. 포지션이 0 에서 시작하면 이 조건은 보지 않는다 (오너 결정 2026-10-03: 누적 notional 기준이면 같은 크기 fill 이 50건 넘게 쌓여야 2% 미만이 되어 사실상 감지 불가)
+  - 카운트 단위는 "체결 집계" 로 묶은 주문(oid) 단위 (오너 결정). 시장가 1건이 호가 수십 개를 쓸어도 1로 센다. 메시지의 "N fills" 도 주문 수
+- 진입 시 `ALGO_START` 이벤트 1건 (10 의 algo 예시). 진입 판정 전 사이클의 fills 는 debounce 로 한 메시지에 누적되어 있으므로, 진입 시 그 메시지를 START 로 edit 한다 (없거나 edit 실패면 새 메시지). 이후 같은 키의 개별 fill 이벤트는 `delivery='suppressed_algo'` 로 기록만 한다.
+- 메시지 방향 표기: 시작 시점 포지션과 같은 방향으로 늘리면 `accumulating LONG/SHORT`, 반대 방향(Close)이면 `reducing LONG/SHORT` (오너 결정). 예: CASHCAT Close Short (+) → `algo reducing SHORT $CASHCAT`. ALGO_END 도 같은 표기: `algo done accumulating LONG $BTC`, `algo done reducing SHORT $CASHCAT`.
+- 진행: START 메시지를 `algo_progress_sec` (600) 마다 edit (누적 fills, 누적 notional, VWAP, 경과시간). 새 메시지 아님. `sent_messages` 테이블 사용.
+- 종료: 마지막 fill 이후 `algo_idle_sec` (600) 동안 fill 없음 → `ALGO_END` 1건 (총 size, notional, VWAP, 소요시간) 후 상태 삭제.
+- 반대 방향 체결, 청산, 포지션 완전 종료는 즉시 정상 알림. 상태는 유지.
+- 메시지 형식은 네이티브 TWAP 과 맞추되 라벨은 "TWAP" 대신 "algo".
+- 상태는 `algo_active` 테이블 (3.4, `twap_active` 와 별도). 재시작 후에도 DB 에 있으므로 이어서 추적.
+- 테스트 기대값: algo fixture 1시간 리플레이 → `ALGO_START` 2건 (BTC `+`, CASHCAT `+`), 개별 fill 알림 0건, 리플레이 끝에서 idle 경과 시 `ALGO_END` 2건.
 
 **TWAP**
 - 1차 폴링에서 포지션 변화 감지 시, 또는 `twap_active` 에 행이 있는 계정은, 그 사이클에 `webData2` 호출.
@@ -635,7 +672,12 @@ Arbitrum 브릿지 (선택, `ARBISCAN_API_KEY` 있을 때만): 레거시 브릿�
   },
   "min_notional_usd": 0,
   "debounce_sec": 60,
-  "twap_progress": false
+  "twap_progress": false,
+  "algo_window_sec": 300,
+  "algo_min_fills": 8,
+  "algo_max_slice_pct": 2,
+  "algo_progress_sec": 600,
+  "algo_idle_sec": 600
 }
 ```
 
@@ -698,10 +740,21 @@ $450k @ 3,120 · 5x
 [HL] ↘️ <b>whale1</b> received $500k USDC from 0x1a2b…9f3e
 ```
 
+```
+[HL] 🤖 <b>loracle</b> algo accumulating LONG $BTC
+12 fills +$41k in 5m · pos $35.9M avg 86,188
+```
+
+```
+[HL] ✅ <b>loracle</b> algo done accumulating LONG $BTC
++$1.2M (14.2 BTC) avg 86,040 · 412 fills · 58m
+```
+
 규칙:
 - 베뉴 뱃지: `[HL]`, `[LTR]`, `[RISE]`, `[ASTER]`, `[EXT]`, `[VAR]`. Lighter 서브계정은 alias 뒤 `#index`.
 - 금액: $1.2k / $45k / $1.25M 식 축약. 수량은 유효숫자 3~4자리. 가격은 코인별 tick에 맞춰 (HL `szDecimals`, `meta` 캐시).
 - 시간: KST 기본 (`users.lang` 과 별도로 `tz` 설정, 기본 Asia/Seoul).
+- 기간: 사람이 읽는 단위로 축약. 10080 min → `7d`, 8302 min → `5d 18h`, 90 min → `1h 30m`, 5 min → `5m` (큰 단위 2개까지, 0 인 단위는 생략).
 - held 시간: `POSITION_CLOSE` 시 그 coin의 마지막 `POSITION_OPEN` 이벤트 ts 와 차이. events 테이블에서 조회.
 - 메시지 edit 누적 시 헤더의 금액을 갱신하고 끝에 "(3 fills)" 추가.
 - 같은 유저에게 1초에 1건 이상 보내지 않음 (Telegram 30msg/s 전역, 유저당 1msg/s). 큐잉.

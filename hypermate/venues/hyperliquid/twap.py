@@ -43,22 +43,16 @@ def final_entry(history: list, twap_id: str) -> Optional[dict]:
     return max(entries, key=lambda h: h.get('time', 0)) if entries else None
 
 
-def _alert_sign(alert: dict) -> Optional[int]:
-    """Sign of the szi change behind a v1 diff alert; None for alerts never suppressed."""
-    szi = to_decimal(alert.get('szi')) or Decimal(0)
-    direction = 1 if szi > 0 else -1
-    alert_type = alert.get('alert_type')
-    if alert_type in ('NEW_POSITION', 'POSITION_INCREASE'):
-        return direction
-    if alert_type in ('POSITION_DECREASE', 'POSITION_CLOSED'):
-        return -direction
-    return None  # LIQUIDATION and anything unknown always go out
+_SUPPRESSIBLE = ('position_open', 'position_increase', 'position_decrease', 'position_close')
 
 
-def is_suppressed(alert: dict, twap_states: Iterable[dict]) -> bool:
-    """True if an active TWAP on the alert's coin trades in the same direction as the change."""
-    sign = _alert_sign(alert)
-    if sign is None:
+def is_suppressed(payload: dict, twap_states: Iterable[dict]) -> bool:
+    """True if an active TWAP on the event's coin trades in the same direction as the fills (spec 5.2).
+
+    payload is an event payload with meta.sign (+1 buy, -1 sell). Liquidations and flips always go out.
+    """
+    if payload.get('type') not in _SUPPRESSIBLE:
         return False
-    return any(state.get('coin') == alert.get('coin') and SIDE_SIGN.get(state.get('side')) == sign
+    sign = (payload.get('meta') or {}).get('sign')
+    return any(state.get('coin') == payload.get('coin') and SIDE_SIGN.get(state.get('side')) == sign
                for state in twap_states)

@@ -31,6 +31,18 @@ class Config:
     POSITIONS_POLL_SEC: int = 30
     TRANSFERS_POLL_SEC: int = 30
     SPOT_META_TTL_SEC: int = 3600
+    PERP_DEXS_TTL_SEC: int = 3600
+
+    # Spec 9.4 defaults. Detection and debounce run per account, so Phase 1 uses
+    # these values for everyone; per-subscription overrides come with /settings.
+    DEFAULT_SETTINGS: dict = {
+        'debounce_sec': 60,
+        'algo_window_sec': 300,
+        'algo_min_fills': 8,
+        'algo_max_slice_pct': 2,
+        'algo_progress_sec': 600,
+        'algo_idle_sec': 600,
+    }
 
     @classmethod
     def validate_config(cls) -> None:

@@ -1,0 +1,111 @@
+{
+ "marginSummary": {
+  "accountValue": "21419284.4074090011",
+  "totalNtlPos": "36819617.1116999984",
+  "totalRawUsd": "-13947302.1208309997",
+  "totalMarginUsed": "2046826.140072"
+ },
+ "crossMarginSummary": {
+  "accountValue": "21419284.4074090011",
+  "totalNtlPos": "36819617.1116999984",
+  "totalRawUsd": "-13947302.1208309997",
+  "totalMarginUsed": "2046826.140072"
+ },
+ "crossMaintenanceMarginUsed": "572249.297286",
+ "withdrawable": "17567803.1763379984",
+ "assetPositions": [
+  {
+   "type": "oneWay",
+   "position": {
+    "coin": "BTC",
+    "szi": "429.02093",
+    "leverage": {
+     "type": "cross",
+     "value": 20
+    },
+    "entryPx": "86186.1",
+    "positionValue": "36093101.8199699968",
+    "unrealizedPnl": "-882562.48459",
+    "returnOnEquity": "-0.4773747821",
+    "liquidationPx": "34921.79318493",
+    "marginUsed": "1804655.090998",
+    "maxLeverage": 40,
+    "cumFunding": {
+     "allTime": "2642.558527",
+     "sinceOpen": "2642.558527",
+     "sinceChange": "0.0"
+    }
+   }
+  },
+  {
+   "type": "oneWay",
+   "position": {
+    "coin": "ENA",
+    "szi": "-13.0",
+    "leverage": {
+     "type": "cross",
+     "value": 10
+    },
+    "entryPx": "0.201487",
+    "positionValue": "3.06358",
+    "unrealizedPnl": "-0.444237",
+    "returnOnEquity": "-1.6959863599",
+    "liquidationPx": "1527255.5550829305",
+    "marginUsed": "0.306358",
+    "maxLeverage": 10,
+    "cumFunding": {
+     "allTime": "-3933.620941",
+     "sinceOpen": "-3933.620941",
+     "sinceChange": "-0.00899"
+    }
+   }
+  },
+  {
+   "type": "oneWay",
+   "position": {
+    "coin": "CASHCAT",
+    "szi": "-4421555.0",
+    "leverage": {
+     "type": "cross",
+     "value": 3
+    },
+    "entryPx": "0.167667",
+    "positionValue": "726505.70205",
+    "unrealizedPnl": "14847.42737",
+    "returnOnEquity": "0.0600824092",
+    "liquidationPx": "4.205622895",
+    "marginUsed": "242168.56735",
+    "maxLeverage": 3,
+    "cumFunding": {
+     "allTime": "-122039.292383",
+     "sinceOpen": "-49755.072094",
+     "sinceChange": "0.0"
+    }
+   }
+  },
+  {
+   "type": "oneWay",
+   "position": {
+    "coin": "PONS",
+    "szi": "-14.0",
+    "leverage": {
+     "type": "cross",
+     "value": 3
+    },
+    "entryPx": "0.702804",
+    "positionValue": "6.5261",
+    "unrealizedPnl": "3.313156",
+    "returnOnEquity": "1.0101849164",
+    "liquidationPx": "1276349.5545248569",
+    "marginUsed": "2.175366",
+    "maxLeverage": 3,
+    "cumFunding": {
+     "allTime": "-4930.451407",
+     "sinceOpen": "-4930.451407",
+     "sinceChange": "-0.03452"
+    }
+   }
+  }
+ ],
+ "time": 1790967106512
+}

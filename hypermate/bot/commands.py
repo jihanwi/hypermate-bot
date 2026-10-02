@@ -10,9 +10,12 @@ from telegram.ext import ContextTypes
 
 from hypermate.bot import texts
 from hypermate.core import formatter
+from hypermate.core.events import HYPERLIQUID, EventType, dedupe_key
 from hypermate.core.formatter import h
+from hypermate.core.pipeline import algo_source
 from hypermate.core.numbers import to_decimal
 from hypermate.db.repo import ADDED, ALIAS_EXISTS, Repo
+from hypermate.venues.hyperliquid import adapter
 from hypermate.venues.hyperliquid.adapter import now_ms
 from hypermate.venues.hyperliquid.client import HyperliquidAPIError, HyperliquidClient
 
@@ -74,7 +77,11 @@ async def add_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     if result == ADDED:
         logger.info(f"User {user_id} added wallet {address} as '{alias}'")
-        await reply(update, texts.WALLET_ADDED.format(alias=h(alias)))
+        dexs = await _scan_dexs(context, address)
+        message = texts.WALLET_ADDED.format(alias=h(alias))
+        if dexs:
+            message += texts.WALLET_ADDED_DEXS.format(dexs=h(", ".join(dexs)))
+        await reply(update, message)
     elif result == ALIAS_EXISTS:
         await reply(update, texts.ALIAS_EXISTS)
     else:
@@ -133,14 +140,18 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await reply(update, texts.ALIAS_NOT_FOUND.format(alias=h(" ".join(context.args))))
         return
     alias, address = subscription
+    va = await _repo(context).hl_account_id(address)
+    dexs = await _repo(context).get_dexs(va) if va is not None else []
     try:
-        perp_state = await _hl(context).clearinghouse_state(address)
+        perp_states = {'': await _hl(context).clearinghouse_state(address)}
+        for dex in dexs:
+            perp_states[dex] = await _hl(context).clearinghouse_state(address, dex)
         spot_state = await _hl(context).spot_clearinghouse_state(address)
     except HyperliquidAPIError as e:
         logger.error(f"positions {address}: {e}")
         await reply(update, texts.HL_API_ERROR)
         return
-    await reply(update, formatter.format_positions(alias, address, perp_state, spot_state))
+    await reply(update, formatter.format_positions(alias, address, perp_states, spot_state))
     logger.info(f"User {user_id} checked positions for {address} ({alias})")
 
 
@@ -174,6 +185,92 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     message = formatter.format_stats(alias, address, portfolio)
     await reply(update, message if message is not None else texts.STATS_NOT_AVAILABLE)
     logger.info(f"User {user_id} checked stats for {address} ({alias})")
+
+
+async def _scan_dexs(context: ContextTypes.DEFAULT_TYPE, address: str) -> list[str]:
+    """HIP-3 dex scan (spec 5.2) stored on the account; [] if the scan fails (the poller retries)."""
+    repo = _repo(context)
+    va = await repo.hl_account_id(address)
+    if va is None:
+        return []
+    try:
+        found = await adapter.scan_dexs(_hl(context), address)
+    except HyperliquidAPIError as e:
+        logger.error(f"HIP-3 dex scan failed for {address}: {e}")
+        return await repo.get_dexs(va)
+    dexs = sorted(set(await repo.get_dexs(va)) | set(found))
+    await repo.set_dexs(va, dexs)
+    now = now_ms()
+    await repo.set_cursor(va, 'dex_scan', str(now), now)
+    return dexs
+
+
+async def _subscription_or_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, alias_text: str):
+    subscription = await _repo(context).find_subscription(update.effective_user.id, alias_text)
+    if subscription is None:
+        await reply(update, texts.ALIAS_NOT_FOUND.format(alias=h(alias_text)))
+    return subscription
+
+
+async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/recent alias [n] (spec 9.6): last n events (default 10, max 30), including unsent ones."""
+    if not context.args:
+        await reply(update, texts.RECENT_USAGE)
+        return
+    args = list(context.args)
+    count = 10
+    if len(args) > 1 and args[-1].isdigit():
+        count = max(1, min(30, int(args.pop())))
+    subscription = await _subscription_or_reply(update, context, " ".join(args).strip())
+    if subscription is None:
+        return
+    alias, address = subscription
+    va = await _repo(context).hl_account_id(address)
+    events = await _repo(context).recent_events(va, count) if va is not None else []
+    await reply(update, formatter.format_recent(alias, events))
+
+
+async def twap_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/twap [alias] (spec 9.2a): active native TWAPs, plus synthetic (algo) executions."""
+    repo = _repo(context)
+    if context.args:
+        subscription = await _subscription_or_reply(update, context, " ".join(context.args).strip())
+        if subscription is None:
+            return
+        wallets = [subscription]
+    else:
+        wallets = await repo.list_subscriptions(update.effective_user.id)
+    rows = []
+    for alias, address in wallets:
+        va = await repo.hl_account_id(address)
+        if va is None:
+            continue
+        for state in (await repo.active_twaps(va)).values():
+            rows.append({'kind': 'twap', 'alias': alias, 'address': address, 'state': state})
+        for state in (await repo.active_algos(va)).values():
+            start = await repo.get_event_by_key(dedupe_key(
+                HYPERLIQUID, va, EventType.ALGO_START,
+                algo_source(state['coin'], int(state['sign']), int(state['started_ms']))))
+            verb, side = formatter.algo_label(int(state['sign']), None)
+            if start is not None:
+                verb, side = start['payload'].get('verb', verb), start['payload'].get('side', side)
+            rows.append({'kind': 'algo', 'alias': alias, 'address': address, 'state': state,
+                         'verb': verb, 'side': side})
+    await reply(update, formatter.format_twap_list(rows, now_ms()))
+
+
+async def rescan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/rescan alias: Hyperliquid HIP-3 dex scan (other venues come in Phase 2)."""
+    if not context.args:
+        await reply(update, texts.RESCAN_USAGE)
+        return
+    subscription = await _subscription_or_reply(update, context, " ".join(context.args).strip())
+    if subscription is None:
+        return
+    alias, address = subscription
+    dexs = await _scan_dexs(context, address)
+    await reply(update, texts.RESCAN_RESULT.format(
+        alias=h(alias), dexs=(" + HIP-3 " + h(", ".join(dexs))) if dexs else ", no HIP-3 dex positions"))
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:

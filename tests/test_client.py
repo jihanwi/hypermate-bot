@@ -41,3 +41,21 @@ def test_json_floats_parse_as_decimal():
     parsed = client_mod._json_loads('{"a": 0.1, "b": "0.2", "c": 3}')
     assert parsed == {'a': Decimal('0.1'), 'b': '0.2', 'c': 3}
     assert isinstance(parsed['a'], Decimal)
+
+
+async def test_perp_dexs_reads_names_from_live_shape(monkeypatch):
+    """PM live check 2026-10-03: [null, {name, fullName, deployer, ...}, ...]."""
+    hl = HyperliquidClient('http://unused')
+    calls = []
+
+    async def fake_info(payload):
+        calls.append(payload)
+        return [None,
+                {'name': 'xyz', 'fullName': 'XYZ', 'deployer': '0x' + '1' * 40, 'oracleUpdater': None,
+                 'feeRecipient': None, 'assetToStreamingOiCap': []},
+                {'name': 'para', 'fullName': 'Para', 'deployer': '0x' + '2' * 40}]
+
+    monkeypatch.setattr(hl, '_info', fake_info)
+    assert await hl.perp_dexs() == ['xyz', 'para']
+    assert await hl.perp_dexs() == ['xyz', 'para']
+    assert calls == [{'type': 'perpDexs'}]

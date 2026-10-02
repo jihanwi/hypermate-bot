@@ -1,13 +1,16 @@
 """User-facing command texts (Telegram HTML)."""
 
-# Command menu (spec 9.1). Phase 0 registers only the commands that work today;
-# twap, recent, related, settings, mute, unmute, rename, rescan come in later phases.
+# Command menu (spec 9.1). Only commands that work today are registered;
+# related, settings, mute, unmute, rename come in later phases.
 MENU_COMMANDS = [
     ("add", "Track a wallet: /add 0x... alias"),
     ("remove", "Stop tracking: /remove alias"),
     ("list", "Your tracked wallets with account value"),
     ("positions", "Open positions: /positions alias (no alias = all)"),
+    ("twap", "Active TWAPs: /twap [alias]"),
+    ("recent", "Recent events: /recent alias [n]"),
     ("stats", "PnL and volume: /stats alias"),
+    ("rescan", "Re-detect venues for a wallet: /rescan alias"),
     ("help", "Commands and examples"),
 ]
 
@@ -24,20 +27,27 @@ HELP = (
     "/list: tracked wallets with account value\n\n"
     "<b>Info</b>\n"
     "/positions alias: open positions and balances (no alias: one line per wallet)\n"
-    "/stats alias: all-time PnL and volume\n\n"
+    "/stats alias: all-time PnL and volume\n"
+    "/twap [alias]: active TWAPs and algo executions\n"
+    "/recent alias [n]: last events, including ones not sent\n"
+    "/rescan alias: look for Hyperliquid HIP-3 dex positions again\n\n"
     "Aliases are case-insensitive.\n\n"
     "<b>Alerts</b> for every tracked wallet:\n"
-    "• Perp positions opened, increased, reduced, closed or liquidated\n"
+    "• Perp positions opened, added to, reduced, closed, flipped or liquidated, incl. HIP-3 dexs. "
+    "One alert per order; quick follow-ups edit that alert\n"
     "• Spot buys and sells\n"
-    "• Deposits, withdrawals, transfers and vault deposits/withdrawals\n"
-    "• TWAP orders: one alert when a TWAP starts and one when it ends. "
-    "Position changes from a running TWAP are not alerted."
+    "• Deposits, withdrawals and transfers\n"
+    "• TWAPs and bot-driven (algo) executions: a start alert, kept up to date, and an end alert"
 )
 
 EXAMPLE_ADDRESS = "0x1234567890abcdef1234567890abcdef12345678"
 ADD_USAGE = f"Usage: /add 0x... alias\nExample: <code>/add {EXAMPLE_ADDRESS} whale1</code>"
 REMOVE_USAGE = "Usage: /remove alias\nExample: <code>/remove whale1</code>"
 STATS_USAGE = "Usage: /stats alias\nExample: <code>/stats whale1</code>"
+RECENT_USAGE = "Usage: /recent alias [n]\nExample: <code>/recent whale1 20</code>"
+RESCAN_USAGE = "Usage: /rescan alias\nExample: <code>/rescan whale1</code>"
+RESCAN_RESULT = "🔎 <b>{alias}</b>: Hyperliquid main dex{dexs}"
+WALLET_ADDED_DEXS = "\nHIP-3 dexs with positions: {dexs}"
 
 ALIAS_EXISTS = "You're already tracking a wallet with this alias."
 ADDRESS_EXISTS = "You've already added this address."

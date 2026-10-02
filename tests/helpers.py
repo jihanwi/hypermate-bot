@@ -9,7 +9,7 @@ from types import SimpleNamespace
 FIXTURES = Path(__file__).parent / 'fixtures'
 
 # Tags Telegram accepts with parse_mode=HTML that the bot uses
-ALLOWED_TAGS = {'b', 'a', 'code'}
+ALLOWED_TAGS = {'b', 'a', 'code', 'i'}
 
 
 def load_fixture(name: str):
@@ -54,12 +54,19 @@ class FakeHLClient:
         self.fills = {}
         self.portfolios = {}
         self.web = {}
+        self.dexs = []
+        self.now = None          # optional clock: only items with time <= now() are returned
         self.twap_histories = {}
         self.calls = []
 
-    async def clearinghouse_state(self, user):
-        self.calls.append(('clearinghouseState', user))
-        return self.clearinghouse.get(user, {'assetPositions': [], 'marginSummary': {'accountValue': '0'}})
+    async def clearinghouse_state(self, user, dex=''):
+        self.calls.append(('clearinghouseState', user, dex) if dex else ('clearinghouseState', user))
+        key = (user, dex) if dex else user
+        return self.clearinghouse.get(key, {'assetPositions': [], 'marginSummary': {'accountValue': '0'}})
+
+    async def perp_dexs(self):
+        self.calls.append(('perpDexs',))
+        return list(self.dexs)
 
     async def spot_clearinghouse_state(self, user):
         self.calls.append(('spotClearinghouseState', user))
@@ -67,11 +74,14 @@ class FakeHLClient:
 
     async def ledger_updates(self, user, start_time):
         self.calls.append(('userNonFundingLedgerUpdates', user, start_time))
-        return [u for u in self.ledger.get(user, []) if u['time'] >= start_time]
+        return [u for u in self.ledger.get(user, []) if u['time'] >= start_time and self._past(u)]
 
     async def user_fills_by_time(self, user, start_time):
         self.calls.append(('userFillsByTime', user, start_time))
-        return [f for f in self.fills.get(user, []) if f['time'] >= start_time]
+        return [f for f in self.fills.get(user, []) if f['time'] >= start_time and self._past(f)]
+
+    def _past(self, item):
+        return self.now is None or item['time'] <= self.now()
 
     async def portfolio(self, user):
         self.calls.append(('portfolio', user))
@@ -90,11 +100,20 @@ class FakeHLClient:
 
 
 class FakeBot:
+    """Records sends and edits. sent[i]['text'] is updated in place when that message is edited."""
+
     def __init__(self):
         self.sent = []
+        self.edits = []
 
     async def send_message(self, chat_id, text, parse_mode=None, **kwargs):
-        self.sent.append({'chat_id': chat_id, 'text': text, 'parse_mode': parse_mode})
+        self.sent.append({'chat_id': chat_id, 'text': text, 'parse_mode': parse_mode,
+                          'message_id': len(self.sent) + 1})
+        return SimpleNamespace(chat_id=chat_id, message_id=len(self.sent))
+
+    async def edit_message_text(self, text, chat_id, message_id, parse_mode=None, **kwargs):
+        self.edits.append({'chat_id': chat_id, 'message_id': message_id, 'text': text})
+        self.sent[message_id - 1]['text'] = text
 
 
 class FakeMessage:
@@ -123,3 +142,15 @@ def position(coin, szi, entry_px='100', position_value=None, upnl='0'):
 
 def clearinghouse(*positions, account_value='1000'):
     return {'assetPositions': list(positions), 'marginSummary': {'accountValue': account_value}}
+
+
+def fill(coin, direction, sz, px, time_ms, start_position, oid=1, tid=None, side=None, closed_pnl='0', **extra):
+    """A userFillsByTime entry with the fields the engine reads (spec 5.1)."""
+    if side is None:
+        side = 'B' if direction in ('Open Long', 'Close Short', 'Short > Long', 'Buy') else 'A'
+    data = {'coin': coin, 'px': str(px), 'sz': str(sz), 'side': side, 'time': time_ms,
+            'startPosition': str(start_position), 'dir': direction, 'closedPnl': str(closed_pnl),
+            'hash': f'0x{time_ms:x}', 'oid': oid, 'crossed': True, 'fee': '0.1', 'tid': tid or time_ms,
+            'feeToken': 'USDC', 'twapId': None}
+    data.update(extra)
+    return data
