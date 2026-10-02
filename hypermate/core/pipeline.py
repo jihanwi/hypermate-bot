@@ -1,4 +1,9 @@
-"""Polling jobs and alert delivery."""
+"""Polling jobs, event handling and alert delivery (spec 5.2).
+
+- positions job: per-dex snapshots (HIP-3), account value, native TWAP tracking.
+- fills job: fills -> one event per order -> TWAP / algo suppression -> debounce
+  edit or new message; ledger events; synthetic TWAP progress and idle end.
+"""
 
 import asyncio
 import logging
@@ -8,27 +13,73 @@ from telegram import Bot
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
-from hypermate.core import events
-from hypermate.core.events import EventType
-from hypermate.core.formatter import (format_position_alert, format_spot_fill_message, format_transfer_message,
-                                      format_twap_end, format_twap_start)
+from hypermate.config import Config
+from hypermate.core import aggregator, events
+from hypermate.core.events import POSITION_TYPES, SPOT_TYPES, Event, EventType
+from hypermate.core.formatter import (algo_label, format_algo_end, format_algo_progress, format_fill_message,
+                                      format_ledger_event, format_twap_end, format_twap_start)
+from hypermate.core.numbers import to_decimal
 from hypermate.db.repo import Repo
 from hypermate.venues.hyperliquid import adapter, twap
 from hypermate.venues.hyperliquid.client import HyperliquidClient
 
 logger = logging.getLogger(__name__)
 
+Render = Callable[[str], Optional[str]]
 
-async def deliver(bot: Bot, repo: Repo, account_key: int, render: Callable[[str], Optional[str]]) -> None:
-    """Send one alert to every subscriber of the account, rendered with that subscriber's alias."""
+# Ledger event types that are off by default (spec 9.4: vault, account_class_transfer, dex_collateral)
+OFF_BY_DEFAULT = (EventType.ACCOUNT_CLASS_TRANSFER, EventType.DEX_COLLATERAL_TRANSFER,
+                  EventType.VAULT_DEPOSIT, EventType.VAULT_WITHDRAW)
+LIQUIDATION_DEDUPE_MS = 5 * 60 * 1000
+
+
+def settings() -> dict:
+    return Config.DEFAULT_SETTINGS
+
+
+# Delivery --------------------------------------------------------------------
+
+async def deliver(bot: Bot, repo: Repo, account_key: int, render: Render, event_id: Optional[int] = None) -> None:
+    """Send to every subscriber (rendered with their alias); remember message ids for later edits."""
     subscribers = await repo.subscribers(account_key)
     for i, (user_id, alias) in enumerate(subscribers):
         text = render(alias)
         if text is None:
             continue
         try:
-            await bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML)
+            message = await bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML)
             logger.info(f"Sent alert to user {user_id} ({alias})")
+            if event_id is not None and message is not None:
+                await repo.add_sent_message(event_id, user_id, message.chat_id, message.message_id)
+        except Exception as e:
+            logger.error(f"Failed to send alert to user {user_id}: {e}")
+        if i < len(subscribers) - 1:
+            await asyncio.sleep(1)
+
+
+async def edit_or_send(bot: Bot, repo: Repo, account_key: int, target_event_id: int, render: Render) -> None:
+    """Edit the messages sent for target_event_id; users without one (or whose edit fails) get a new message."""
+    sent = await repo.sent_messages(target_event_id)
+    subscribers = await repo.subscribers(account_key)
+    for i, (user_id, alias) in enumerate(subscribers):
+        text = render(alias)
+        if text is None:
+            continue
+        if user_id in sent:
+            chat_id, message_id = sent[user_id]
+            try:
+                await bot.edit_message_text(text=text, chat_id=chat_id, message_id=message_id,
+                                            parse_mode=ParseMode.HTML)
+                logger.info(f"Edited alert for user {user_id} ({alias})")
+                continue
+            except Exception as e:
+                if 'not modified' in str(e).lower():
+                    continue
+                logger.warning(f"Edit failed for user {user_id}, sending a new message: {e}")
+        try:
+            message = await bot.send_message(chat_id=user_id, text=text, parse_mode=ParseMode.HTML)
+            if message is not None:
+                await repo.add_sent_message(target_event_id, user_id, message.chat_id, message.message_id)
         except Exception as e:
             logger.error(f"Failed to send alert to user {user_id}: {e}")
         if i < len(subscribers) - 1:
@@ -36,19 +87,19 @@ async def deliver(bot: Bot, repo: Repo, account_key: int, render: Callable[[str]
 
 
 async def emit(bot: Bot, repo: Repo, account_key: int, event_type: EventType, source_id: str, ts_ms: int,
-               payload: dict, render: Callable[[str], Optional[str]], delivery: str = events.SENT) -> bool:
-    """Record the event; send it only if it is new and its delivery is 'sent'. Returns True if sent."""
+               payload: dict, render: Render, delivery: str = events.SENT) -> Optional[int]:
+    """Record the event; send it only if new and delivery is 'sent'. Returns the event id if recorded."""
     key = events.dedupe_key(events.HYPERLIQUID, account_key, event_type, source_id)
     event_id = await repo.record_event(key, account_key, event_type.value, ts_ms, payload, delivery,
                                        adapter.now_ms())
     if event_id is None:
         logger.info(f"Duplicate event {key}, not sent")
-        return False
+        return None
     if delivery != events.SENT:
         logger.info(f"Event {key} recorded as {delivery}, not sent")
-        return False
-    await deliver(bot, repo, account_key, render)
-    return True
+        return event_id
+    await deliver(bot, repo, account_key, render, event_id)
+    return event_id
 
 
 async def _cursor(repo: Repo, account_key: int, kind: str) -> int:
@@ -62,14 +113,11 @@ async def _cursor(repo: Repo, account_key: int, kind: str) -> int:
     return int(value)
 
 
+# Native TWAP (PR A) -------------------------------------------------------------
+
 async def sync_twaps(bot: Bot, repo: Repo, client: HyperliquidClient, key: int, address: str,
                      active: dict[str, dict], web_data2: dict) -> dict[str, dict]:
-    """Reconcile twap_active with webData2.twapStates; emit TWAP_START / TWAP_END.
-
-    Returns the TWAP states that count for suppression this cycle: everything
-    active before the sync plus everything reported now, so the last slices of
-    a TWAP that ends in this cycle are still suppressed.
-    """
+    """Reconcile twap_active with webData2.twapStates; emit TWAP_START / TWAP_END."""
     current = twap.parse_twap_states(web_data2)
     prices = twap.mark_prices(web_data2)
     now = adapter.now_ms()
@@ -115,33 +163,49 @@ async def sync_twaps(bot: Bot, repo: Repo, client: HyperliquidClient, key: int, 
     return {**active, **current}
 
 
+# Positions job -------------------------------------------------------------------
+
+async def _ensure_dex_scan(repo: Repo, client: HyperliquidClient, key: int, address: str) -> list[str]:
+    """Accounts tracked before HIP-3 support get one perpDexs scan (spec 5.2), marked by a cursor row."""
+    dexs = await repo.get_dexs(key)
+    if await repo.get_cursor(key, 'dex_scan') is None:
+        try:
+            found = await adapter.scan_dexs(client, address)
+        except Exception as e:
+            logger.error(f"HIP-3 dex scan failed for {address}: {e}")
+            return dexs
+        dexs = sorted(set(dexs) | set(found))
+        await repo.set_dexs(key, dexs)
+        now = adapter.now_ms()
+        await repo.set_cursor(key, 'dex_scan', str(now), now)
+        logger.info(f"HIP-3 dex scan for {address}: {dexs or 'none'}")
+    return dexs
+
+
 async def monitor_positions_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     repo: Repo = context.bot_data['repo']
     client: HyperliquidClient = context.bot_data['hl']
     accounts = await repo.tracked_accounts()
     for i, (key, address) in enumerate(accounts):
         try:
+            dexs = await _ensure_dex_scan(repo, client, key, address)
             previous = await repo.get_snapshot(key)
-            alerts, current, account_value = await adapter.check_positions(client, address, previous)
-            poll_ms = adapter.now_ms()
-            await repo.save_snapshot(key, current, poll_ms, account_value)
+            current, account_value, _ = await adapter.fetch_snapshot(client, address, dexs)
+            changed = previous is not None and adapter.snapshot_changed(previous, current)
+            if previous is None:
+                logger.info(f"Baseline snapshot for {address}: "
+                            f"{sum(len(p) for p in current.values())} positions")
+            await repo.save_snapshot(key, current, adapter.now_ms(), account_value)
 
             # TWAP (spec 5.2): webData2 only when positions moved or a TWAP is being tracked
             twap_states = await repo.active_twaps(key)
-            if alerts or twap_states:
+            if changed or twap_states:
                 try:
                     web = await client.web_data2(address)
                 except Exception as e:
                     logger.error(f"webData2 failed for {address}: {e}")
                 else:
-                    twap_states = await sync_twaps(context.bot, repo, client, key, address, twap_states, web)
-
-            for alert in alerts:
-                suppressed = twap.is_suppressed(alert, twap_states.values())
-                await emit(context.bot, repo, key, events.position_alert_type(alert),
-                           f"{alert['coin']}:{poll_ms}", poll_ms, alert,
-                           lambda alias, a=alert: format_position_alert(address, alias, a),
-                           events.SUPPRESSED_TWAP if suppressed else events.SENT)
+                    await sync_twaps(context.bot, repo, client, key, address, twap_states, web)
         except Exception as e:
             logger.error(f"Position check failed for {address}: {e}")
         if i < len(accounts) - 1:
@@ -149,34 +213,228 @@ async def monitor_positions_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info(f"Completed position check for {len(accounts)} wallets")
 
 
+# Fills -----------------------------------------------------------------------------
+
+def algo_source(coin: str, sign: int, started_ms: int) -> str:
+    return f"{coin}:{sign}:{started_ms}"
+
+
+async def _latest_chain(repo: Repo, key: int, event_id: int, payload: dict, debounce_sec: int) -> Optional[dict]:
+    """Base event of the newest earlier message this order could be merged into, or None."""
+    since = int(payload['meta']['first_ms']) - debounce_sec * 1000
+    types = [t.value for t in POSITION_TYPES + SPOT_TYPES]
+    candidates = [e for e in await repo.events_since(key, since, types)
+                  if e['event_id'] != event_id and e['delivery'] == events.SENT
+                  and e['payload'].get('coin') == payload.get('coin')
+                  and aggregator.debounce_key(e['payload']) == aggregator.debounce_key(payload)]
+    if not candidates:
+        return None
+    latest = candidates[-1]
+    base_id = latest['payload'].get('chain_base', latest['event_id'])
+    return await repo.get_event(base_id)
+
+
+async def _held_ms(repo: Repo, key: int, payload: dict) -> Optional[int]:
+    if payload['type'] != EventType.POSITION_CLOSE.value:
+        return None
+    opened = await repo.last_event_ts(key, EventType.POSITION_OPEN.value, payload['coin'])
+    return int(payload['ts_ms']) - opened if opened else None
+
+
+async def _send_fill_event(bot: Bot, repo: Repo, key: int, address: str, event_id: int, payload: dict) -> None:
+    """Debounce (spec 5.2): merge into the previous message for the same (coin, dir) or send a new one."""
+    debounce_sec = int(settings()['debounce_sec'])
+    base = await _latest_chain(repo, key, event_id, payload, debounce_sec)
+    if (base is not None and base['event_id'] != event_id and 'chain' in base['payload']
+            and aggregator.can_merge(base['payload']['chain'], payload, debounce_sec)):
+        chain = aggregator.merge_into_chain(base['payload']['chain'], payload)
+        await repo.update_event_payload(base['event_id'], {**base['payload'], 'chain': chain})
+        await repo.update_event_payload(event_id, {**payload, 'chain_base': base['event_id']})
+        held = await _held_ms(repo, key, {**payload, 'type': chain['type']})
+        await edit_or_send(bot, repo, key, base['event_id'],
+                           lambda alias: format_fill_message(address, alias, chain, held))
+        return
+    chain = aggregator.start_chain(payload)
+    await repo.update_event_payload(event_id, {**payload, 'chain': chain})
+    held = await _held_ms(repo, key, payload)
+    await deliver(bot, repo, key, lambda alias: format_fill_message(address, alias, chain, held), event_id)
+
+
+async def _liquidation_already_alerted(repo: Repo, key: int, coins: list[str], ts_ms: int) -> bool:
+    """fills `liquidation` and ledger `liquidation` describe the same event: alert only the first (spec 5.2)."""
+    recent = await repo.events_since(key, ts_ms - LIQUIDATION_DEDUPE_MS, [EventType.LIQUIDATION.value])
+    return any(c and c in (e['payload'].get('coin') or '').split(',') for e in recent for c in coins)
+
+
+async def _start_algo(bot: Bot, repo: Repo, key: int, address: str, algo_key: tuple[str, int],
+                      orders: list[dict], now: int) -> dict:
+    """ALGO_START: promote the debounce message of the earlier cycles to the algo message (spec 5.2)."""
+    coin, sign = algo_key
+    state = aggregator.new_algo_state(coin, sign, orders)
+    position_after = to_decimal(orders[-1].get('position_after'))
+    verb, side = algo_label(sign, position_after)
+    await repo.upsert_algo(key, state)
+    payload = {'coin': coin, 'sign': sign, 'verb': verb, 'side': side,
+               'position_after': str(position_after) if position_after is not None else None,
+               'started_ms': state['started_ms'], 'last_progress_ms': now}
+    source = algo_source(coin, sign, state['started_ms'])
+    event_id = await repo.record_event(events.dedupe_key(events.HYPERLIQUID, key, EventType.ALGO_START, source),
+                                       key, EventType.ALGO_START.value, now, payload, events.SENT, now)
+    logger.info(f"Algo started: {verb} {side} {coin} for {address} ({len(orders)} orders)")
+    if event_id is None:
+        return state
+
+    def render(alias):
+        return format_algo_progress(address, alias, state, verb, side, position_after, now)
+
+    # Earlier cycles of this algo went out as one debounced message: turn that message into the START
+    chain_base = next((o.get('chain_base', o.get('_event_id')) for o in reversed(orders)
+                       if o.get('_delivery') == events.SENT), None)
+    previous_messages = await repo.sent_messages(chain_base) if chain_base is not None else {}
+    if previous_messages:
+        for user_id, (chat_id, message_id) in previous_messages.items():
+            await repo.add_sent_message(event_id, user_id, chat_id, message_id)
+        await edit_or_send(bot, repo, key, event_id, render)
+    else:
+        await deliver(bot, repo, key, render, event_id)
+    return state
+
+
+async def _update_algo_position(repo: Repo, key: int, k: tuple, state: dict, payload: dict) -> None:
+    start = await repo.get_event_by_key(events.dedupe_key(
+        events.HYPERLIQUID, key, EventType.ALGO_START, algo_source(k[0], k[1], int(state['started_ms']))))
+    if start is not None:
+        await repo.update_event_payload(start['event_id'],
+                                        {**start['payload'], 'position_after': payload.get('position_after')})
+
+
+async def process_fills(bot: Bot, repo: Repo, client: HyperliquidClient, key: int, address: str,
+                        fills: list[dict], poll_ms: int) -> None:
+    fill_events: list[Event] = adapter.fill_events(key, fills)
+    if not fill_events:
+        return
+
+    # HIP-3: a fill on a dex we do not poll yet adds it to the account (spec 5.2)
+    dexs = await repo.get_dexs(key)
+    new_dexs = {e.meta['dex'] for e in fill_events if e.meta.get('dex')} - set(dexs)
+    if new_dexs:
+        await repo.set_dexs(key, list(set(dexs) | new_dexs))
+        logger.info(f"Added HIP-3 dexs {sorted(new_dexs)} for {address}")
+
+    for event in fill_events:
+        event.meta['poll_ms'] = poll_ms
+        if event.type in SPOT_TYPES:
+            event.meta['display_coin'] = await client.spot_display_name(event.coin)
+
+    twap_states = list((await repo.active_twaps(key)).values())
+    algos = await repo.active_algos(key)
+    st = settings()
+    payloads = [e.payload() for e in fill_events]
+    twap_hit = [twap.is_suppressed(p, twap_states) for p in payloads]
+
+    # Synthetic TWAP entry (spec 5.2): this poll's orders plus the ones sent earlier in the window
+    batches: dict[tuple, list[dict]] = {}
+    for p, hit in zip(payloads, twap_hit):
+        k = aggregator.algo_key(p)
+        if k is not None and not hit and k not in algos:
+            batches.setdefault(k, []).append(p)
+    window_since = poll_ms - int(st['algo_window_sec']) * 1000
+    started_now = set()
+    for k, batch in batches.items():
+        recorded = [dict(e['payload'], _event_id=e['event_id'], _delivery=e['delivery'])
+                    for e in await repo.events_since(key, window_since, list(aggregator.ALGO_TYPES))
+                    if aggregator.algo_key(e['payload']) == k and e['delivery'] == events.SENT]
+        orders = sorted(recorded + batch, key=lambda o: int(o['ts_ms']))
+        if aggregator.should_start_algo(orders, st):
+            algos[k] = await _start_algo(bot, repo, key, address, k, orders, poll_ms)
+            started_now.add(k)
+
+    for event, p, hit in zip(fill_events, payloads, twap_hit):
+        k = aggregator.algo_key(p)
+        delivery = events.SENT
+        if hit:
+            delivery = events.SUPPRESSED_TWAP
+        elif k in algos:
+            if k not in started_now:  # orders of the START cycle are already in its totals
+                algos[k] = aggregator.add_to_algo(algos[k], p)
+                await repo.upsert_algo(key, algos[k])
+                await _update_algo_position(repo, key, k, algos[k], p)
+            if p['type'] != EventType.POSITION_CLOSE.value:  # a full close is always alerted
+                delivery = events.SUPPRESSED_ALGO
+        if event.type == EventType.LIQUIDATION and \
+                await _liquidation_already_alerted(repo, key, [event.coin], event.ts_ms):
+            logger.info(f"Liquidation {event.coin} already alerted from the ledger, skipping")
+            continue
+        event_id = await repo.record_event(event.dedupe_key, key, p['type'], event.ts_ms, p, delivery,
+                                           adapter.now_ms())
+        if event_id is None:
+            logger.info(f"Duplicate event {event.dedupe_key}, not sent")
+            continue
+        if delivery != events.SENT:
+            logger.info(f"Event {event.dedupe_key} recorded as {delivery}, not sent")
+            continue
+        await _send_fill_event(bot, repo, key, address, event_id, p)
+
+
+async def maintain_algos(bot: Bot, repo: Repo, key: int, address: str, now: int) -> None:
+    """Progress edits every algo_progress_sec; ALGO_END after algo_idle_sec without fills (spec 5.2)."""
+    st = settings()
+    for (coin, sign), state in (await repo.active_algos(key)).items():
+        source = algo_source(coin, sign, int(state['started_ms']))
+        start = await repo.get_event_by_key(events.dedupe_key(events.HYPERLIQUID, key, EventType.ALGO_START, source))
+        meta = start['payload'] if start else {}
+        verb = meta.get('verb', 'accumulating')
+        side = meta.get('side', 'LONG' if sign > 0 else 'SHORT')
+        if aggregator.algo_is_idle(state, now, st):
+            logger.info(f"Algo ended: {verb} {side} {coin} for {address}")
+            await emit(bot, repo, key, EventType.ALGO_END, source, now,
+                       {**state, 'verb': verb, 'side': side},
+                       lambda alias, s=state, v=verb, sd=side: format_algo_end(address, alias, s, v, sd))
+            await repo.delete_algo(key, coin, sign)
+            continue
+        if start and now - int(meta.get('last_progress_ms', 0)) >= int(st['algo_progress_sec']) * 1000:
+            position_after = to_decimal(meta.get('position_after'))
+            await repo.update_event_payload(start['event_id'], {**meta, 'last_progress_ms': now})
+            await edit_or_send(bot, repo, key, start['event_id'],
+                               lambda alias, s=state, v=verb, sd=side, pa=position_after:
+                                   format_algo_progress(address, alias, s, v, sd, pa, now))
+
+
+async def process_ledger(bot: Bot, repo: Repo, key: int, address: str, updates: list[dict]) -> None:
+    for event in adapter.ledger_events(key, address, updates):
+        payload = event.payload()
+        if format_ledger_event(address, '', payload) is None:
+            continue  # transfers not involving the wallet, or types the formatter does not show
+        if event.type == EventType.LIQUIDATION and event.coin and \
+                await _liquidation_already_alerted(repo, key, event.coin.split(','), event.ts_ms):
+            logger.info(f"Liquidation {event.coin} already alerted from fills, skipping")
+            continue
+        delivery = events.FILTERED_SETTINGS if event.type in OFF_BY_DEFAULT else events.SENT
+        await emit(bot, repo, key, event.type, event.source_id, event.ts_ms, payload,
+                   lambda alias, p=payload: format_ledger_event(address, alias, p), delivery)
+
+
 async def monitor_transfers_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Fills (all dexs, perp and spot), ledger, and synthetic TWAP upkeep."""
     repo: Repo = context.bot_data['repo']
     client: HyperliquidClient = context.bot_data['hl']
     accounts = await repo.tracked_accounts()
     for i, (key, address) in enumerate(accounts):
         try:
-            cursor = await _cursor(repo, key, 'ledger')
-            updates, new_cursor = await adapter.check_ledger(client, address, cursor)
-            if new_cursor != cursor:
-                await repo.set_cursor(key, 'ledger', str(new_cursor), adapter.now_ms())
-            for update in updates:
-                event_type = events.ledger_event_type(update, address)
-                # Types the formatter does not show (rewards, commissions, ...) are not events
-                if event_type is None or format_transfer_message(update, address, '') is None:
-                    continue
-                await emit(context.bot, repo, key, event_type,
-                           f"{update.get('hash')}:{update['time']}", int(update['time']), update,
-                           lambda alias, u=update: format_transfer_message(u, address, alias))
-
+            poll_ms = adapter.now_ms()
             cursor = await _cursor(repo, key, 'fills')
-            fills, new_cursor = await adapter.check_spot_fills(client, address, cursor)
+            fills, new_cursor = await adapter.fetch_fills(client, address, cursor)
+            await process_fills(context.bot, repo, client, key, address, fills, poll_ms)
             if new_cursor != cursor:
                 await repo.set_cursor(key, 'fills', str(new_cursor), adapter.now_ms())
-            for fill in fills:
-                await emit(context.bot, repo, key, events.spot_fill_event_type(fill),
-                           str(fill.get('tid', f"{fill['coin']}:{fill['time']}:{fill.get('sz')}")),
-                           int(fill['time']), fill,
-                           lambda alias, f=fill: format_spot_fill_message(f, address, alias))
+
+            cursor = await _cursor(repo, key, 'ledger')
+            updates, new_cursor = await adapter.fetch_ledger(client, address, cursor)
+            await process_ledger(context.bot, repo, key, address, updates)
+            if new_cursor != cursor:
+                await repo.set_cursor(key, 'ledger', str(new_cursor), adapter.now_ms())
+
+            await maintain_algos(context.bot, repo, key, address, adapter.now_ms())
         except Exception as e:
             logger.error(f"Transfer check failed for {address}: {e}")
         if i < len(accounts) - 1:
