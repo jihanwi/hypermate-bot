@@ -16,30 +16,7 @@ from hypermate.venues.hyperliquid.client import HyperliquidClient
 logger = logging.getLogger(__name__)
 
 
-class MemoryState:
-    """Per-account snapshots and cursors kept in memory (lost on restart)."""
-
-    def __init__(self) -> None:
-        self.snapshots: dict = {}
-        self.cursors: dict = {}
-
-    async def get_snapshot(self, key) -> Optional[dict]:
-        return self.snapshots.get(key)
-
-    async def save_snapshot(self, key, positions: dict, now_ms: int) -> None:
-        self.snapshots[key] = positions
-
-    async def get_cursor(self, key, kind: str) -> Optional[str]:
-        return self.cursors.get((key, kind))
-
-    async def set_cursor(self, key, kind: str, value: str, now_ms: int) -> None:
-        self.cursors[(key, kind)] = value
-
-
-state = MemoryState()
-
-
-async def deliver(bot: Bot, repo: Repo, account_key, render: Callable[[str], Optional[str]]) -> None:
+async def deliver(bot: Bot, repo: Repo, account_key: int, render: Callable[[str], Optional[str]]) -> None:
     """Send one alert to every subscriber of the account, rendered with that subscriber's alias."""
     for user_id, alias in await repo.subscribers(account_key):
         text = render(alias)
@@ -53,12 +30,12 @@ async def deliver(bot: Bot, repo: Repo, account_key, render: Callable[[str], Opt
         await asyncio.sleep(1)
 
 
-async def _cursor(account_key, kind: str) -> int:
-    """Stored cursor, or now for an account seen for the first time (no history replay)."""
-    value = await state.get_cursor(account_key, kind)
+async def _cursor(repo: Repo, account_key: int, kind: str) -> int:
+    """Stored cursor (B6). An account without one (e.g. just migrated) starts at now, no history replay."""
+    value = await repo.get_cursor(account_key, kind)
     if value is None:
         now = adapter.now_ms()
-        await state.set_cursor(account_key, kind, str(now), now)
+        await repo.set_cursor(account_key, kind, str(now), now)
         logger.info(f"Started {kind} cursor for {account_key} at {now}")
         return now
     return int(value)
@@ -70,9 +47,9 @@ async def monitor_positions_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     accounts = await repo.tracked_accounts()
     for i, (key, address) in enumerate(accounts):
         try:
-            previous = await state.get_snapshot(key)
+            previous = await repo.get_snapshot(key)
             alerts, current = await adapter.check_positions(client, address, previous)
-            await state.save_snapshot(key, current, adapter.now_ms())
+            await repo.save_snapshot(key, current, adapter.now_ms())
             for alert in alerts:
                 await deliver(context.bot, repo, key,
                               lambda alias, a=alert: format_position_alert(address, alias, a))
@@ -89,18 +66,18 @@ async def monitor_transfers_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     accounts = await repo.tracked_accounts()
     for i, (key, address) in enumerate(accounts):
         try:
-            cursor = await _cursor(key, 'ledger')
+            cursor = await _cursor(repo, key, 'ledger')
             updates, new_cursor = await adapter.check_ledger(client, address, cursor)
             if new_cursor != cursor:
-                await state.set_cursor(key, 'ledger', str(new_cursor), adapter.now_ms())
+                await repo.set_cursor(key, 'ledger', str(new_cursor), adapter.now_ms())
             for update in updates:
                 await deliver(context.bot, repo, key,
                               lambda alias, u=update: format_transfer_message(u, address, alias))
 
-            cursor = await _cursor(key, 'fills')
+            cursor = await _cursor(repo, key, 'fills')
             fills, new_cursor = await adapter.check_spot_fills(client, address, cursor)
             if new_cursor != cursor:
-                await state.set_cursor(key, 'fills', str(new_cursor), adapter.now_ms())
+                await repo.set_cursor(key, 'fills', str(new_cursor), adapter.now_ms())
             for fill in fills:
                 await deliver(context.bot, repo, key,
                               lambda alias, f=fill: format_spot_fill_message(f, address, alias))

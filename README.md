@@ -1,134 +1,82 @@
 # HyperMate Telegram Bot
 
-A Telegram bot for tracking Hyperliquid wallet positions and transfers in real-time.
+A Telegram bot that tracks Hyperliquid wallets and sends alerts for their positions, spot trades and transfers.
 
-## Features
-
-- 🔍 **Position Monitoring**: Track perpetual positions, TWAP orders, and unrealized P&L
-- 💰 **Transfer Monitoring**: Monitor spot trades, transfers, deposits, and withdrawals
-- 📊 **Statistics**: View trading statistics and portfolio performance
-- 🏷️ **Wallet Management**: Add/remove wallets with custom aliases
-- 📈 **Real-time Alerts**: Automatic notifications for new positions and transfers
-- 🔒 **Secure Storage**: Encrypted wallet data with SQLite database
-- 🔄 **Data Migration**: Automatic migration from legacy JSON storage
+The v2 upgrade plan is in [docs/HYPERMATE_V2_SPEC.md](docs/HYPERMATE_V2_SPEC.md). API facts verified during implementation are in [docs/API_NOTES.md](docs/API_NOTES.md).
 
 ## Commands
 
-- `/start` - Get started with the bot
-- `/add <wallet_address> <alias>` - Add a wallet to track
-- `/list` - Show all tracked wallets
-- `/remove <alias>` - Remove a wallet from tracking
-- `/positions <alias>` - View current positions and balances
-- `/stats <alias>` - View trading statistics
+- `/start` - Short welcome
+- `/add <wallet_address> <alias>` - Track a wallet
+- `/list` - Show your tracked wallets
+- `/remove <alias>` - Stop tracking a wallet
+- `/positions <alias>` - Current positions and balances
+- `/stats <alias>` - PnL and volume
 
-## Local Development
+Aliases are matched case-insensitively.
 
-### Prerequisites
-- Python 3.8+
-- SQLite (usually included with Python)
+## Running locally
 
-### Setup
-1. Clone the repository
-2. Install dependencies: `pip install -r requirements.txt`
-3. Set required environment variables:
-   ```bash
-   export BOT_TOKEN=your_bot_token_here
-   export WALLET_ENCRYPTION_KEY=your_32_character_encryption_key
-   ```
-4. Run the bot: `python bot.py`
+Requires Python 3.10+.
 
-### Environment Variables
-- `BOT_TOKEN` (required) - Your Telegram bot token from @BotFather
-- `WALLET_ENCRYPTION_KEY` (required) - 32+ character string for encrypting sensitive data
-- `LOG_LEVEL` (optional) - Set to `DEBUG` for verbose logging (default: `INFO`)
-- `DEBUG` (optional) - Set to `true` for development mode (default: `false`)
+```bash
+pip install -r requirements.txt
+export BOT_TOKEN=your_bot_token_here
+export DATABASE_PATH=./hypermate.db   # default is /data/hypermate.db (Railway volume)
+python -m hypermate.main
+```
 
-## Railway Deployment
+### Environment variables
 
-### Prerequisites
-- GitHub account
-- Railway account
-- Telegram bot token from @BotFather
+| Variable | Required | Default | Meaning |
+|---|---|---|---|
+| `BOT_TOKEN` | yes | | Telegram bot token from @BotFather |
+| `DATABASE_PATH` | no | `/data/hypermate.db` | SQLite file. The directory is created on startup if missing |
+| `LOG_LEVEL` | no | `INFO` | Python log level |
+| `HYPERLIQUID_API_URL` | no | `https://api.hyperliquid.xyz` | Hyperliquid API base URL |
 
-### Deployment Steps
+`WALLET_ENCRYPTION_KEY` is no longer used (wallet generation was removed).
 
-1. **Push to GitHub**
-   ```bash
-   git init
-   git add .
-   git commit -m "Initial commit"
-   git branch -M main
-   git remote add origin https://github.com/yourusername/hypermate-bot.git
-   git push -u origin main
-   ```
+## Migrating v1 data (manual, one time)
 
-2. **Deploy to Railway**
-   - Visit [railway.app](https://railway.app) and sign in
-   - Click "New Project" → "Deploy from GitHub repo"
-   - Select your repository
-   - Add environment variables (see below)
-   - Deploy!
+v1 stored tracked wallets in a `tracked_wallets` table. v2 uses the schema in `hypermate/db/schema.sql`. The bot does not migrate on startup; run the script by hand:
 
-3. **Environment Variables**
-   Set these in Railway dashboard:
-   - `BOT_TOKEN` (required) - Your Telegram bot token
-   - `WALLET_ENCRYPTION_KEY` (required) - A secure 32+ character encryption key
-   - `LOG_LEVEL` (optional) - Set to `DEBUG` for verbose logging
-   - `DEBUG` (optional) - Set to `true` for development mode
+```bash
+# v1 DB copied somewhere, v2 DB at DATABASE_PATH
+python scripts/migrate_v1.py --source /path/to/old/hypermate.db --target /data/hypermate.db
 
-### Cost
-- Railway offers a free tier with 512MB RAM and 1GB storage
-- Pro plans start at $5/month for always-on deployments
+# v1 table in the same file as the v2 DB
+python scripts/migrate_v1.py --target /data/hypermate.db
+```
 
-## Technical Details
+- `--target` defaults to `$DATABASE_PATH` (or `/data/hypermate.db`). `--source` defaults to the target.
+- The script is idempotent: running it again reports rows as `already_present` and adds nothing.
+- Rows v2 cannot represent are printed as `SKIP` lines and left out: invalid addresses, and the same user tracking one address under two aliases (v2 allows one alias per user and wallet).
+- The v1 table and the legacy JSON files (`user_wallets.json`, `generated_wallets.json`, `wallets_secure.json`) are not modified. The bot does not read the JSON files; it logs a warning if it finds them.
+- Migrated wallets start alerting from the time of migration. Past activity is not replayed.
 
-- **Backend**: Python with `python-telegram-bot` library
-- **APIs**: Hyperliquid API for position and transfer data
-- **Scheduling**: APScheduler for background monitoring tasks
-- **Database**: SQLite with `aiosqlite` for persistent data storage
-- **Security**: `cryptography` (Fernet) for encrypting sensitive wallet data
-- **HTTP Client**: `aiohttp` for async API requests
-- **Account Management**: `eth-account` for Ethereum wallet operations
+On Railway the v1 DB lives in the container filesystem, which is replaced on redeploy. Copy it out of the running v1 service before deploying v2 if you want to migrate it.
 
-## Architecture
+## Railway deployment
 
-The bot runs several key components:
+1. Attach a Volume to the service with mount path `/data` (service, Settings, Volumes). Without it the DB is lost on every redeploy.
+2. Set `BOT_TOKEN`. `DATABASE_PATH` can stay at its default.
+3. Deploy. `railway.toml` and `Procfile` start `python -m hypermate.main`.
 
-### Background Tasks
-1. **Position Monitoring** (every 30 seconds) - Checks for new positions, TWAP orders, and P&L changes
-2. **Transfer Monitoring** (every 30 seconds, offset by 15s) - Monitors spot trades and transfers
+## Layout
 
-### Data Storage
-- **SQLite Database**: Primary storage for tracked wallets and user data
-- **Encrypted Storage**: Private keys and sensitive data encrypted with Fernet
-- **Migration System**: Automatic migration from legacy JSON files to database
-- **Backup Files**: JSON files maintained for data redundancy
-
-### Key Files
-- `bot.py` - Main bot application (2300+ lines)
-- `config.py` - Configuration management
-- `hypermate.db` - SQLite database
-- `requirements.txt` - Python dependencies
-- `railway.toml` - Railway deployment configuration
-- `Procfile` - Process definition for deployment
-
-## Dependencies
-
-The bot requires the following Python packages:
-- `python-telegram-bot` - Telegram Bot API wrapper
-- `aiohttp` - Async HTTP client
-- `APScheduler` - Background task scheduling
-- `hyperliquid-python-sdk` - Hyperliquid API integration
-- `cryptography` - Data encryption
-- `aiosqlite` - Async SQLite database operations
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## Support
-
-For issues or questions, please create an issue on GitHub. 
+```
+hypermate/
+  config.py               env and constants
+  main.py                 Application, handlers, jobs, post_init
+  db/schema.sql           SQLite schema (spec section 3.4)
+  db/repo.py              all SQL
+  core/formatter.py       Telegram HTML messages
+  core/links.py           explorer links
+  core/numbers.py         Decimal parsing
+  core/pipeline.py        polling jobs and alert delivery
+  venues/hyperliquid/     info API client and change detection
+  bot/commands.py         command handlers
+  bot/texts.py            command texts
+scripts/migrate_v1.py     v1 to v2 data migration
+```
