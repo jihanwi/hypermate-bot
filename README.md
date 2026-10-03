@@ -21,6 +21,10 @@ The v2 upgrade plan is in [docs/HYPERMATE_V2_SPEC.md](docs/HYPERMATE_V2_SPEC.md)
 
 Aliases are matched case-insensitively. On startup the bot registers these commands as the Telegram `/` command menu for private chats.
 
+### Venues
+
+`/add` resolves the wallet on every venue in parallel and tracks the ones with activity: Hyperliquid (positions, account value or spot balance) and Lighter (sub-accounts of the L1 address). The reply says which: `✅ Wallet added as cl · HL ✅ (xyz) · Lighter ✅ (2 sub-accounts)`. `/rescan` repeats it, and a daily job at 04:10 KST re-checks the venues a wallet is not active on. Alerts carry a venue badge (`[HL]`, `[LTR]`) and Lighter sub-accounts show as `alias#index`. `/positions` has one section per venue account and `/list` sums the account values over venues. Lighter polls use the WebSocket stream when it connects and REST otherwise (interval raised with the account count so the public 60 req/min limit holds); `/health` shows the mode.
+
 ### Alerts
 
 - One alert per order: fills of the same order (coin, direction, oid) are summed (size, notional, VWAP, realized PnL from `closedPnl`). Further orders for the same coin and direction within 60 s edit that alert instead of sending a new one.
@@ -53,6 +57,10 @@ python -m hypermate.main
 | `POLL_FAST_SEC` | no | `20` | Floor for the position poll interval. Raised automatically when polling would need over 40% of the budget |
 | `POLL_LEDGER_SEC` | no | `180` | Ledger (deposits, withdrawals, transfers) poll interval, stretched up to 600 s when the budget is short |
 | `BACKUP_DIR` | no | `<DATABASE_PATH dir>/backups` | Where the daily DB backup goes |
+| `LIGHTER_API_URL` | no | `https://mainnet.zklighter.elliot.ai/api/v1` | Lighter public REST base |
+| `LIGHTER_WS_URL` | no | `wss://mainnet.zklighter.elliot.ai/stream` | Lighter WebSocket stream |
+| `LIGHTER_WS_ENABLED` | no | `true` | Try the Lighter WS; REST polling is the fallback either way |
+| `LIGHTER_REQ_BUDGET` | no | `50` | Lighter requests per minute the bot allows itself (public limit 60) |
 
 `WALLET_ENCRYPTION_KEY` is no longer used (wallet generation was removed).
 

@@ -101,6 +101,17 @@ Shapes from the PM fixtures (master wallet 0x6aca…, 2026-10-03):
 - System addresses seen as transfer counterparties (PM live review 2026-10-03): `0x2000000000000000000000000000000000000079`, `…0168`, `…010c` and others of the form `0x2` + 32 zeros + 1 to 3 hex digits (spot token / HIP-3 escrow, the token index at the end). `related.is_system_address` treats `0x2` or `0x0` followed by 28 or more zeros as system, plus the explicit list (escrow `0x2000…0000`, zero, assistance fund `0xfefe…fefe`, HLP vault).
 - hypurrscan tags (PM live check 2026-10-03): `GET /tags/{address}` returns `{}` for every address tried, including the documented example and the bridge; `POST /tags/addresses` with the documented `{"addresses": [...]}` body returns 404. Not used. `api.hypurrscan.io` is also unreachable from the dev environment, so `openapi.json` was not read here. Fixtures `hypurrscan_tags_*.json` are not in the repo.
 
+## Lighter (Phase 2A, PM live check 2026-10-04)
+
+- Base `https://mainnet.zklighter.elliot.ai/api/v1`, no auth, 60 req/min per IP and L1 address. No rate limit headers. The bot's bucket uses 50/min (`LIGHTER_REQ_BUDGET`), 1 per request.
+- `GET /accountsByL1Address?l1_address=0x…` → `{code, l1_address, sub_accounts: [{index, l1_address, collateral, status, ...}]}`. Each `index` is one venue account (`account_ref`). Unknown address: error code or empty list → inactive. Fixture `lighter_accountsByL1Address.json` (one sub-account, 702389).
+- `GET /account?by=index&value=<index>` → `{code, total, accounts: [{index, l1_address, collateral, available_balance, total_asset_value, status, positions: [...], ...}]}`. `positions` lists every market, including `position` "0" / "0.0" / "0.00": compared as Decimal and dropped (fixture: 55 rows, 15 open). Signed size = `sign * position`. Account value: `total_asset_value` (fallback `collateral`). Fixture `lighter_account_by_index.json` (MM account, ETH 153 long).
+- `GET /trades?sort_by=timestamp&limit=100&account_index=<index>` → `{code, next_cursor, trades: [...]}` newest first; `next_cursor` (base64 `{"index": …}`) pages to older trades. Fields used: `trade_id, type, market_id, size, price, ask_account_id, bid_account_id, is_maker_ask, timestamp (ms), taker_position_size_before, maker_position_size_before, ask_account_pnl / bid_account_pnl, ask_id / bid_id, tx_hash`. Fixture `lighter_trades.json` (100 trades, all `type: trade`, several markets).
+- **[?] Not verified: the sign of `*_position_size_before` for short positions** (the fixture only has a long); the adapter treats it as signed. If it is unsigned, Close Short / Open Short classification on Lighter is wrong; owner: one short-side trade from a tracked account.
+- `GET /orderBooks` → `{code, order_books: [{market_id, symbol, ...}]}`, 246 markets, cached 1 h. Fixture `lighter_orderBooks.json`.
+- WS `wss://mainnet.zklighter.elliot.ai/stream`, `{"type": "subscribe", "channel": "account_all_positions/<index>"}` and `account_all_trades/<index>` per docs. **[?] Not verified live** (PM: CloudFront 400, possibly the proxy). The bot tries it and falls back to REST; message shapes are a guess (`positions` dict or list, `trades` list, index from the channel name).
+- Explorer: no confirmed address URL format [?]; alerts link to `https://app.lighter.xyz/`.
+
 ## Telegram
 
 - `setMyCommands` is called once in `post_init` with `BotCommandScopeAllPrivateChats`. The request shape was checked against a local fake Bot API server. Whether the menu shows up in the Telegram client needs a check with the real bot token.

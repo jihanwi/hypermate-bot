@@ -482,21 +482,22 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 
 ### 6.1 공통
 
-- `/add <evm_address> <alias>` 시 모든 어댑터의 `resolve()` 를 병렬 호출. 활동 있는 베뉴만 `venue_accounts` 에 `active=1` 로 생성. 결과를 유저에게 표시: "HL ✅ / Lighter ✅ (2 sub-accounts) / RISEx ❌ / Aster ✅ (privacy: off)".
+- `/add <evm_address> <alias>` 시 모든 어댑터의 `resolve()` 를 병렬 호출 (`core/venues.resolve_wallet`). 활동 있는 베뉴만 `venue_accounts` 에 `active=1` (없는 베뉴는 행이 없거나 `active=0`). 결과를 유저에게 표시: "✅ Wallet added as cl · HL ✅ (xyz) · Lighter ✅ (2 sub-accounts) · RISEx ✗ · Aster ✗" (구현된 베뉴만 나열). HL 의 활동 판정: 포지션, accountValue > 0, 또는 spot 잔고 (2A). HL 비활성 지갑은 HL 폴링에서 빠지고 일일 재탐색(04:10 KST) 또는 `/rescan` 으로 복귀.
 - 이미 추적 중인 지갑도 `/rescan <alias>` 로 재탐색. 그리고 매일 1회 비활성 베뉴 재탐색 (새로 쓰기 시작하는 경우).
 - 알림 메시지 머리에 베뉴 뱃지 (섹션 10).
 - 포지션 이벤트는 HL과 동일 `EventType`. 베뉴가 fills를 공개하지 않으면 snapshot diff 로 OPEN/INCREASE/DECREASE/CLOSE/FLIP 생성 (가격은 snapshot의 entry/mark 사용, realized_pnl은 None).
-- 베뉴별 폴링 주기와 한도는 scheduler에 베뉴별 버킷으로 등록.
+- 베뉴별 폴링 주기와 한도는 scheduler에 베뉴별 버킷으로 등록 (`WeightBudget` 인스턴스를 베뉴마다 하나씩, HL 버킷 로직 재사용).
+- 어댑터가 fills 를 반환하면 HL 과 같은 집계/debounce/알고 파이프라인 (`pipeline.poll_venue_account`). fills 없이 snapshot 만 있으면 `pipeline.diff_fills` 가 snapshot 차이로 합성 fill 을 만든다 (가격은 entry, realized_pnl 없음).
 
 ### 6.2 Lighter [V]
 
 - Base `https://mainnet.zklighter.elliot.ai/api/v1`. 무인증 60 req/분 (IP + L1 주소 기준).
 - resolve: `GET /accountsByL1Address?l1_address=0x...` → `sub_accounts[].index`. 각 index가 하나의 `venue_account`.
 - snapshot: `GET /account?by=index&value=<index>` → `accounts[0].positions[]` 필드 `market_id, symbol, sign(1|-1), position, avg_entry_price, position_value, unrealized_pnl, realized_pnl, liquidation_price, margin_mode, allocated_margin`. 계정: `collateral, available_balance, total_asset_value`.
-- events: `GET /trades?sort_by=timestamp&limit=100&account_index=N` (cursor 페이지네이션, `type=trade|liquidation|deleverage`). cursor.trades = 마지막 trade id/timestamp. `type=liquidation` → `LIQUIDATION`.
-- WS `wss://mainnet.zklighter.elliot.ai/stream`: `account_all_positions/{index}`, `account_all_trades/{index}` 가 무인증 구독 가능 [V 문서, 라이브 미검증 [?]]. 한도: 커넥션당 500 구독. **Lighter는 REST 한도(60/분)가 빡빡하므로 WS를 기본으로**, REST는 resolve와 fallback. WS 끊기면 REST 폴링 60초 주기로 degrade.
+- events: `GET /trades?sort_by=timestamp&limit=100&account_index=N` (최신순, `next_cursor` 는 더 오래된 페이지로 가는 커서, `type=trade|liquidation|deleverage`). cursors.kind `trades` 에는 처리한 가장 최신 `trade_id` 를 JSON `{"trade_id": N}` 으로 저장한다 (`next_cursor` 는 뒤로만 가므로 증분 폴링 커서로 쓸 수 없음, 2A 구현 결정). 첫 페이지가 전부 신규면 저장된 id 에 닿을 때까지 최대 5페이지 따라감. JSON 이 아닌 커서(신규 계정의 ms 초기값)는 베이스라인: 과거 리플레이 없음. `type=liquidation` → `LIQUIDATION`. 방향: 우리 계정이 `ask_account_id` 면 매도, `bid_account_id` 면 매수. startPosition 은 우리가 maker 면 `maker_position_size_before`, taker 면 `taker_position_size_before`. closedPnl 은 `ask_account_pnl` / `bid_account_pnl`. oid 는 우리 쪽 `ask_id` / `bid_id`. 정규화된 fill 은 HL userFills 형태라 5.2 집계/debounce/알고 파이프라인을 그대로 탄다 (PM 라이브 확인 2026-10-04).
+- WS `wss://mainnet.zklighter.elliot.ai/stream`: `account_all_positions/{index}`, `account_all_trades/{index}` 가 무인증 구독 가능 [V 문서]. PM 환경에서는 CloudFront 400 으로 연결 실패 (프록시 문제 가능) [?]. 한도: 커넥션당 500 구독. 구현 (2A): WS 를 기본으로 시도하되 연결 실패/끊김 시 REST 폴링으로 자동 degrade, 복구 시 전 계정 재구독 (백오프 5초 → 60초). WS 메시지 형식은 문서 기준 추정이라 모르는 형식은 로그 1회 후 무시하고 캐시 미스 = REST 로 처리. REST 폴링 주기는 60 req/분 한도 중 50 을 쓰도록 계정 수에 따라 자동: `max(40, ceil(2 * 계정수 * 60 / 50))` 초 (계정당 account + trades 2 req. 10개 40초, 25개 60초). WS 연결 중에는 캐시가 공짜라 POLL_FAST 주기. `/health` 에 WS 상태 줄.
 - TWAP: 주문 타입 `twap` / `twap-sub` 존재 [V SDK] 하지만 부모 TWAP은 인증 엔드포인트에만. 공개로는 `twap-sub` 체결의 등간격 패턴으로 추론만 가능 [I]. **Phase 2 범위: Lighter TWAP 감지 안 함.** 대신 집계/debounce 규칙(5.2)이 적용되어 메시지 edit로 누적됨. 휴리스틱 감지는 백로그.
-- explorer: Lighter 공식 explorer URL 형식 [?] 확인 후 `links.py` 에 추가. 없으면 `https://app.lighter.xyz/` 로 대체.
+- explorer: Lighter 공식 explorer URL 형식 [?] 확인 못 함 (PM). `https://app.lighter.xyz/` 로 대체 (`links.address_url`).
 - SDK: 쓰지 않음 (REST/WS 직접). 참고용 `github.com/elliottech/lighter-python`.
 
 ### 6.3 RISEx [V]
