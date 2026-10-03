@@ -67,6 +67,15 @@ def test_trade_normalisation_maker_and_taker():
     opened = lighter.normalise_trade({**taker, 'taker_position_size_before': '0', 'type': 'liquidation'}, INDEX, symbols)
     assert opened['dir'] == 'Open Long' and opened['liquidation'] == {'method': 'market', 'markPx': '2679.72'}
     assert lighter.normalise_trade({**base_trade, 'ask_account_id': 1, 'bid_account_id': 2}, INDEX, symbols) is None
+    # short account (PM live 2026-10-04): taker_position_size_before is signed (-0.00243); a taker sell
+    # of 0.00011 increases the short
+    short = {**base_trade, 'ask_account_id': INDEX, 'bid_account_id': 1, 'is_maker_ask': False, 'size': '0.00011',
+             'taker_position_size_before': '-0.00243', 'ask_account_pnl': '0'}
+    fill = lighter.normalise_trade(short, INDEX, symbols)
+    assert fill['side'] == 'A' and fill['startPosition'] == '-0.00243' and fill['dir'] == 'Open Short'
+    assert fill['crossed'] is True
+    event = hl_adapter.fill_events(1, [fill])[0]
+    assert event.type.value == 'position_increase' and event.side == 'SHORT' and event.position_after == Decimal('-0.00254')
 
 
 def test_fill_direction_rules():
@@ -175,7 +184,7 @@ async def test_client_charges_the_bucket_and_handles_errors(monkeypatch):
     client = LighterClient('http://unused', budget)
     responses = [(200, load_fixture('lighter_accountsByL1Address.json')),
                  (200, {'code': 21100, 'message': 'account not found'}),
-                 (429, None), (500, None)]
+                 (429, None), (500, None), (200, None)]
 
     async def fake_fetch(path, params):
         return responses.pop(0)
@@ -188,8 +197,14 @@ async def test_client_charges_the_bucket_and_handles_errors(monkeypatch):
         await client.account(INDEX)
     assert budget.paused_until > clock['now']
     budget.paused_until = 0
-    with pytest.raises(__import__('hypermate.venues.lighter.client', fromlist=['x']).LighterAPIError):
+    errors = __import__('hypermate.venues.lighter.client', fromlist=['x'])
+    with pytest.raises(errors.LighterRateLimited):          # 500: treated as rate limiting too
         await client.account(INDEX)
+    assert budget.paused_until > clock['now']
+    budget.paused_until = 0
+    with pytest.raises(errors.LighterRateLimited):          # 200 with a non-JSON body (the 429 page)
+        await client.account(INDEX)
+    assert budget.paused_until > clock['now'] and budget.last_hour()['rate_limited'] == 3
     assert budget.tokens < budget.capacity
 
 

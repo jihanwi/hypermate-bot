@@ -48,10 +48,14 @@ class LighterClient:
             self._session = None
 
     async def _fetch(self, path: str, params: dict) -> tuple[int, Any]:
-        """(status, parsed body or None). Separate so tests can swap the transport."""
+        """(status, parsed body or None). A body that is not JSON (the 429 page is HTML, PM live check)
+        is returned as None. Separate so tests can swap the transport."""
         await self.start()
         async with self._session.get(f"{self.base_url}{path}", params=params) as response:
-            body = await response.json(loads=_json_loads) if response.status == 200 else None
+            try:
+                body = await response.json(loads=_json_loads, content_type=None)
+            except (ValueError, aiohttp.ContentTypeError):
+                body = None
             return response.status, body
 
     async def _get(self, path: str, params: dict, priority: int, meter: Optional[dict] = None) -> Any:
@@ -63,12 +67,12 @@ class LighterClient:
             status, body = await self._fetch(path, params)
         except aiohttp.ClientError as e:
             raise LighterAPIError(f"GET {path} failed: {e}") from e
-        if status == 429:
+        # Lighter's 429 carries a non-JSON body and no headers; any non-200 or unparsable answer is
+        # treated as rate limiting (owner decision 2026-10-04) and pauses the venue bucket.
+        if status != 200 or body is None:
             if self.budget is not None:
                 self.budget.rate_limited(None)
-            raise LighterRateLimited(f"GET {path} returned HTTP 429")
-        if status != 200:
-            raise LighterAPIError(f"GET {path} returned HTTP {status}")
+            raise LighterRateLimited(f"GET {path} returned HTTP {status}" + (" (non-JSON body)" if body is None else ""))
         if isinstance(body, dict) and body.get('code') not in (None, 200, 0):
             raise LighterAPIError(f"GET {path} returned code {body.get('code')}: {body.get('message', '')}")
         return body
