@@ -11,6 +11,7 @@ MENU_COMMANDS = [
     ("recent", "Recent events: /recent alias [n]"),
     ("stats", "PnL and volume: /stats alias"),
     ("rescan", "Re-detect venues for a wallet: /rescan alias"),
+    ("related", "Find linked wallets: /related alias"),
     ("help", "Commands and examples"),
 ]
 # not in the menu: /health (admins only)
@@ -31,7 +32,9 @@ HELP = (
     "/stats alias: all-time PnL and volume\n"
     "/twap [alias]: active TWAPs and algo executions\n"
     "/recent alias [n]: last events, including ones not sent\n"
-    "/rescan alias: look for Hyperliquid HIP-3 dex positions again\n\n"
+    "/rescan alias: look for Hyperliquid HIP-3 dex positions again\n"
+    "/related alias [refresh]: subaccounts, API wallets, transfer counterparties and more, "
+    "with a Track button per wallet\n\n"
     "Aliases are case-insensitive.\n\n"
     "<b>Alerts</b> for every tracked wallet:\n"
     "• Perp positions opened, added to, reduced, closed, flipped or liquidated, incl. HIP-3 dexs. "
@@ -46,6 +49,12 @@ ADD_USAGE = f"Usage: /add 0x... alias\nExample: <code>/add {EXAMPLE_ADDRESS} wha
 REMOVE_USAGE = "Usage: /remove alias\nExample: <code>/remove whale1</code>"
 STATS_USAGE = "Usage: /stats alias\nExample: <code>/stats whale1</code>"
 ADMIN_ONLY = "This command is for admins (ADMIN_USER_IDS)."
+RELATED_USAGE = "Usage: /related alias [refresh]\nExample: <code>/related whale1</code>"
+RELATED_SEARCHING = "🔎 Searching related wallets for <b>{alias}</b>... (10 to 20 seconds)"
+RELATED_NONE = "🔗 No related wallets found for <b>{alias}</b>."
+TRACK_BUTTON = "Track as {alias}"
+TRACK_DONE = "✅ Tracking <b>{alias}</b> ({address})"
+TRACK_EXPIRED = "This list is stale. Run /related again."
 RECENT_USAGE = "Usage: /recent alias [n]\nExample: <code>/recent whale1 20</code>"
 RESCAN_USAGE = "Usage: /rescan alias\nExample: <code>/rescan whale1</code>"
 RESCAN_RESULT = "🔎 <b>{alias}</b>: Hyperliquid main dex{dexs}"

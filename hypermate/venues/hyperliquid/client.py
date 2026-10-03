@@ -66,11 +66,20 @@ class HyperliquidClient:
             body = await response.json(loads=_json_loads) if response.status == 200 else None
             return response.status, response.headers, body
 
-    async def _info(self, payload: dict) -> Any:
-        """One info request, paced by the weight budget (spec 3.5)."""
+    async def _info(self, payload: dict, priority: Optional[int] = None, meter: Optional[dict] = None) -> Any:
+        """One info request, paced by the weight budget (spec 3.5).
+
+        priority overrides the request type's default; meter ({type: weight}) accumulates the
+        weight this request cost, per-item part included (used by /related for its 300 cap).
+        """
         request_type = payload['type']
+        weight, default_priority = request_cost(request_type)
+        if priority is None:
+            priority = default_priority
         if self.budget is not None:
-            await self.budget.acquire(*request_cost(request_type))
+            await self.budget.acquire(weight, priority)
+        if meter is not None:
+            meter[request_type] = meter.get(request_type, 0) + weight
         try:
             status, headers, body = await self._post(payload)
         except aiohttp.ClientError as e:
@@ -81,16 +90,20 @@ class HyperliquidClient:
             raise HyperliquidRateLimited(f"{request_type} returned HTTP 429")
         if status != 200:
             raise HyperliquidAPIError(f"{request_type} returned HTTP {status}")
-        if self.budget is not None and isinstance(body, list):
-            self.budget.charge(item_weight(request_type, len(body)), request_cost(request_type)[1])
+        if isinstance(body, list):
+            extra = item_weight(request_type, len(body))
+            if self.budget is not None:
+                self.budget.charge(extra, priority)
+            if meter is not None and extra:
+                meter[request_type] += extra
         return body
 
-    async def clearinghouse_state(self, user: str, dex: str = '') -> dict:
+    async def clearinghouse_state(self, user: str, dex: str = '', **opts) -> dict:
         """Positions and margin of one perp dex; "" is the main dex (no dex param, spec 5.1 HIP-3)."""
         payload = {"type": "clearinghouseState", "user": user}
         if dex:
             payload["dex"] = dex
-        return await self._info(payload)
+        return await self._info(payload, **opts)
 
     async def perp_dexs(self) -> list[str]:
         """HIP-3 builder dex names (the main dex, null in the response, is left out). Cached."""
@@ -109,18 +122,51 @@ class HyperliquidClient:
         data = await self._info({"type": "userFillsByTime", "user": user, "startTime": start_time})
         return data if isinstance(data, list) else []
 
-    async def ledger_updates(self, user: str, start_time: int) -> list:
+    async def ledger_updates(self, user: str, start_time: int, **opts) -> list:
         """Non-funding ledger updates (deposits, withdrawals, transfers) with time >= start_time (ms)."""
-        data = await self._info({"type": "userNonFundingLedgerUpdates", "user": user, "startTime": start_time})
+        data = await self._info({"type": "userNonFundingLedgerUpdates", "user": user, "startTime": start_time},
+                                **opts)
         return data if isinstance(data, list) else []
+
+    # /related discovery (spec 7.1). All take priority= and meter= (see _info). ---------------
+
+    async def user_role(self, user: str, **opts) -> dict:
+        """{role: user|agent|vault|subAccount|missing, data?: {master | user}} (weight 60, cache it)."""
+        data = await self._info({"type": "userRole", "user": user}, **opts)
+        return data if isinstance(data, dict) else {}
+
+    async def sub_accounts(self, user: str, **opts) -> list:
+        """[{name, subAccountUser, master, clearinghouseState, ...}] when user is a master, else []."""
+        data = await self._info({"type": "subAccounts", "user": user}, **opts)
+        return data if isinstance(data, list) else []
+
+    async def extra_agents(self, user: str, **opts) -> list:
+        data = await self._info({"type": "extraAgents", "user": user}, **opts)
+        return data if isinstance(data, list) else []
+
+    async def user_fees(self, user: str, **opts) -> dict:
+        data = await self._info({"type": "userFees", "user": user}, **opts)
+        return data if isinstance(data, dict) else {}
+
+    async def referral(self, user: str, **opts) -> dict:
+        data = await self._info({"type": "referral", "user": user}, **opts)
+        return data if isinstance(data, dict) else {}
+
+    async def user_vault_equities(self, user: str, **opts) -> list:
+        data = await self._info({"type": "userVaultEquities", "user": user}, **opts)
+        return data if isinstance(data, list) else []
+
+    async def vault_details(self, vault_address: str, **opts) -> dict:
+        data = await self._info({"type": "vaultDetails", "vaultAddress": vault_address}, **opts)
+        return data if isinstance(data, dict) else {}
 
     async def portfolio(self, user: str) -> list:
         data = await self._info({"type": "portfolio", "user": user})
         return data if isinstance(data, list) else []
 
-    async def web_data2(self, user: str) -> dict:
+    async def web_data2(self, user: str, **opts) -> dict:
         """Frontend endpoint; twapStates lists the user's active TWAPs (main dex only, spec 5.1)."""
-        return await self._info({"type": "webData2", "user": user})
+        return await self._info({"type": "webData2", "user": user}, **opts)
 
     async def twap_history(self, user: str) -> list:
         """[{time (s), state, status: {status, description?}, twapId}], newest first."""

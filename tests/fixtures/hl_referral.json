@@ -1,0 +1,75 @@
+{
+ "referredBy": {
+  "referrer": "0x41a4ec9d9b999825c8dbefc1072427ea17fc1135",
+  "code": "TUKU"
+ },
+ "cumVlm": "7276955.1900000004",
+ "unclaimedRewards": "0.0403907",
+ "claimedRewards": "0.0",
+ "builderRewards": "0.0",
+ "referrerState": {
+  "stage": "ready",
+  "data": {
+   "code": "CUPCAKES",
+   "nReferrals": 1,
+   "referralStates": [
+    {
+     "cumVlm": "1091.1",
+     "cumRewardedFeesSinceReferred": "0.40392807",
+     "cumFeesRewardedToReferrer": "0.0403907",
+     "timeJoined": 1757343880705,
+     "user": "0xb16039f74a0b77112a02d4b88332ed6b22086c51",
+     "tokenToState": [
+      [
+       0,
+       {
+        "cumVlm": "1091.1",
+        "cumRewardedFeesSinceReferred": "0.40392807",
+        "cumFeesRewardedToReferrer": "0.0403907"
+       }
+      ]
+     ]
+    }
+   ]
+  }
+ },
+ "rewardHistory": [],
+ "tokenToState": [
+  [
+   0,
+   {
+    "cumVlm": "7276955.1900000004",
+    "unclaimedRewards": "0.0403907",
+    "claimedRewards": "0.0",
+    "builderRewards": "0.0"
+   }
+  ],
+  [
+   235,
+   {
+    "cumVlm": "1833.29",
+    "unclaimedRewards": "0.0",
+    "claimedRewards": "0.0",
+    "builderRewards": "0.0"
+   }
+  ],
+  [
+   268,
+   {
+    "cumVlm": "2969.1",
+    "unclaimedRewards": "0.0",
+    "claimedRewards": "0.0",
+    "builderRewards": "0.0"
+   }
+  ],
+  [
+   360,
+   {
+    "cumVlm": "9500.63",
+    "unclaimedRewards": "0.0",
+    "claimedRewards": "0.0",
+    "builderRewards": "0.0"
+   }
+  ]
+ ]
+}

@@ -14,7 +14,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from hypermate.config import Config
-from hypermate.core import aggregator, events
+from hypermate.core import aggregator, events, related
 from hypermate.core.events import POSITION_TYPES, SPOT_TYPES, Event, EventType
 from hypermate.core.formatter import (algo_label, format_algo_end, format_algo_progress, format_fill_message,
                                       format_ledger_event, format_twap_end, format_twap_start)
@@ -404,8 +404,24 @@ async def process_ledger(bot: Bot, repo: Repo, key: int, address: str, updates: 
             logger.info(f"Liquidation {event.coin} already alerted from fills, skipping")
             continue
         delivery = events.FILTERED_SETTINGS if event.type in OFF_BY_DEFAULT else events.SENT
-        await emit(bot, repo, key, event.type, event.source_id, event.ts_ms, payload,
-                   lambda alias, p=payload: format_ledger_event(address, alias, p), delivery)
+        event_id = await emit(bot, repo, key, event.type, event.source_id, event.ts_ms, payload,
+                              lambda alias, p=payload: format_ledger_event(address, alias, p), delivery)
+        if event_id is not None and event.type in (EventType.TRANSFER_IN, EventType.TRANSFER_OUT):
+            await _accumulate_counterparty(repo, address, event)
+
+
+async def _accumulate_counterparty(repo: Repo, address: str, event: Event) -> None:
+    """Spec 7.3 background: a transfer counterparty becomes a weak wallet_links row, no alert."""
+    other = str(event.meta.get('counterparty') or '').lower()
+    if not other or related.is_system_address(other) or other == address.lower():
+        return
+    wallet_id = await repo.wallet_id(address)
+    if wallet_id is None:
+        return
+    delta = event.meta.get('delta') or {}
+    usd = delta.get('usdcValue') or delta.get('amount') or '0'
+    direction = 'in' if event.type == EventType.TRANSFER_IN else 'out'
+    await repo.add_weak_counterparty(wallet_id, other, direction, str(usd), event.ts_ms)
 
 
 async def poll_fills(bot: Bot, repo: Repo, client: HyperliquidClient, key: int, address: str) -> bool:

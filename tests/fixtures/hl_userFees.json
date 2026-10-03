@@ -1,0 +1,204 @@
+{
+ "dailyUserVlm": [
+  {
+   "date": "2026-09-19",
+   "userCross": "1539.66",
+   "userAdd": "0.0",
+   "exchange": "4772542124.9399995804"
+  },
+  {
+   "date": "2026-09-20",
+   "userCross": "2010.83",
+   "userAdd": "0.0",
+   "exchange": "5680447147.8599996567"
+  },
+  {
+   "date": "2026-09-21",
+   "userCross": "18591.34",
+   "userAdd": "0.0",
+   "exchange": "12166684008.0499992371"
+  },
+  {
+   "date": "2026-09-22",
+   "userCross": "8541.49",
+   "userAdd": "651.49",
+   "exchange": "7828103385.779999733"
+  },
+  {
+   "date": "2026-09-23",
+   "userCross": "31926.07",
+   "userAdd": "0.0",
+   "exchange": "10568009231.1900005341"
+  },
+  {
+   "date": "2026-09-24",
+   "userCross": "26320.13",
+   "userAdd": "4560.2",
+   "exchange": "9424822576.8999996185"
+  },
+  {
+   "date": "2026-09-25",
+   "userCross": "3603.9",
+   "userAdd": "1794.24",
+   "exchange": "7758060965.1000003815"
+  },
+  {
+   "date": "2026-09-26",
+   "userCross": "365.44",
+   "userAdd": "0.0",
+   "exchange": "3197216315.7699999809"
+  },
+  {
+   "date": "2026-09-27",
+   "userCross": "7940.04",
+   "userAdd": "0.0",
+   "exchange": "4401581552.0"
+  },
+  {
+   "date": "2026-09-28",
+   "userCross": "4525.34",
+   "userAdd": "551.19",
+   "exchange": "8861958158.9899997711"
+  },
+  {
+   "date": "2026-09-29",
+   "userCross": "17582.57",
+   "userAdd": "6767.15",
+   "exchange": "7413865752.529999733"
+  },
+  {
+   "date": "2026-09-30",
+   "userCross": "9346.78",
+   "userAdd": "223.12",
+   "exchange": "7801428549.9099998474"
+  },
+  {
+   "date": "2026-10-01",
+   "userCross": "8117.85",
+   "userAdd": "945.15",
+   "exchange": "6359982201.8000001907"
+  },
+  {
+   "date": "2026-10-02",
+   "userCross": "5798.36",
+   "userAdd": "553.67",
+   "exchange": "8891772148.2900009155"
+  },
+  {
+   "date": "2026-10-03",
+   "userCross": "0.0",
+   "userAdd": "0.0",
+   "exchange": "705859352.3700000048"
+  }
+ ],
+ "feeSchedule": {
+  "cross": "0.00045",
+  "add": "0.00015",
+  "spotCross": "0.0007",
+  "spotAdd": "0.0004",
+  "tiers": {
+   "vip": [
+    {
+     "ntlCutoff": "5000000.0",
+     "cross": "0.0004",
+     "add": "0.00012",
+     "spotCross": "0.0006",
+     "spotAdd": "0.0003"
+    },
+    {
+     "ntlCutoff": "25000000.0",
+     "cross": "0.00035",
+     "add": "0.00008",
+     "spotCross": "0.0005",
+     "spotAdd": "0.0002"
+    },
+    {
+     "ntlCutoff": "100000000.0",
+     "cross": "0.0003",
+     "add": "0.00004",
+     "spotCross": "0.0004",
+     "spotAdd": "0.0001"
+    },
+    {
+     "ntlCutoff": "500000000.0",
+     "cross": "0.00028",
+     "add": "0.0",
+     "spotCross": "0.00035",
+     "spotAdd": "0.0"
+    },
+    {
+     "ntlCutoff": "2000000000.0",
+     "cross": "0.00026",
+     "add": "0.0",
+     "spotCross": "0.0003",
+     "spotAdd": "0.0"
+    },
+    {
+     "ntlCutoff": "7000000000.0",
+     "cross": "0.00024",
+     "add": "0.0",
+     "spotCross": "0.00025",
+     "spotAdd": "0.0"
+    }
+   ],
+   "mm": [
+    {
+     "makerFractionCutoff": "0.005",
+     "add": "-0.00001"
+    },
+    {
+     "makerFractionCutoff": "0.015",
+     "add": "-0.00002"
+    },
+    {
+     "makerFractionCutoff": "0.03",
+     "add": "-0.00003"
+    }
+   ]
+  },
+  "referralDiscount": "0.04",
+  "stakingDiscountTiers": [
+   {
+    "bpsOfMaxSupply": "0.0",
+    "discount": "0.0"
+   },
+   {
+    "bpsOfMaxSupply": "0.0001",
+    "discount": "0.05"
+   },
+   {
+    "bpsOfMaxSupply": "0.001",
+    "discount": "0.1"
+   },
+   {
+    "bpsOfMaxSupply": "0.01",
+    "discount": "0.15"
+   },
+   {
+    "bpsOfMaxSupply": "0.1",
+    "discount": "0.2"
+   },
+   {
+    "bpsOfMaxSupply": "1.0",
+    "discount": "0.3"
+   },
+   {
+    "bpsOfMaxSupply": "5.0",
+    "discount": "0.4"
+   }
+  ]
+ },
+ "userCrossRate": "0.00045",
+ "userAddRate": "0.00015",
+ "userSpotCrossRate": "0.0007",
+ "userSpotAddRate": "0.0004",
+ "activeReferralDiscount": "0.04",
+ "trial": null,
+ "feeTrialEscrow": "0.0",
+ "nextTrialAvailableTimestamp": null,
+ "stakingLink": null,
+ "activeStakingDiscount": {
+  "bpsOfMaxSupply": "0.0",
+  "discount": "0.0"
+ }
+}
