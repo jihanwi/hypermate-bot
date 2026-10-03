@@ -21,6 +21,9 @@ from hypermate.venues.hyperliquid.venue import HyperliquidVenue
 from hypermate.venues.lighter.adapter import LighterAdapter
 from hypermate.venues.lighter.client import LighterClient
 from hypermate.venues.lighter.stream import LighterStream
+from hypermate.venues.risex.adapter import RisexAdapter
+from hypermate.venues.risex.client import RisexClient
+from hypermate.venues.risex.stream import RisexStream
 
 logger = logging.getLogger(__name__)
 
@@ -79,15 +82,28 @@ async def build_venues(application: Application, hl: HyperliquidClient) -> None:
     application.bot_data['lighter'] = lighter
     application.bot_data['lighter_budget'] = lighter_budget
     application.bot_data['lighter_stream'] = stream
+    risex_budget = WeightBudget(Config.RISEX_REQ_BUDGET)
+    risex = RisexClient(Config.RISEX_API_URL, risex_budget)
+    await risex.start()
+    risex_stream = None
+    if Config.RISEX_WS_ENABLED:
+        risex_stream = RisexStream(Config.RISEX_WS_URL)
+        risex_stream.start()
+    application.bot_data['risex'] = risex
+    application.bot_data['risex_stream'] = risex_stream
     application.bot_data['venues'] = {
         venues.HYPERLIQUID: HyperliquidVenue(hl),
         venues.LIGHTER: LighterAdapter(lighter, stream),
+        venues.RISEX: RisexAdapter(risex, risex_stream),
     }
 
 
 async def post_shutdown(application: Application) -> None:
-    if application.bot_data.get('lighter_stream') is not None:
-        await application.bot_data['lighter_stream'].stop()
+    for name in ('lighter_stream', 'risex_stream'):
+        if application.bot_data.get(name) is not None:
+            await application.bot_data[name].stop()
+    if 'risex' in application.bot_data:
+        await application.bot_data['risex'].close()
     if 'lighter' in application.bot_data:
         await application.bot_data['lighter'].close()
     if 'hl' in application.bot_data:

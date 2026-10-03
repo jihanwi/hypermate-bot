@@ -35,7 +35,8 @@ class HyperliquidVenue:
         state = await self.client.clearinghouse_state(account.account_ref)
         return AccountSnapshot(adapter.parse_positions(state), adapter.parse_account_value(state), raw=state)
 
-    async def fetch_events(self, account: VenueAccount, cursor: Optional[str]) -> tuple[list[dict], Optional[str]]:
+    async def fetch_events(self, account: VenueAccount, cursor: Optional[str],
+                           positions_before: Optional[dict] = None) -> tuple[list[dict], Optional[str]]:
         fills, new_cursor = await adapter.fetch_fills(self.client, account.account_ref, int(cursor or 0))
         return fills, str(new_cursor)
 

@@ -55,8 +55,11 @@ class VenueAdapter(Protocol):
     async def snapshot(self, account: VenueAccount) -> AccountSnapshot:
         """Current positions and account value (cheapest endpoint)."""
 
-    async def fetch_events(self, account: VenueAccount, cursor: Optional[str]) -> tuple[list[dict], Optional[str]]:
-        """Fills after the cursor in the HL fill shape, oldest first, and the new cursor. Idempotent."""
+    async def fetch_events(self, account: VenueAccount, cursor: Optional[str],
+                           positions_before: Optional[dict] = None) -> tuple[list[dict], Optional[str]]:
+        """Fills after the cursor in the HL fill shape, oldest first, and the new cursor. Idempotent.
+        positions_before is the last stored snapshot ({coin: position}) for venues whose fills carry
+        no position-before (RISEx)."""
 
     def explorer_url(self, account: VenueAccount) -> str:
         ...
