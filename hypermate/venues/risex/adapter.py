@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 ZERO = Decimal(0)
 WEI = Decimal(10) ** 18
 EXPLORER_FALLBACK = 'https://app.rise.trade/'       # RISE chain explorer address format not confirmed [?]
+RECONCILE_SEC = 300          # with the WS connected, compare the cache with a REST snapshot this often
 
 
 def from_wei(value) -> Optional[Decimal]:
@@ -179,6 +180,16 @@ class RisexAdapter:
         markets = await self.client.markets(priority=scheduler.P_SNAPSHOT)
         cached = self.stream.positions_for(address) if self.stream is not None else None
         if cached is not None:
+            # Safeguard: a position that the WS cache still holds but a REST snapshot no longer lists is
+            # treated as closed (size-0 update rows are not confirmed [?]); checked every RECONCILE_SEC
+            if self.stream.clock() - self.stream.last_reconcile.get(address.lower(), 0.0) >= RECONCILE_SEC:
+                rest = await self.client.positions(address, priority=scheduler.P_SNAPSHOT)
+                rest_ids = {str(p.get('market_id')) for p in (rest or {}).get('positions') or []
+                            if (from_wei(p.get('size')) or ZERO) != 0}
+                removed = self.stream.reconcile(address, rest_ids)
+                if removed:
+                    logger.info(f"RISEx {address}: {len(removed)} cached positions gone from REST, treated as closed")
+                cached = self.stream.positions_for(address) or []
             positions = parse_ws_positions(cached, markets)
             balance = self.stream.balance_for(address)
             if balance is None:

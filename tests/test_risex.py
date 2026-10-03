@@ -328,3 +328,56 @@ async def test_venue_poll_job_tracks_addresses_on_the_stream(repo, clock):
     assert stream.addresses == {ADDR} and len(stream.market_ids) == 38
     state = poller.get_state(context)
     assert state.venue_accounts[base.RISEX] == 1 and state.venue_interval_sec[base.RISEX] == 20
+
+
+def test_ws_update_rows_parse_like_the_snapshot():
+    """Recorded updates (PM 2026-10-04): data is an array of snapshot-shaped rows, size signed."""
+    recorded = load_fixture('risex_ws_positions_updates.json')
+    stream = RisexStream('wss://unused', connect=None)
+    tracked = '0x36dc0d99dcaee443cebaa5fb8c11877d157c26df'
+    stream.addresses.add(tracked)
+    stream.connected = True
+    stream.handle(recorded['snapshot'])
+    before = len(stream.positions_for(tracked))
+    assert before == 37
+    for update in recorded['updates']:
+        assert update['type'] == 'update' and isinstance(update['data'], list)
+        stream.handle(update)
+    rows = stream.positions_for(tracked)
+    assert len(rows) == before                                    # updates replace rows per market
+    updated = {u['market_id']: u['data'][0] for u in recorded['updates'] if u['data'][0]['account'].lower() == tracked}
+    assert updated and all(next(r for r in rows if r['market_id'] == m)['size'] == row['size']
+                           for m, row in updated.items())
+    positions = risex.parse_ws_positions(rows, markets())
+    for m, row in updated.items():
+        coin = risex.coin_of(markets()[m]['name'])
+        assert positions[coin]['szi'] == row['size']
+        assert positions[coin]['direction'] == ('SHORT' if row['size'].startswith('-') else 'LONG')
+    assert all(not r['size'].startswith('-') for r in rows if r['side'] == 'BUY')
+    assert all(r['size'].startswith('-') for r in rows if r['side'] == 'SELL')
+
+
+async def test_cached_position_missing_from_rest_is_treated_as_closed():
+    clock = {'now': 1000.0}
+    stream = RisexStream('wss://unused', connect=None, clock=lambda: clock['now'])
+    stream.set_markets([1, 2])
+    stream.addresses.add(ADDR)
+    stream.connected = True
+    ws_rows = load_fixture('risex_ws_positions.json')[0]['data']
+    stream.handle({'channel': 'positions', 'type': 'snapshot', 'data': ws_rows + [
+        {**ws_rows[0], 'market_id': '2', 'size': '-0.163', 'side': 'SELL', 'avg_entry_price': '2683', 'quote_amount': '437'}]})
+    client = FakeRisexClient()
+    client.balances[ADDR] = Decimal('241')
+    client.positions_by[ADDR] = load_fixture('risex_positions.json')['data']['positions']   # BTC only
+    ad = risex.RisexAdapter(client, stream)
+    account = VenueAccount(base.RISEX, ADDR, ADDR, 1)
+    snap = await ad.snapshot(account)                      # first snapshot reconciles: ETH gone from REST
+    assert set(snap.positions) == {'BTC'} and ('positions', ADDR) in client.calls
+    stream.handle({'channel': 'positions', 'type': 'update', 'market_id': '2', 'data': [
+        {**ws_rows[0], 'market_id': '2', 'size': '-0.2', 'side': 'SELL'}]})
+    client.calls.clear()
+    snap = await ad.snapshot(account)                      # within 5 minutes: cache only, no REST
+    assert set(snap.positions) == {'BTC', 'ETH'} and ('positions', ADDR) not in client.calls
+    clock['now'] += 301
+    snap = await ad.snapshot(account)                      # reconciled again: ETH closed
+    assert set(snap.positions) == {'BTC'}

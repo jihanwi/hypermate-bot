@@ -26,6 +26,7 @@ class RisexStream(ReconnectingStream):
         self._snapshot_seen: set[str] = set()
         self._balances: dict[str, Optional[Decimal]] = {}
         self._trades: dict[str, list[dict]] = {}
+        self.last_reconcile: dict[str, float] = {}             # address -> clock() of the last REST reconcile
 
     # Caches ------------------------------------------------------------------------
 
@@ -41,6 +42,17 @@ class RisexStream(ReconnectingStream):
 
     def set_balance(self, address: str, balance: Optional[Decimal]) -> None:
         self._balances[address.lower()] = balance
+
+    def reconcile(self, address: str, rest_market_ids: set[str]) -> list[str]:
+        """Drop cached positions that a REST snapshot no longer lists (a close whose WS update was
+        missed, or a close that arrives without a size-0 row [?]). Returns the removed market ids."""
+        address = address.lower()
+        cached = self._positions.get(address, {})
+        removed = [m for m in cached if m not in rest_market_ids]
+        for market_id in removed:
+            cached.pop(market_id, None)
+        self.last_reconcile[address] = self.clock()
+        return removed
 
     def has_trades(self, address: str) -> bool:
         return bool(self._trades.get(address.lower()))
