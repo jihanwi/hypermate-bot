@@ -18,7 +18,17 @@ ADDRESS_EXISTS = 'address_exists'
 
 HYPERLIQUID = 'hyperliquid'
 # Cursor kinds the Phase 0 pipeline keeps per venue account
-CURSOR_KINDS = ('fills', 'ledger')
+CURSOR_KINDS = ('fills', 'ledger', 'twap')   # 'twap': when TWAP tracking began (never advanced)
+
+
+def slim_payload(payload: dict) -> dict:
+    """Payload without the columns the events table already has and without the copied meta in chains."""
+    from hypermate.core.aggregator import chain_meta
+    slim = {k: v for k, v in payload.items() if k not in ('venue', 'venue_account_id')}
+    chain = slim.get('chain')
+    if isinstance(chain, dict) and isinstance(chain.get('meta'), dict):
+        slim['chain'] = {**chain, 'meta': chain_meta(chain['meta'])}
+    return slim
 
 
 class Repo:
@@ -35,6 +45,7 @@ class Repo:
         await self.db.executescript(SCHEMA_PATH.read_text())
         await self._migrate()
         await self.db.commit()
+        await self._slim_payloads_once()
         logger.info(f"Database ready at {self.path}")
 
     async def _migrate(self) -> None:
@@ -49,6 +60,62 @@ class Repo:
         if 'spot_json' not in columns:
             await self.db.execute("ALTER TABLE snapshots ADD COLUMN spot_json TEXT")
             logger.info("Migrated snapshots: added spot_json")
+
+    PAYLOAD_VERSION = 1
+
+    async def _slim_payloads_once(self) -> None:
+        """One-time rewrite of events.payload_json to the slim form (PRAGMA user_version marks it done)."""
+        cur = await self.db.execute("PRAGMA user_version")
+        (version,) = await cur.fetchone()
+        if version >= self.PAYLOAD_VERSION:
+            return
+        cur = await self.db.execute("SELECT event_id, payload_json FROM events")
+        rows = await cur.fetchall()
+        changed = 0
+        for event_id, payload_json in rows:
+            slim = slim_payload(json.loads(payload_json))
+            text = json.dumps(slim)
+            if len(text) < len(payload_json):
+                await self.db.execute("UPDATE events SET payload_json = ? WHERE event_id = ?", (text, event_id))
+                changed += 1
+        await self.db.execute(f"PRAGMA user_version = {self.PAYLOAD_VERSION}")
+        await self.db.commit()
+        if rows:
+            logger.info(f"Slimmed {changed} of {len(rows)} event payloads")
+
+    async def prune_events(self, before_ms: int) -> tuple[int, int]:
+        """Delete events older than before_ms and their sent_messages rows. Returns (events, messages)."""
+        cur = await self.db.execute(
+            "DELETE FROM sent_messages WHERE event_id IN (SELECT event_id FROM events WHERE ts_ms < ?)", (before_ms,))
+        messages = cur.rowcount
+        cur = await self.db.execute("DELETE FROM events WHERE ts_ms < ?", (before_ms,))
+        await self.db.commit()
+        return cur.rowcount, messages
+
+    async def checkpoint(self) -> None:
+        """Fold the WAL into the main file and truncate it."""
+        await self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+    async def db_stats(self, now_ms: int) -> dict:
+        """Row counts for /health: events total, events in the last 24 h by type, sent_messages."""
+        cur = await self.db.execute("SELECT COUNT(*) FROM events")
+        (events_total,) = await cur.fetchone()
+        cur = await self.db.execute(
+            "SELECT type, COUNT(*) FROM events WHERE ts_ms >= ? GROUP BY type ORDER BY COUNT(*) DESC, type",
+            (now_ms - 24 * 3600 * 1000,))
+        by_type = [(t, n) for t, n in await cur.fetchall()]
+        cur = await self.db.execute("SELECT COUNT(*) FROM sent_messages")
+        (messages,) = await cur.fetchone()
+        return {'events_total': events_total, 'events_24h': by_type, 'sent_messages': messages}
+
+    async def all_active_algos(self) -> list[dict]:
+        """Every algo_active row with its address (debug view for /health)."""
+        cur = await self.db.execute(
+            "SELECT w.evm_address, a.coin, a.sign, a.started_ms, a.last_fill_ms, a.fills_count, a.total_ntl "
+            "FROM algo_active a JOIN venue_accounts va USING (venue_account_id) JOIN wallets w USING (wallet_id) "
+            "ORDER BY w.evm_address, a.coin, a.sign")
+        return [{'address': r[0], 'coin': r[1], 'sign': r[2], 'started_ms': r[3], 'last_fill_ms': r[4],
+                 'fills_count': r[5], 'total_ntl': r[6]} for r in await cur.fetchall()]
 
     async def close(self) -> None:
         if self.db is not None:

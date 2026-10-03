@@ -48,9 +48,24 @@ async def run_backup(repo: Repo, directory: str, now: datetime) -> str:
     return path
 
 
+async def retention(repo: Repo, now_ms: int, days: int = Config.EVENTS_RETENTION_DAYS) -> tuple[int, int]:
+    """After the backup: drop events older than `days` and fold the WAL into the main file."""
+    events, messages = await repo.prune_events(now_ms - days * 24 * 3600 * 1000)
+    await repo.checkpoint()
+    logger.info(f"Retention: removed {events} events and {messages} sent_messages older than {days} days, "
+                f"WAL checkpointed")
+    return events, messages
+
+
 async def backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     repo: Repo = context.bot_data['repo']
+    now = datetime.now(timezone.utc)
     try:
-        await run_backup(repo, backup_dir(repo.path), datetime.now(timezone.utc))
+        await run_backup(repo, backup_dir(repo.path), now)
     except Exception as e:
         logger.error(f"DB backup failed: {e}")
+        return   # keep the data when the backup did not succeed
+    try:
+        await retention(repo, int(now.timestamp() * 1000))
+    except Exception as e:
+        logger.error(f"Retention failed: {e}")

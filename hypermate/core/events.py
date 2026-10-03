@@ -72,10 +72,13 @@ class Event:
     def dedupe_key(self) -> str:
         return dedupe_key(self.venue, self.venue_account_id, self.type, self.source_id)
 
+    # Not stored in payload_json: the events table has columns for them
+    PAYLOAD_SKIP = ('venue', 'venue_account_id')
+
     def payload(self) -> dict:
         data = asdict(self)
         data['type'] = self.type.value
-        return {k: (str(v) if isinstance(v, Decimal) else v) for k, v in data.items()}
+        return {k: (str(v) if isinstance(v, Decimal) else v) for k, v in data.items() if k not in self.PAYLOAD_SKIP}
 
 
 def ledger_event_type(update: dict, wallet_address: str) -> Optional[EventType]:
