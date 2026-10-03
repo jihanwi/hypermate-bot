@@ -3,14 +3,15 @@
 import logging
 import re
 import uuid
+from typing import Optional
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from hypermate.bot import texts
 from hypermate.config import Config
-from hypermate.core import formatter, poller
+from hypermate.core import formatter, poller, related
 from hypermate.core.events import HYPERLIQUID, EventType, dedupe_key
 from hypermate.core.formatter import h
 from hypermate.core.pipeline import algo_source
@@ -72,21 +73,26 @@ async def add_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     alias = " ".join(context.args[1:]).strip()
     user_id = update.effective_user.id
     try:
-        result = await _repo(context).add_subscription(user_id, address, alias, now_ms())
+        message = await _add(context, user_id, address, alias)
     except Exception as e:
         await reply_internal_error(update, f"add_wallet user={user_id}", e)
         return
+    await reply(update, message)
+
+
+async def _add(context: ContextTypes.DEFAULT_TYPE, user_id: int, address: str, alias: str) -> str:
+    """The /add flow (also used by the /related Track button). Returns the reply text."""
+    result = await _repo(context).add_subscription(user_id, address, alias, now_ms())
     if result == ADDED:
         logger.info(f"User {user_id} added wallet {address} as '{alias}'")
         dexs = await _scan_dexs(context, address)
         message = texts.WALLET_ADDED.format(alias=h(alias))
         if dexs:
             message += texts.WALLET_ADDED_DEXS.format(dexs=h(", ".join(dexs)))
-        await reply(update, message)
-    elif result == ALIAS_EXISTS:
-        await reply(update, texts.ALIAS_EXISTS)
-    else:
-        await reply(update, texts.ADDRESS_EXISTS)
+        return message
+    if result == ALIAS_EXISTS:
+        return texts.ALIAS_EXISTS
+    return texts.ADDRESS_EXISTS
 
 
 async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -273,6 +279,83 @@ async def rescan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     dexs = await _scan_dexs(context, address)
     await reply(update, texts.RESCAN_RESULT.format(
         alias=h(alias), dexs=(" + HIP-3 " + h(", ".join(dexs))) if dexs else ", no HIP-3 dex positions"))
+
+
+TRACK_CALLBACK = 'rel:'
+
+
+def track_keyboard(buttons: list[tuple[str, int]]) -> Optional[InlineKeyboardMarkup]:
+    """One [Track as alias-N] button per row; callback data is the wallet_links rowid (under 64 bytes)."""
+    if not buttons:
+        return None
+    rows = [[InlineKeyboardButton(texts.TRACK_BUTTON.format(alias=label), callback_data=f"{TRACK_CALLBACK}{row_id}")]
+            for label, row_id in buttons]
+    return InlineKeyboardMarkup(rows)
+
+
+async def related_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/related alias [refresh]: linked wallets (spec 7), cached 24 h in wallet_links."""
+    args = list(context.args)
+    refresh = bool(args) and args[-1].lower() == 'refresh'
+    if refresh:
+        args = args[:-1]
+    if not args:
+        await reply(update, texts.RELATED_USAGE)
+        return
+    subscription = await _subscription_or_reply(update, context, " ".join(args).strip())
+    if subscription is None:
+        return
+    alias, address = subscription
+    repo, hl = _repo(context), _hl(context)
+    wallet_id = await repo.wallet_id(address)
+    cached = (not refresh and wallet_id is not None
+              and (await repo.links_discovered_at(wallet_id) or 0) > now_ms() - related.LINKS_TTL_MS)
+    placeholder = None
+    if not cached:
+        placeholder = await update.message.reply_text(texts.RELATED_SEARCHING.format(alias=h(alias)),
+                                                      parse_mode=ParseMode.HTML)
+    try:
+        links, discovery = await related.links_for(hl, repo, address, now_ms(), refresh)
+    except Exception as e:
+        await reply_internal_error(update, f"related user={update.effective_user.id}", e)
+        return
+    text, buttons = formatter.format_related(alias, address, links, now_ms(),
+                                             discovery.weight if discovery else None)
+    keyboard = track_keyboard(buttons)
+    if placeholder is not None:
+        await placeholder.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard,
+                                    disable_web_page_preview=True)
+    else:
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard,
+                                        disable_web_page_preview=True)
+
+
+async def track_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Inline button from /related: add the row's address as <alias>-N through the /add flow."""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    try:
+        row_id = int(query.data[len(TRACK_CALLBACK):])
+        link = await _repo(context).link_by_row(row_id)
+    except (ValueError, TypeError):
+        link = None
+    if link is None:
+        await query.message.reply_text(texts.TRACK_EXPIRED, parse_mode=ParseMode.HTML)
+        return
+    label = next((b.text for row in (query.message.reply_markup.inline_keyboard if query.message.reply_markup else [])
+                  for b in row if b.callback_data == query.data), None)
+    alias = label[len("Track as "):] if label and label.startswith("Track as ") else None
+    if alias is None:
+        base = await _repo(context).list_subscriptions(user_id)
+        alias = f"related-{row_id}" if not base else f"{base[0][0]}-{row_id}"
+    try:
+        message = await _add(context, user_id, link['related_address'], alias)
+    except Exception as e:
+        logger.error(f"track_callback user={user_id}: {e}", exc_info=e)
+        await query.message.reply_text(texts.INTERNAL_ERROR.format(error_id='track'), parse_mode=ParseMode.HTML)
+        return
+    await query.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
 async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -1,0 +1,43 @@
+[
+ {
+  "name": "Liminal",
+  "subAccountUser": "0xe5f44480001cd42e591a64d5106f1a2f3777cf08",
+  "master": "0x6aca4dce31f5560d880dbcc334998a9094269d9e",
+  "clearinghouseState": {
+   "marginSummary": {
+    "accountValue": "0.0",
+    "totalNtlPos": "0.0",
+    "totalRawUsd": "0.0",
+    "totalMarginUsed": "0.0"
+   },
+   "crossMarginSummary": {
+    "accountValue": "0.0",
+    "totalNtlPos": "0.0",
+    "totalRawUsd": "0.0",
+    "totalMarginUsed": "0.0"
+   },
+   "crossMaintenanceMarginUsed": "0.0",
+   "withdrawable": "0.0",
+   "assetPositions": [],
+   "time": 1791012766481
+  },
+  "spotState": {
+   "balances": [
+    {
+     "coin": "USDC",
+     "token": 0,
+     "total": "0.005067",
+     "hold": "0.0",
+     "entryNtl": "0.0"
+    },
+    {
+     "coin": "HYPE",
+     "token": 150,
+     "total": "0.00632509",
+     "hold": "0.0",
+     "entryNtl": "0.30382365"
+    }
+   ]
+  }
+ }
+]

@@ -58,9 +58,12 @@ class FakeHLClient:
         self.now = None          # optional clock: only items with time <= now() are returned
         self.twap_histories = {}
         self.calls = []
+        self.roles, self.subs, self.agents, self.fees = {}, {}, {}, {}
+        self.referrals, self.vault_equities, self.vault_details = {}, {}, {}
 
-    async def clearinghouse_state(self, user, dex=''):
+    async def clearinghouse_state(self, user, dex='', priority=None, meter=None):
         self.calls.append(('clearinghouseState', user, dex) if dex else ('clearinghouseState', user))
+        self._meter('clearinghouseState', meter)
         key = (user, dex) if dex else user
         return self.clearinghouse.get(key, {'assetPositions': [], 'marginSummary': {'accountValue': '0'}})
 
@@ -72,9 +75,11 @@ class FakeHLClient:
         self.calls.append(('spotClearinghouseState', user))
         return self.spot.get(user, {'balances': []})
 
-    async def ledger_updates(self, user, start_time):
+    async def ledger_updates(self, user, start_time, priority=None, meter=None):
         self.calls.append(('userNonFundingLedgerUpdates', user, start_time))
-        return [u for u in self.ledger.get(user, []) if u['time'] >= start_time and self._past(u)]
+        items = [u for u in self.ledger.get(user, []) if u['time'] >= start_time and self._past(u)]
+        self._meter('userNonFundingLedgerUpdates', meter, len(items))
+        return items
 
     async def user_fills_by_time(self, user, start_time):
         self.calls.append(('userFillsByTime', user, start_time))
@@ -87,8 +92,9 @@ class FakeHLClient:
         self.calls.append(('portfolio', user))
         return self.portfolios.get(user, [])
 
-    async def web_data2(self, user):
+    async def web_data2(self, user, priority=None, meter=None):
         self.calls.append(('webData2', user))
+        self._meter('webData2', meter)
         return self.web.get(user, {'twapStates': [], 'meta': {'universe': []}, 'assetCtxs': []})
 
     async def twap_history(self, user):
@@ -97,6 +103,49 @@ class FakeHLClient:
 
     async def spot_display_name(self, coin):
         return {'@107': 'HYPE', 'PURR/USDC': 'PURR'}.get(coin, coin)
+
+    # /related (Phase 3): responses keyed by address; priority/meter are accepted like the real client
+
+    def _meter(self, request_type, meter, items=0):
+        from hypermate.venues.hyperliquid import scheduler
+        if meter is not None:
+            meter[request_type] = meter.get(request_type, 0) + scheduler.request_cost(request_type)[0] \
+                + scheduler.item_weight(request_type, items)
+
+    async def user_role(self, user, priority=None, meter=None):
+        self.calls.append(('userRole', user))
+        self._meter('userRole', meter)
+        return self.roles.get(user, {'role': 'user'})
+
+    async def sub_accounts(self, user, priority=None, meter=None):
+        self.calls.append(('subAccounts', user))
+        self._meter('subAccounts', meter)
+        return self.subs.get(user, [])
+
+    async def extra_agents(self, user, priority=None, meter=None):
+        self.calls.append(('extraAgents', user))
+        self._meter('extraAgents', meter)
+        return self.agents.get(user, [])
+
+    async def user_fees(self, user, priority=None, meter=None):
+        self.calls.append(('userFees', user))
+        self._meter('userFees', meter)
+        return self.fees.get(user, {})
+
+    async def referral(self, user, priority=None, meter=None):
+        self.calls.append(('referral', user))
+        self._meter('referral', meter)
+        return self.referrals.get(user, {})
+
+    async def user_vault_equities(self, user, priority=None, meter=None):
+        self.calls.append(('userVaultEquities', user))
+        self._meter('userVaultEquities', meter)
+        return self.vault_equities.get(user, [])
+
+    async def vault_details(self, vault_address, priority=None, meter=None):
+        self.calls.append(('vaultDetails', vault_address))
+        self._meter('vaultDetails', meter)
+        return self.vault_details.get(vault_address, {})
 
 
 class FakeBot:

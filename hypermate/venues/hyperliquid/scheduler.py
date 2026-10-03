@@ -36,10 +36,18 @@ REQUESTS = {
     'twapHistory': (20, P_TWAP),
     'userFillsByTime': (20, P_FILLS),
     'userNonFundingLedgerUpdates': (20, P_LEDGER),
+    # /related discovery (spec 7.1): lowest priority, same as ledger
+    'userRole': (60, P_LEDGER),
+    'subAccounts': (20, P_LEDGER),
+    'extraAgents': (20, P_LEDGER),
+    'userFees': (20, P_LEDGER),
+    'referral': (20, P_LEDGER),
+    'userVaultEquities': (20, P_LEDGER),
+    'vaultDetails': (20, P_LEDGER),
 }
 DEFAULT_REQUEST = (20, P_TWAP)          # perpDexs, spotMeta, portfolio
 # Responses of these types cost 1 more per 20 items returned
-PER_ITEM_TYPES = ('userFillsByTime', 'twapHistory')
+PER_ITEM_TYPES = ('userFillsByTime', 'twapHistory', 'userNonFundingLedgerUpdates')
 
 DEFAULT_RETRY_AFTER_SEC = 30
 HISTORY_MINUTES = 60
