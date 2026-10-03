@@ -6,7 +6,7 @@ import logging
 import os
 
 from telegram import BotCommand, BotCommandScopeAllPrivateChats, Update
-from telegram.ext import Application, CommandHandler
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 
 from hypermate.bot import commands, texts
 from hypermate.config import Config
@@ -79,6 +79,8 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("twap", commands.twap_command))
     application.add_handler(CommandHandler("rescan", commands.rescan_command))
     application.add_handler(CommandHandler("health", commands.health_command))
+    application.add_handler(CommandHandler("related", commands.related_command))
+    application.add_handler(CallbackQueryHandler(commands.track_callback, pattern=f"^{commands.TRACK_CALLBACK}"))
     application.add_error_handler(commands.error_handler)
 
     job_queue = application.job_queue

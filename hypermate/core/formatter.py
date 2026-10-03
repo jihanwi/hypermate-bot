@@ -632,6 +632,98 @@ def format_health(report: dict, now_ms: int) -> str:
     )
 
 
+# /related ----------------------------------------------------------------------
+
+_LINK_LABELS = {
+    'subaccount': 'subaccount', 'master': 'master account', 'agent': 'API wallet',
+    'staking_link': 'staking link', 'vault_leader': 'vault leader', 'transfer_counterparty': 'transfers',
+    'referral': 'referral', 'vault_follow': 'vault',
+}
+
+
+def _evidence_text(link: dict, now_ms: int) -> str:
+    e = link.get('evidence') or {}
+    kind = link['link_type']
+    label = _LINK_LABELS.get(kind, kind)
+    if kind == 'subaccount' and e.get('name'):
+        label += f' "{h(str(e["name"]))}"'
+        if e.get('via'):
+            label += ' (via master)'
+    elif kind == 'master' and e.get('note'):
+        label += ', this address is an API wallet'
+    elif kind == 'transfer_counterparty':
+        n = int(e.get('in', 0)) + int(e.get('out', 0))
+        parts = [f"{n} transfer{'s' if n != 1 else ''}"]
+        both = int(e.get('in', 0)) and int(e.get('out', 0))
+        parts.append('both ways' if both else ('in' if int(e.get('in', 0)) else 'out'))
+        usd = to_decimal(e.get('usd'))
+        if usd:
+            parts.append(compact_usd(usd))
+        if e.get('last_ms'):
+            parts.append(f"last {kst_time(int(e['last_ms']), now_ms)}")
+        if e.get('background') and not e.get('discovery'):
+            parts.append('seen in alerts')
+        label = ' '.join(parts[:1]) + ' ' + ' · '.join(parts[1:])
+    elif kind == 'referral':
+        label = f"referral: {h(str(e.get('relation', '')))}"
+    elif kind == 'vault_follow' and e.get('equity'):
+        label += f" (equity {compact_usd(to_decimal(e['equity']) or ZERO)})"
+    elif kind == 'vault_leader' and e.get('name'):
+        label += f' of "{h(str(e["name"]))}"'
+    return label
+
+
+def group_links(links: list[dict], max_rows: int) -> tuple[list[tuple[str, list[dict]]], int]:
+    """([(address, [links])] in display order, number of addresses left out).
+
+    Selection when over max_rows: non-counterparty links first, then counterparties by transfer
+    count (related.select_addresses). Display order: best confidence, then transfer count.
+    """
+    from hypermate.core.related import select_addresses
+    by_address: dict[str, list[dict]] = {}
+    for link in links:
+        by_address.setdefault(link['related_address'], []).append(link)
+    shown = select_addresses(by_address, max_rows)
+    order = {'confirmed': 0, 'likely': 1, 'weak': 2}
+
+    def rank(address):
+        rows = by_address[address]
+        transfers = sum(int((r.get('evidence') or {}).get('in', 0)) + int((r.get('evidence') or {}).get('out', 0))
+                        for r in rows)
+        return min(order.get(r['confidence'], 3) for r in rows), -transfers, address
+    return [(a, by_address[a]) for a in sorted(shown, key=rank)], len(by_address) - len(shown)
+
+
+def format_related(alias: str, address: str, links: list[dict], now_ms: int, weight: Optional[int] = None,
+                   max_rows: int = 12) -> tuple[str, list[tuple[str, int]]]:
+    """(text, [(button label, row_id)]) for /related. Rows are numbered 1..N across confidence groups."""
+    groups, left_out = group_links(links, max_rows)
+    header = f"🔗 <b>Related wallets for {h(alias)}</b>\n<code>{h(address)}</code>"
+    if not groups:
+        return header + "\n\nNone found.", []
+    order = {'confirmed': 0, 'likely': 1, 'weak': 2}
+    sections: dict[str, list[str]] = {}
+    buttons = []
+    for n, (other, rows) in enumerate(groups, start=1):
+        best = min(rows, key=lambda r: order.get(r['confidence'], 3))['confidence']
+        evidence = "; ".join(_evidence_text(r, now_ms) for r in rows)
+        value = next((to_decimal((r.get('evidence') or {}).get('account_value')) for r in rows
+                      if (r.get('evidence') or {}).get('account_value') is not None), None)
+        value_text = f" · {compact_usd(value)}" if value is not None else ""
+        sections.setdefault(best, []).append(
+            f"{n}. <a href=\"{h(hl_address_url(other))}\">{h(short_address(other))}</a> · {evidence}{value_text}")
+        buttons.append((f"{alias}-{n}", rows[0]['row_id']))
+    body = []
+    for confidence in ('confirmed', 'likely', 'weak'):
+        if confidence in sections:
+            body.append(f"<b>{confidence.capitalize()}</b>\n" + "\n".join(sections[confidence]))
+    footer = ""
+    if left_out:
+        footer += f"\n+ {left_out} more"
+    if weight is not None:
+        footer += f"\n<i>discovery weight {weight}</i>"
+    return header + "\n\n" + "\n\n".join(body) + footer, buttons
+
 def _mb(size: Optional[int]) -> str:
     return f"{Decimal(size) / Decimal(1_048_576):.1f} MB" if size is not None else "n/a"
 
