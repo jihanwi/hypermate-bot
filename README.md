@@ -112,6 +112,8 @@ fly ssh console -C "sqlite3 /data/hypermate.db '.backup /data/backup.db'"
 fly ssh sftp get /data/backup.db
 ```
 
+If the machine is killed with OOM (the free tier has 256 MB; `fly logs` shows `Out of memory` with the RSS), raise it with `fly scale memory 512`. The one-time payload slimming after the retention change runs in the background in 1,000-row batches and should not need it.
+
 `.backup` uses SQLite's online backup API, so it is safe while the bot is running. Do not copy `hypermate.db` directly (WAL mode keeps recent writes in `hypermate.db-wal`).
 
 ## Layout

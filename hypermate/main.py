@@ -13,6 +13,7 @@ from hypermate.config import Config
 from hypermate.core import poller
 from hypermate.db import backup
 from hypermate.db.repo import Repo
+from hypermate.venues.hyperliquid import adapter
 from hypermate.venues.hyperliquid.client import HyperliquidClient
 from hypermate.venues.hyperliquid.scheduler import WeightBudget
 
@@ -50,6 +51,9 @@ async def post_init(application: Application) -> None:
     await client.start()
     application.bot_data['hl'] = client
     poller.get_state(application)
+    # One-time payload slimming runs in the background so the bot answers right away (fix/migration-oom)
+    application.bot_data['maintenance_task'] = asyncio.create_task(
+        backup.startup_maintenance(repo, adapter.now_ms()))
     # "/" autocomplete menu in private chats (spec 9.1, commands implemented so far)
     await application.bot.set_my_commands(
         [BotCommand(command, description) for command, description in texts.MENU_COMMANDS],

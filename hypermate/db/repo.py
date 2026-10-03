@@ -1,5 +1,6 @@
 """Database access. All SQL lives here. aiosqlite, WAL mode, schema in schema.sql."""
 
+import asyncio
 import json
 import logging
 import os
@@ -45,7 +46,6 @@ class Repo:
         await self.db.executescript(SCHEMA_PATH.read_text())
         await self._migrate()
         await self.db.commit()
-        await self._slim_payloads_once()
         logger.info(f"Database ready at {self.path}")
 
     async def _migrate(self) -> None:
@@ -62,26 +62,51 @@ class Repo:
             logger.info("Migrated snapshots: added spot_json")
 
     PAYLOAD_VERSION = 1
+    SLIM_BATCH = 1000
 
-    async def _slim_payloads_once(self) -> None:
-        """One-time rewrite of events.payload_json to the slim form (PRAGMA user_version marks it done)."""
+    async def payloads_need_slimming(self) -> bool:
         cur = await self.db.execute("PRAGMA user_version")
         (version,) = await cur.fetchone()
-        if version >= self.PAYLOAD_VERSION:
-            return
-        cur = await self.db.execute("SELECT event_id, payload_json FROM events")
-        rows = await cur.fetchall()
-        changed = 0
-        for event_id, payload_json in rows:
-            slim = slim_payload(json.loads(payload_json))
-            text = json.dumps(slim)
-            if len(text) < len(payload_json):
-                await self.db.execute("UPDATE events SET payload_json = ? WHERE event_id = ?", (text, event_id))
-                changed += 1
+        return version < self.PAYLOAD_VERSION
+
+    async def slim_payloads(self, batch: int = SLIM_BATCH) -> tuple[int, int]:
+        """One-time rewrite of events.payload_json to the slim form, in event_id batches so memory
+        stays flat (the first version loaded the whole table and OOMed a 256 MB machine).
+
+        Not called from connect(): main schedules it as a background task after the bot is up.
+        PRAGMA user_version marks it done. Returns (rows seen, rows changed).
+        """
+        if not await self.payloads_need_slimming():
+            return 0, 0
+        seen = changed = batches = 0
+        last_id = 0
+        while True:
+            cur = await self.db.execute(
+                "SELECT event_id, payload_json FROM events WHERE event_id > ? ORDER BY event_id LIMIT ?",
+                (last_id, batch))
+            rows = await cur.fetchall()
+            if not rows:
+                break
+            updates = []
+            for event_id, payload_json in rows:
+                text = json.dumps(slim_payload(json.loads(payload_json)))
+                if len(text) < len(payload_json):
+                    updates.append((text, event_id))
+            if updates:
+                await self.db.executemany("UPDATE events SET payload_json = ? WHERE event_id = ?", updates)
+                await self.db.commit()
+            seen += len(rows)
+            changed += len(updates)
+            last_id = rows[-1][0]
+            batches += 1
+            if batches % 10 == 0:
+                logger.info(f"Slimming event payloads: {seen} rows seen, {changed} rewritten")
+            del rows, updates
+            await asyncio.sleep(0)          # let the bot handle updates between batches
         await self.db.execute(f"PRAGMA user_version = {self.PAYLOAD_VERSION}")
         await self.db.commit()
-        if rows:
-            logger.info(f"Slimmed {changed} of {len(rows)} event payloads")
+        logger.info(f"Slimmed {changed} of {seen} event payloads")
+        return seen, changed
 
     async def prune_events(self, before_ms: int) -> tuple[int, int]:
         """Delete events older than before_ms and their sent_messages rows. Returns (events, messages)."""
