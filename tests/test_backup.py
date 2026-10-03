@@ -59,3 +59,27 @@ async def test_backup_job_prunes_old_events_and_checkpoints(repo, tmp_path, monk
     monkeypatch.setattr(backup.Config, 'BACKUP_DIR', '/proc/no-such-dir/x')
     await backup.backup_job(make_context({'repo': repo}))
     assert await repo.get_event_by_key('old2') is not None
+
+
+async def test_startup_maintenance_prunes_then_slims_in_the_background(repo, caplog):
+    import logging
+    from datetime import datetime, timezone
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    await repo.add_subscription(7, '0x' + 'a' * 40, 'w', 1)
+    (va, _), = await repo.tracked_accounts()
+    fat = {'venue': 'hyperliquid', 'venue_account_id': va, 'coin': 'BTC'}
+    await repo.record_event('old', va, 'position_open', now_ms - 40 * 86_400_000, fat, 'sent', 1)
+    await repo.record_event('new', va, 'position_open', now_ms - 1000, fat, 'sent', 1)
+    await repo.db.execute("PRAGMA user_version = 0")
+    await repo.db.commit()
+    caplog.set_level(logging.INFO)
+    await backup.startup_maintenance(repo, now_ms)
+    assert await repo.get_event_by_key('old') is None                 # pruned before slimming
+    assert 'venue' not in (await repo.get_event_by_key('new'))['payload']
+    assert 'Startup prune before slimming: removed 1 events' in caplog.text
+    assert 'Slimmed 1 of 1' in caplog.text
+    assert not await repo.payloads_need_slimming()
+    # already migrated: no prune, no log
+    await repo.record_event('old2', va, 'position_open', now_ms - 40 * 86_400_000, fat, 'sent', 1)
+    await backup.startup_maintenance(repo, now_ms)
+    assert await repo.get_event_by_key('old2') is not None

@@ -235,7 +235,8 @@ async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     alias, address = subscription
     va = await _repo(context).hl_account_id(address)
     events = await _repo(context).recent_events(va, count) if va is not None else []
-    await reply(update, formatter.format_recent(alias, events))
+    algos = list((await _repo(context).active_algos(va)).values()) if va is not None else []
+    await reply(update, formatter.format_recent(alias, events, algos))
 
 
 async def twap_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -364,8 +365,19 @@ async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await reply(update, texts.ADMIN_ONLY)
         return
     repo = _repo(context)
+    algo_rows = await repo.all_active_algos()
+    modes = {}
+    accounts = {key: address for key, address in await repo.tracked_accounts()}
+    for key, mode in (await repo.multi_algo_modes()).items():
+        address = accounts.get(key)
+        if address is None:
+            continue
+        subscribers = await repo.subscribers(key)
+        modes[address] = {'entered_ms': mode['entered_ms'],
+                          'count': sum(1 for r in algo_rows if r['address'] == address),
+                          'alias': subscribers[0][1] if subscribers else None}
     report = poller.health_report(context, await repo.counts(), repo.path,
-                                  await repo.db_stats(now_ms()), await repo.all_active_algos())
+                                  await repo.db_stats(now_ms()), algo_rows, modes)
     await reply(update, formatter.format_health(report, now_ms()))
 
 

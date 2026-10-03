@@ -72,6 +72,15 @@ CREATE TABLE IF NOT EXISTS algo_active (     -- synthetic TWAP (external executi
   PRIMARY KEY (venue_account_id, coin, sign)
 );
 
+CREATE TABLE IF NOT EXISTS multi_algo_mode (   -- summary mode when many algos run on one account (spec 5.2)
+  venue_account_id INTEGER PRIMARY KEY REFERENCES venue_accounts,
+  entered_ms INTEGER NOT NULL,
+  event_id INTEGER,                           -- the MULTI_ALGO_ENTER event (its sent_messages are edited)
+  message_ids_json TEXT NOT NULL DEFAULT '{}', -- {user_id: [chat_id, message_id]} mirror of sent_messages
+  last_update_ms INTEGER,
+  below_since_ms INTEGER                      -- active algos <= multi_algo_exit since (NULL: above)
+);
+
 CREATE TABLE IF NOT EXISTS events (
   event_id INTEGER PRIMARY KEY,
   dedupe_key TEXT UNIQUE NOT NULL,
@@ -79,7 +88,7 @@ CREATE TABLE IF NOT EXISTS events (
   type TEXT NOT NULL,
   ts_ms INTEGER NOT NULL,
   payload_json TEXT NOT NULL,
-  delivery TEXT NOT NULL DEFAULT 'sent',       -- 'sent' | 'suppressed_twap' | 'filtered_threshold' | 'filtered_settings' | 'muted'
+  delivery TEXT NOT NULL DEFAULT 'sent',       -- 'sent' | 'summarized' | 'filtered_threshold' | 'filtered_settings' | 'muted'
   created_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_events_account_ts ON events(venue_account_id, ts_ms);

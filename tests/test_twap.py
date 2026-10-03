@@ -86,7 +86,7 @@ async def test_same_direction_fills_during_twap_are_suppressed(repo, monkeypatch
     assert len(texts) == 1 and 'reduced LONG $SOL' in texts[0]
     recorded = {e['payload']['coin']: e['delivery'] for e in await events_by(repo, va)
                 if e['type'].startswith('position_')}
-    assert recorded == {'BTC': 'suppressed_twap', 'SOL': 'sent'}
+    assert recorded == {'SOL': 'sent'}            # the suppressed BTC fill leaves no events row
 
 
 async def test_short_twap_suppresses_short_fills(repo, monkeypatch):
@@ -108,7 +108,7 @@ async def test_short_twap_suppresses_short_fills(repo, monkeypatch):
     await fills_cycle(context)
     assert len(sent_texts(bot)) == 1
     positions = [e for e in await events_by(repo, va) if e['type'].startswith('position_')]
-    assert len(positions) == 3 and {e['delivery'] for e in positions} == {'suppressed_twap'}
+    assert positions == []                        # suppressed fills are not recorded
 
 
 async def test_twap_end_uses_twap_history_status(repo, monkeypatch):

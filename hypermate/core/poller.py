@@ -100,6 +100,7 @@ async def poll_account(context: ContextTypes.DEFAULT_TYPE, key: int, address: st
         if await pipeline.poll_ledger(bot, repo, client, key, address):
             activity = True
     await pipeline.maintain_algos(bot, repo, key, address, adapter.now_ms())
+    await pipeline.maintain_summary_mode(bot, repo, key, address, adapter.now_ms())
 
     if activity:
         await repo.touch_activity(key, now)
@@ -172,7 +173,8 @@ def _size(path: str) -> Optional[int]:
 
 
 def health_report(context: ContextTypes.DEFAULT_TYPE, counts: dict, db_path: str,
-                  db_stats: Optional[dict] = None, algos: Optional[list] = None) -> dict:
+                  db_stats: Optional[dict] = None, algos: Optional[list] = None,
+                  summary_modes: Optional[dict] = None) -> dict:
     state = get_state(context)
     budget: Optional[scheduler.WeightBudget] = context.bot_data.get('budget')
     db_bytes = _size(db_path)
@@ -189,6 +191,7 @@ def health_report(context: ContextTypes.DEFAULT_TYPE, counts: dict, db_path: str
         'wal_bytes': _size(db_path + '-wal'),
         'db_stats': db_stats or {},
         'algo_rows': algos or [],
+        'summary_modes': summary_modes or {},
         'uptime_ms': adapter.now_ms() - state.started_ms,
         'started_ms': state.started_ms,
     }

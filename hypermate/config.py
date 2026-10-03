@@ -55,6 +55,13 @@ class Config:
         'algo_progress_sec': 600,
         'algo_idle_sec': 600,
         'dust_notional_usd': 10,     # /positions folds smaller positions into one line
+        # multi-algo summary mode (spec 5.2 멀티 알고 요약)
+        'multi_algo_min': 5,             # active algos on one account -> summary mode
+        'multi_algo_update_sec': 3600,   # summary message edit interval
+        'multi_algo_exit': 2,            # leave when active algos stay at or under this...
+        'multi_algo_exit_idle_sec': 1800,   # ...for this long
+        'multi_algo_big_order_pct': 10,  # alerted in summary mode: one order >= 10% of the position
+        'multi_algo_big_order_usd': 100_000,   # or >= $100k
     }
 
     @classmethod

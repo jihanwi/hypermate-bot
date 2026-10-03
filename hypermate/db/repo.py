@@ -1,5 +1,6 @@
 """Database access. All SQL lives here. aiosqlite, WAL mode, schema in schema.sql."""
 
+import asyncio
 import json
 from decimal import Decimal
 import logging
@@ -46,7 +47,6 @@ class Repo:
         await self.db.executescript(SCHEMA_PATH.read_text())
         await self._migrate()
         await self.db.commit()
-        await self._slim_payloads_once()
         logger.info(f"Database ready at {self.path}")
 
     async def _migrate(self) -> None:
@@ -143,26 +143,89 @@ class Repo:
         await self.db.commit()
 
     PAYLOAD_VERSION = 1
+    SUPPRESSED_CLEANUP_VERSION = 2
+    SLIM_BATCH = 1000
 
-    async def _slim_payloads_once(self) -> None:
-        """One-time rewrite of events.payload_json to the slim form (PRAGMA user_version marks it done)."""
+    async def user_version(self) -> int:
         cur = await self.db.execute("PRAGMA user_version")
         (version,) = await cur.fetchone()
-        if version >= self.PAYLOAD_VERSION:
-            return
-        cur = await self.db.execute("SELECT event_id, payload_json FROM events")
-        rows = await cur.fetchall()
-        changed = 0
-        for event_id, payload_json in rows:
-            slim = slim_payload(json.loads(payload_json))
-            text = json.dumps(slim)
-            if len(text) < len(payload_json):
-                await self.db.execute("UPDATE events SET payload_json = ? WHERE event_id = ?", (text, event_id))
-                changed += 1
-        await self.db.execute(f"PRAGMA user_version = {self.PAYLOAD_VERSION}")
+        return version
+
+    async def suppressed_rows_need_cleanup(self) -> bool:
+        return await self.user_version() < self.SUPPRESSED_CLEANUP_VERSION
+
+    async def delete_suppressed_rows(self, batch: int = 5000) -> int:
+        """One-time removal of the 'suppressed_algo' / 'suppressed_twap' rows older versions recorded
+        (fix/multi-algo-summary), in event_id batches. Returns the number of rows removed."""
+        if not await self.suppressed_rows_need_cleanup():
+            return 0
+        removed = batches = 0
+        while True:
+            cur = await self.db.execute(
+                "SELECT event_id FROM events WHERE delivery IN ('suppressed_algo', 'suppressed_twap') "
+                "ORDER BY event_id LIMIT ?", (batch,))
+            ids = [r[0] for r in await cur.fetchall()]
+            if not ids:
+                break
+            await self.db.execute(
+                f"DELETE FROM sent_messages WHERE event_id IN ({','.join('?' * len(ids))})", ids)
+            await self.db.execute(f"DELETE FROM events WHERE event_id IN ({','.join('?' * len(ids))})", ids)
+            await self.db.commit()
+            removed += len(ids)
+            batches += 1
+            if batches % 10 == 0:
+                logger.info(f"Removing suppressed fill rows: {removed} so far")
+            del ids
+            await asyncio.sleep(0)
+        await self.db.execute(f"PRAGMA user_version = {self.SUPPRESSED_CLEANUP_VERSION}")
         await self.db.commit()
-        if rows:
-            logger.info(f"Slimmed {changed} of {len(rows)} event payloads")
+        logger.info(f"Removed {removed} suppressed fill rows")
+        return removed
+
+    async def payloads_need_slimming(self) -> bool:
+        cur = await self.db.execute("PRAGMA user_version")
+        (version,) = await cur.fetchone()
+        return version < self.PAYLOAD_VERSION
+
+    async def slim_payloads(self, batch: int = SLIM_BATCH) -> tuple[int, int]:
+        """One-time rewrite of events.payload_json to the slim form, in event_id batches so memory
+        stays flat (the first version loaded the whole table and OOMed a 256 MB machine).
+
+        Not called from connect(): main schedules it as a background task after the bot is up.
+        PRAGMA user_version marks it done. Returns (rows seen, rows changed).
+        """
+        if not await self.payloads_need_slimming():
+            return 0, 0
+        seen = changed = batches = 0
+        last_id = 0
+        while True:
+            cur = await self.db.execute(
+                "SELECT event_id, payload_json FROM events WHERE event_id > ? ORDER BY event_id LIMIT ?",
+                (last_id, batch))
+            rows = await cur.fetchall()
+            if not rows:
+                break
+            updates = []
+            for event_id, payload_json in rows:
+                text = json.dumps(slim_payload(json.loads(payload_json)))
+                if len(text) < len(payload_json):
+                    updates.append((text, event_id))
+            if updates:
+                await self.db.executemany("UPDATE events SET payload_json = ? WHERE event_id = ?", updates)
+                await self.db.commit()
+            seen += len(rows)
+            changed += len(updates)
+            last_id = rows[-1][0]
+            batches += 1
+            if batches % 10 == 0:
+                logger.info(f"Slimming event payloads: {seen} rows seen, {changed} rewritten")
+            del rows, updates
+            await asyncio.sleep(0)          # let the bot handle updates between batches
+        if await self.user_version() < self.PAYLOAD_VERSION:
+            await self.db.execute(f"PRAGMA user_version = {self.PAYLOAD_VERSION}")
+            await self.db.commit()
+        logger.info(f"Slimmed {changed} of {seen} event payloads")
+        return seen, changed
 
     async def prune_events(self, before_ms: int) -> tuple[int, int]:
         """Delete events older than before_ms and their sent_messages rows. Returns (events, messages)."""
@@ -188,6 +251,47 @@ class Repo:
         cur = await self.db.execute("SELECT COUNT(*) FROM sent_messages")
         (messages,) = await cur.fetchone()
         return {'events_total': events_total, 'events_24h': by_type, 'sent_messages': messages}
+
+    # multi-algo summary mode (spec 5.2) ----------------------------------------------
+
+    async def multi_algo_mode(self, venue_account_id: int) -> Optional[dict]:
+        cur = await self.db.execute(
+            "SELECT entered_ms, event_id, message_ids_json, last_update_ms, below_since_ms "
+            "FROM multi_algo_mode WHERE venue_account_id = ?", (venue_account_id,))
+        row = await cur.fetchone()
+        if not row:
+            return None
+        return {'entered_ms': row[0], 'event_id': row[1], 'message_ids': json.loads(row[2]),
+                'last_update_ms': row[3], 'below_since_ms': row[4]}
+
+    async def multi_algo_modes(self) -> dict[int, dict]:
+        cur = await self.db.execute("SELECT venue_account_id, entered_ms, below_since_ms FROM multi_algo_mode")
+        return {r[0]: {'entered_ms': r[1], 'below_since_ms': r[2]} for r in await cur.fetchall()}
+
+    async def enter_multi_algo_mode(self, venue_account_id: int, entered_ms: int, event_id: Optional[int],
+                                    message_ids: dict) -> None:
+        await self.db.execute(
+            "INSERT OR REPLACE INTO multi_algo_mode (venue_account_id, entered_ms, event_id, message_ids_json, "
+            "last_update_ms, below_since_ms) VALUES (?, ?, ?, ?, ?, NULL)",
+            (venue_account_id, entered_ms, event_id, json.dumps(message_ids), entered_ms))
+        await self.db.commit()
+
+    async def update_multi_algo_mode(self, venue_account_id: int, last_update_ms: Optional[int] = None,
+                                     below_since_ms: Optional[int] = None, clear_below: bool = False) -> None:
+        if last_update_ms is not None:
+            await self.db.execute("UPDATE multi_algo_mode SET last_update_ms = ? WHERE venue_account_id = ?",
+                                  (last_update_ms, venue_account_id))
+        if clear_below:
+            await self.db.execute("UPDATE multi_algo_mode SET below_since_ms = NULL WHERE venue_account_id = ?",
+                                  (venue_account_id,))
+        elif below_since_ms is not None:
+            await self.db.execute("UPDATE multi_algo_mode SET below_since_ms = ? WHERE venue_account_id = ?",
+                                  (below_since_ms, venue_account_id))
+        await self.db.commit()
+
+    async def exit_multi_algo_mode(self, venue_account_id: int) -> None:
+        await self.db.execute("DELETE FROM multi_algo_mode WHERE venue_account_id = ?", (venue_account_id,))
+        await self.db.commit()
 
     async def all_active_algos(self) -> list[dict]:
         """Every algo_active row with its address (debug view for /health)."""
