@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from decimal import Decimal
 
@@ -175,7 +176,7 @@ async def test_prune_checkpoint_stats_and_algo_rows(repo):
     assert [(r['address'], r['coin'], r['sign'], r['fills_count']) for r in rows] == [(A, 'BTC', -1, 3)]
 
 
-async def test_startup_slims_legacy_payloads_once(tmp_path, caplog):
+async def test_slim_payloads_is_batched_and_runs_once(tmp_path, caplog):
     import json
     import logging
     path = str(tmp_path / 'hm.db')
@@ -187,26 +188,52 @@ async def test_startup_slims_legacy_payloads_once(tmp_path, caplog):
            'meta': {'dir': 'Open Long', 'fills': 3, 'oid': 1},
            'chain': {'key': ['BTC', 'Open Long'], 'orders': 2,
                      'meta': {'dir': 'Open Long', 'oid': 1, 'fills': 3, 'first_ms': 5, 'fee': '1', 'sign': 1}}}
-    await repo.record_event('k', va, 'position_open', 5000, fat, 'sent', 1)
+    for i in range(25):
+        await repo.record_event(f'k{i}', va, 'position_open', 5000 + i, fat, 'sent', 1)
     await repo.db.execute("PRAGMA user_version = 0")
     await repo.db.commit()
-    await repo.close()
+    assert await repo.payloads_need_slimming()
 
     caplog.set_level(logging.INFO, logger='hypermate.db.repo')
-    repo = Repo(path)
-    await repo.connect()
-    stored = (await repo.get_event_by_key('k'))['payload']
+    assert await repo.slim_payloads(batch=2) == (25, 25)          # 13 batches, progress logged at 10
+    assert 'Slimming event payloads: 20 rows seen' in caplog.text
+    stored = (await repo.get_event_by_key('k0'))['payload']
     assert 'venue' not in stored and 'venue_account_id' not in stored
     assert stored['meta'] == fat['meta']                                   # the order's own meta is kept
     assert stored['chain']['meta'] == {'dir': 'Open Long', 'sign': 1}    # copied meta reduced
-    assert 'Slimmed 1 of 1' in caplog.text
-    cur = await repo.db.execute("PRAGMA user_version")
-    assert (await cur.fetchone())[0] == Repo.PAYLOAD_VERSION
+    assert not await repo.payloads_need_slimming()
+    assert await repo.slim_payloads() == (0, 0)                           # second run: nothing to do
+    assert json.loads(json.dumps(stored)) == stored
     await repo.close()
-    # second start: nothing to do
-    caplog.clear()
+
+
+async def test_slimming_200k_rows_keeps_memory_flat(tmp_path):
+    """fix/migration-oom: peak RSS during the migration stays within 30 MB of the baseline."""
+    import resource
+    path = str(tmp_path / 'big.db')
     repo = Repo(path)
     await repo.connect()
-    assert 'Slimmed' not in caplog.text
-    assert json.loads(json.dumps(stored)) == stored
+    await repo.add_subscription(1, A, 'a', 1000)
+    (va, _), = await repo.tracked_accounts()
+    fat = json.dumps({'venue': 'hyperliquid', 'venue_account_id': va, 'type': 'position_increase', 'coin': 'BTC',
+                      'size': '0.01', 'notional_usd': '860', 'meta': {'dir': 'Open Long', 'fills': 1, 'oid': 1},
+                      'chain': {'key': ['BTC', 'Open Long'], 'orders': 3, 'size': '0.03',
+                                'meta': {'dir': 'Open Long', 'oid': 1, 'fills': 1, 'first_ms': 5, 'fee': '0.1',
+                                         'sign': 1, 'dex': '', 'fee_token': 'USDC'}}})
+    for start in range(0, 200_000, 10_000):
+        await repo.db.executemany(
+            "INSERT INTO events (dedupe_key, venue_account_id, type, ts_ms, payload_json, delivery, created_at) "
+            "VALUES (?, ?, 'position_increase', ?, ?, 'sent', 1)",
+            [(f'k{i}', va, i, fat) for i in range(start, start + 10_000)])
+    await repo.db.commit()
+    await repo.db.execute("PRAGMA user_version = 0")
+    await repo.db.commit()
+
+    import gc
+    gc.collect()
+    baseline_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    seen, changed = await repo.slim_payloads()
+    peak_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    assert (seen, changed) == (200_000, 200_000)
+    assert peak_kb - baseline_kb < 30 * 1024, f"RSS grew {(peak_kb - baseline_kb) // 1024} MB"
     await repo.close()
