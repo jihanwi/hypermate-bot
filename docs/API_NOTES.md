@@ -113,6 +113,18 @@ Shapes from the PM fixtures (master wallet 0x6aca…, 2026-10-03):
 - WS `wss://mainnet.zklighter.elliot.ai/stream`, `{"type": "subscribe", "channel": "account_all_positions/<index>"}` and `account_all_trades/<index>` per docs. **[?] Not verified live** (PM: CloudFront 400, possibly the proxy). The bot tries it and falls back to REST; message shapes are a guess (`positions` dict or list, `trades` list, index from the channel name).
 - Explorer: no confirmed address URL format [?]; alerts link to `https://app.lighter.xyz/`.
 
+## RISEx (Phase 2B, PM live check 2026-10-04)
+
+- Base `https://api.rise.trade`, no auth, 500 req / 10 s / IP; WS `wss://api.rise.trade/ws/` 10 req/s. Addresses are plain EVM (case-insensitive in requests, checksum form in responses).
+- Number formats are **mixed**: `/v1/positions` fields are 18-decimal fixed-point strings (`size "-20892000000000000"` = -0.020892, `leverage "10000000000000000000"` = 10, `avg_entry_price "84828000000000000000000"` = 84828), while `/v1/trade-history`, `/v1/account/cross-margin-balance` and every WS message are human units (`"0.020892"`, `"84828"`). `risex.adapter.from_wei` / `human` parse each.
+- `GET /v1/positions?account=&page=&page_size=` → `{data: {positions: [...], total_count, page, page_size, has_next_page}, request_id}`. Fixture `risex_positions.json` (BTC/USDC short 0.020892, side SELL).
+- `GET /v1/account/cross-margin-balance?account=` → `{data: {balance}}` human units; 500 for an unknown account (not used for the activity test). Fixture `risex_cross_margin.json`.
+- `GET /v1/trade-history?account=&limit=&market_id=` → `{data: {trades: [...], page, has_next_page, market_id, wallet_address}}` newest first; `time` is a ns string; `order_id`, `liquidity_indicator`, `is_liquidation`, `realized_pnl`, `position_side`, `blockchain_data.tx_hash`. No position-before: the adapter accumulates from the last snapshot. Fixture `risex_trade_history.json` (50 trades).
+- `GET /v1/markets` → `{data: {markets: [{market_id, config: {name, step_size, step_price, max_leverage, ...}, display_name, mark_price, ...}]}}`, 38 markets. Fixture `risex_markets.json`.
+- WS positions: subscribe with `makers` and `market_ids`; first message `{type: snapshot, channel: positions, data: [rows in human units], position_count}`, then `{type: subscribed}`, then `{type: update}`. Fixture `risex_ws_positions.json`.
+- WS trades: `{channel: trades, type: update, market_id, data: {id, maker_order_id, taker_order_id, maker, taker, maker_side (0 = maker bought), price, size, fee_maker, fee_taker, fee_liquidation}, tx_hash, worker_timestamp (ns)}`. Fixture `risex_ws_trades.json`.
+- **[?] Not verified**: the WS `update` shape for positions beyond the snapshot (assumed the same row shape as the snapshot), whether a closed position arrives as a row with size 0 (handled: a zero row removes the coin), and whether `fee_liquidation > 0` marks liquidations in the trades channel. Explorer address URL format [?]; alerts link to `https://app.rise.trade/`.
+
 ## Telegram
 
 - `setMyCommands` is called once in `post_init` with `BotCommandScopeAllPrivateChats`. The request shape was checked against a local fake Bot API server. Whether the menu shows up in the Telegram client needs a check with the real bot token.

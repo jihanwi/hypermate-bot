@@ -23,7 +23,7 @@ Aliases are matched case-insensitively. On startup the bot registers these comma
 
 ### Venues
 
-`/add` resolves the wallet on every venue in parallel and tracks the ones with activity: Hyperliquid (positions, account value or spot balance) and Lighter (sub-accounts of the L1 address). The reply says which: `✅ Wallet added as cl · HL ✅ (xyz) · Lighter ✅ (2 sub-accounts)`. `/rescan` repeats it, and a daily job at 04:10 KST re-checks the venues a wallet is not active on. Alerts carry a venue badge (`[HL]`, `[LTR]`) and Lighter sub-accounts show as `alias#index`. `/positions` has one section per venue account and `/list` sums the account values over venues. Lighter polls use the WebSocket stream when it connects and REST otherwise (interval raised with the account count so the public 60 req/min limit holds); `/health` shows the mode.
+`/add` resolves the wallet on every venue in parallel and tracks the ones with activity: Hyperliquid (positions, account value or spot balance), Lighter (sub-accounts of the L1 address) and RISEx (open positions or any trade history). The reply says which: `✅ Wallet added as cl · HL ✅ (xyz) · Lighter ✅ (2 sub-accounts)`. `/rescan` repeats it, and a daily job at 04:10 KST re-checks the venues a wallet is not active on. Alerts carry a venue badge (`[HL]`, `[LTR]`, `[RISE]`) and Lighter sub-accounts show as `alias#index`. RISEx uses one WebSocket for all tracked wallets (positions and trades channels) with REST as the fallback. `/positions` has one section per venue account and `/list` sums the account values over venues. Lighter polls use the WebSocket stream when it connects and REST otherwise (interval raised with the account count so the public 60 req/min limit holds); `/health` shows the mode.
 
 ### Alerts
 
@@ -62,6 +62,10 @@ python -m hypermate.main
 | `LIGHTER_WS_URL` | no | `wss://mainnet.zklighter.elliot.ai/stream` | Lighter WebSocket stream |
 | `LIGHTER_WS_ENABLED` | no | `true` | Try the Lighter WS; REST polling is the fallback either way |
 | `LIGHTER_REQ_BUDGET` | no | `50` | Lighter requests per minute the bot allows itself (public limit 60) |
+| `RISEX_API_URL` | no | `https://api.rise.trade` | RISEx public REST base |
+| `RISEX_WS_URL` | no | `wss://api.rise.trade/ws/` | RISEx WebSocket |
+| `RISEX_WS_ENABLED` | no | `true` | Use the RISEx WS (positions and trades channels); REST is the fallback |
+| `RISEX_REQ_BUDGET` | no | `2400` | RISEx requests per minute (public limit 500 per 10 s) |
 
 `WALLET_ENCRYPTION_KEY` is no longer used (wallet generation was removed).
 

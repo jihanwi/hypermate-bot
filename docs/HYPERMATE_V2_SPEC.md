@@ -523,13 +523,14 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 ### 6.3 RISEx [V]
 
 - RISE Chain(ETH L2, chain id 4153) 위 온체인 CLOB. Base `https://api.rise.trade`. 무인증 500 req/10초/IP. WS 10 req/s.
-- resolve: `GET /v1/positions?account=0x...` 가 200이면 활성. 계정 없으면 `/v1/account/cross-margin-balance` 가 500 반환하므로 positions 쪽으로 판정.
-- snapshot: `GET /v1/positions?account=&page=&page_size=` → `data.positions[]`: `market_id, size, side(BUY|SELL), quote_amount` + leverage/entry/mark/uPnL [I, 필드명 확인 필요 [?]]. 수량은 18-decimal 고정소수점 → `Decimal(x) / 10**18`.
-- events: `GET /v1/trade-history?account=&limit=&market_id=`. cursor = 마지막 trade timestamp/id.
-- WS `wss://api.rise.trade/ws/`: `{"method":"subscribe","params":{"channel":"positions","makers":[addr,...],"market_ids":[...]}}` 로 **임의 주소 리스트 무인증 구독** [V SDK 소스]. 50개 주소를 한 커넥션에 넣을 수 있으므로 RISEx는 WS 기본, REST fallback.
-- market_id → 심볼 매핑: `/v1/markets` [?] 1시간 캐시.
+- resolve: `GET /v1/positions?account=0x...` 가 200 이고 positions 가 비어있지 않거나, `GET /v1/trade-history?account=&limit=1` 에 trades 가 있으면 활성 (PM 라이브 확인 2026-10-04). 계정 없으면 `/v1/account/cross-margin-balance` 가 500 을 주므로 그 호출은 활성 판정에 쓰지 않는다 (잔고 None 처리).
+- snapshot: `GET /v1/positions?account=&page=&page_size=` → `data.positions[]`: `account, market_id, size (18-dec, 부호 포함), quote_amount, side (BUY|SELL), margin_mode, isolated_usdc_balance, leverage, avg_entry_price, last_funding_payment, unsettled_funding` [V 2026-10-04]. 모든 숫자가 18-decimal 고정소수점 문자열 → `Decimal(x) / 10**18`. 계정 가치: `GET /v1/account/cross-margin-balance?account=` 의 `data.balance` (사람 단위) + isolated 잔고 합. 포지션 키는 마켓 이름의 base (`BTC/USDC` → `BTC`).
+- events: `GET /v1/trade-history?account=&limit=&market_id=` → `data.trades[]`: `id, market_id, order_id, side, price, size, fee, liquidity_indicator (TAKER|MAKER), time (나노초 문자열), is_liquidation, realized_pnl, position_side` [V]. **사람 단위** (18-dec 아님, 혼재 주의). ns → ms 변환, `order_id` 가 oid, `is_liquidation` → `LIQUIDATION`, `realized_pnl` 이 closedPnl. startPosition 이 없으므로 직전 snapshot 의 포지션에서 시작해 배치 안의 fills 를 순서대로 누적해 OPEN/INCREASE/DECREASE/CLOSE/FLIP 판정 (2B 구현 결정). cursors.kind `trades` 에는 `{"id": 마지막 trade id, "ms": 시각}` JSON; JSON 이 아닌 커서(신규 계정의 ms 초기값)는 베이스라인.
+- WS `wss://api.rise.trade/ws/`: `{"method":"subscribe","params":{"channel":"positions","makers":[addr,...],"market_ids":[...]}}` 로 **임의 주소 리스트 무인증 구독** [V PM 라이브 2026-10-04: 연결, 구독, 스냅샷 수신 성공]. 응답 순서: `{type: snapshot, method: snapshot, channel: positions, data: [{account, market_id, side, size (사람 단위!), avg_entry_price, leverage, quote_amount, ...}], position_count}` → `{type: subscribed, ...}` → `{type: update, ...}`. WS 의 size/price 는 사람 단위, REST `/v1/positions` 는 18-dec: 두 포맷 모두 파싱. `market_ids` 는 `/v1/markets` 전체 id. `trades` 채널 `{channel: trades, market_ids: [...]}` 의 update 는 `data.maker` / `data.taker` 주소와 `maker_side` (0 = maker 매수) 를 포함하므로 추적 주소 필터로 fills 실시간 수신. 구현 (2B): 한 커넥션에 추적 주소 전부를 makers 로, 주소 추가 시 positions 구독 재전송; 끊기면 REST fallback, 복구 시 재구독 (Lighter 와 같은 `venues/stream.py` 루프).
+- market_id → 심볼 매핑: `GET /v1/markets` → `data.markets[] {market_id, config: {name: "BTC/USDC", step_size, step_price, max_leverage, ...}, display_name, mark_price, ...}` [V], 1시간 캐시.
 - TWAP: 없음 [V 부재].
-- explorer: RISE 체인 explorer 주소 형식 [?].
+- explorer: RISE 체인 explorer 주소 형식 [?] 미확인. `https://app.rise.trade/` 로 대체.
+- 한도: 베뉴 버킷 2400/분 (500/10초 의 80%), 요청당 1. REST fallback 폴링은 POLL_FAST 주기.
 - 참고: `developer.rise.trade/reference/general-information`, PyPI `risex`.
 
 ### 6.4 Aster [V]
