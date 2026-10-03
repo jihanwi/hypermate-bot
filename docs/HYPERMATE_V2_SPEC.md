@@ -553,8 +553,8 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 | `referral` | `{type, user}` | `referredBy.referrer`, `referrerState.data.referralStates[].user` | 20 | weak |
 | `userVaultEquities` | | 팔로우 중인 vault 주소 | 20 | weak |
 | `vaultDetails` | `{type, vaultAddress}` | 본인이 vault면 `leader`, `followers[]`, `relationship.data.childAddresses` | 20 | leader: confirmed, followers: weak |
-| 크로스 베뉴 | Phase 2 어댑터 `resolve()` | 같은 EVM 주소의 Lighter 서브계정 index들, RISEx/Aster 활동 여부 | 베뉴별 | confirmed (동일 주소) |
-| hypurrscan API | `GET api.hypurrscan.io/tags/{addr}`, `/transfers/{from}/{to}`, `/bridges/{from}/{to}` | 주소 태그(거래소, 알려진 엔티티), 이체 | 1000/분/IP [V] | 태그: confirmed |
+| 크로스 베뉴 | Phase 2 어댑터 `resolve()` | 같은 EVM 주소의 Lighter 서브계정 index들, RISEx/Aster 활동 여부 | 베뉴별 | confirmed (동일 주소). **Phase 2 후 추가** (Phase 3 PR 에서 미구현) |
+| hypurrscan API | `GET api.hypurrscan.io/tags/{addr}`, `POST /tags/addresses` | 주소 태그 | 1000/분/IP | **거래소 태그: 데이터 소스 없음, 백로그.** PM 라이브 확인 2026-10-03: GET 은 문서의 예시 주소에도 `{}`, POST 는 문서 스키마로 보내도 404. 사용하지 않음 (`venues/hypurrscan.py` 없음) |
 
 Arbitrum 브릿지 (선택, `ARBISCAN_API_KEY` 있을 때만): 레거시 브릿지 `0x2df1c51e09aecf9cacb7bc98cb1742757f163df7` 로 가는 USDC transfer의 `from` = HL 계정 [V]. 같은 EOA가 여러 번 입금한 경우는 자기 자신이라 의미 없음. 의미 있는 건 "A가 Arbitrum에서 B에게 USDC 보냈고 B가 브릿지 입금" 패턴인데, 현재 입금은 CCTP/Across 경유가 많아 커버리지가 낮음 [V 문서가 레거시 브릿지 deprecated 명시]. **Phase 3 범위에서 제외, 백로그.**
 
@@ -567,26 +567,28 @@ Arbitrum 브릿지 (선택, `ARBISCAN_API_KEY` 있을 때만): 레거시 브릿�
 | `staking_link` | confirmed | userFees.stakingLink |
 | `vault_leader` | confirmed | 추적 주소가 vault이고 leader가 다른 주소, 또는 추적 주소가 어떤 vault의 leader |
 | `same_address_other_venue` | confirmed | 어댑터 resolve |
-| `transfer_counterparty` | likely | 양방향 이체가 있거나, 단방향 2회 이상, 또는 1회라도 $10k 이상. 거래소 태그(hypurrscan tags) 붙은 주소는 제외 |
+| `transfer_counterparty` | likely | 양방향 이체가 있거나, 단방향 2회 이상, 또는 1회라도 $10k 이상. 시스템 주소는 제외 (아래). 상대방 `userRole` 이 `vault` 면 `vault_follow` (weak) 로 분류 |
 | `transfer_counterparty` | weak | 단방향 1회, $10k 미만 |
 | `referral` | weak | referredBy 또는 referralStates |
 | `vault_follow` | weak | userVaultEquities, vaultDetails.followers |
 
-거래소 입출금 주소(hypurrscan tags 에 exchange 류 태그)는 결과에서 제외하되 "거래소 N곳 사용" 으로 한 줄 요약.
+시스템 주소 제외 (오너 결정 2026-10-03, 거래소 태그 대체): `0x2000…0000` (HIP-3/시스템 에스크로), `0x0000…0000`, `0xfefe…fefe` (assistance fund), `0xdfc24b077bc1425ad1dea75bcb6f8158e10df303` (HLP vault), 그리고 하위 36자리가 한 문자 반복이거나 두 문자 반복인 주소는 시스템으로 간주. 같은 계정의 spot/perp 이동 (`send` 의 user == destination) 은 상대방이 아니다. 거래소 핫월렛 제외는 Phase 3 범위 밖 (백로그), "거래소 N곳 사용" 요약 줄 없음.
 
 ### 7.3 UX
 
 - `/related <alias>`: 최초 호출 시 전체 탐색 (10~20초 소요, "탐색 중..." 메시지 후 edit). 결과는 `wallet_links` 에 저장, 24시간 캐시. `/related <alias> refresh` 로 강제 재탐색.
 - 출력: confidence 별 그룹, 각 행에 주소 축약 + explorer 링크 + 근거 요약 (예: "내부이체 3회 $42k, 최근 2026-09-28") + 그 주소의 HL accountValue (clearinghouseState, weight 2) + 인라인 버튼 `[Track as <alias>-2]`. 버튼 누르면 `/add` 와 동일 플로우.
 - 깊이: 1-hop만. confirmed 링크(subaccount, master)에 한해 2-hop 자동 확장 (master의 다른 subaccount들).
-- 백그라운드: Phase 1 ledger 이벤트에서 새 counterparty가 보이면 `wallet_links` 에 weak로 자동 추가. 유저 알림은 안 함 (설정으로 on 가능: "새 연관 지갑 발견 시 알림").
+- 백그라운드: Phase 1 ledger 이벤트에서 새 counterparty가 보이면 `wallet_links` 에 weak로 자동 추가 (evidence `background`, 24시간 캐시 판정에는 안 들어감). 유저 알림은 안 함 (설정으로 on 가능: "새 연관 지갑 발견 시 알림").
+- Track 버튼 콜백: `rel:<wallet_links rowid>` (64바이트 제한). 주소는 DB 에서 해석, alias 는 버튼 라벨의 `<alias>-N`. 행이 사라졌으면 "stale, /related 다시" 안내 (오너 승인 2026-10-03).
+- 표시 행 수 상한 12 (`related.MAX_ROWS`): counterparty 가 아닌 링크(서브계정, API 지갑, 레퍼럴, vault) 를 먼저 채우고 나머지를 이체 횟수 순으로. accountValue 조회(2/행)는 표시 행만. 넘치면 "+ N more".
 
 ### 7.4 완료 기준
 
 - [ ] 알려진 master/sub 쌍 (오너가 제공, 또는 공개 vault leader) 으로 confirmed 링크 검출
 - [ ] 탐색 1회 총 weight 300 이하 (로그 출력). `userRole` 캐시 적중 확인
 - [ ] `/related` 결과의 `[Track]` 버튼으로 추가 → `/list` 반영
-- [ ] 거래소 태그 주소가 결과에 안 뜨고 요약 줄에만 나옴
+- [ ] 시스템 주소와 자기 자신이 결과에 안 뜸 (거래소 태그 항목은 데이터 소스 없음, 백로그)
 
 ---
 

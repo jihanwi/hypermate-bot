@@ -85,6 +85,21 @@ Hyperliquid facts below were checked live against `https://api.hyperliquid.xyz/i
 - **[?] Not verified live: whether HL sends a `Retry-After` header on 429.** The client reads it as whole seconds and falls back to a 30 s pause. The response body of a 429 was not recorded either. Owner: capture one 429 response (status, headers) if it ever happens in production; the `/health` 429 counter shows whether it did.
 - The 50-address, 30-minute completion criterion is a simulation (`tests/test_poller.py`): a fake HL that counts weight like the documented limit (1200 per rolling minute) and answers 429 above it. Not run against the live API from the dev environment (api.hyperliquid.xyz is blocked there).
 
+### /related discovery (Phase 3)
+
+Shapes from the PM fixtures (master wallet 0x6aca…, 2026-10-03):
+
+- `userRole`: `{"role": "user"}` with no `data` for a plain user. The spec's `data.master` / `data.user` apply to `subAccount` / `agent` roles only (not in the fixtures, handled from the spec [?]). Cached 7 days in `api_cache` (weight 60).
+- `subAccounts`: `[{name, subAccountUser, master, clearinghouseState, spotState}]`, one entry for the fixture master. The embedded `clearinghouseState` is ignored (the `/related` row price uses the 2-weight call for shown rows only).
+- `extraAgents`: `[]` in the fixture. Entries are read as `{address, name, validUntil}` from the spec [?].
+- `userFees.stakingLink`: `null` in the fixture. Read as `{type, stakingUser}` from the spec [?].
+- `referral`: `referredBy.referrer` and `referrerState.data.referralStates[].user` as in the spec, both present in the fixture.
+- `userVaultEquities`: `[{vaultAddress, equity, lockedUntilTimestamp}]`.
+- `vaultDetails`: `leader`, `followers[] {user, vaultEquity, ...}`, `relationship {type: parent, data: {childAddresses}}` (HLP fixture, 20 followers, 7 children). Called only when the tracked address itself has role `vault`.
+- `userNonFundingLedgerUpdates(startTime=0)`: 239 entries for the master; types seen: `deposit, withdraw, send, spotTransfer, accountClassTransfer, vaultDeposit, vaultWithdraw, cStakingTransfer, spotGenesis`. `send` with `user == destination` is a spot/perp move of the same account (sourceDex `spot`, destinationDex ``), not a counterparty. The per-item cost (1 per 20 entries) is charged like fills; 239 entries cost 20 + 11.
+- Discovery weight on the fixture: 295 (userRole 60 + 7 calls at 20 + ledger 31 + 12 row prices at 2 + counterparty userRole checks while under 300). Second run within 7 days skips the userRole 60.
+- hypurrscan tags (PM live check 2026-10-03): `GET /tags/{address}` returns `{}` for every address tried, including the documented example and the bridge; `POST /tags/addresses` with the documented `{"addresses": [...]}` body returns 404. Not used. `api.hypurrscan.io` is also unreachable from the dev environment, so `openapi.json` was not read here. Fixtures `hypurrscan_tags_*.json` are not in the repo.
+
 ## Telegram
 
 - `setMyCommands` is called once in `post_init` with `BotCommandScopeAllPrivateChats`. The request shape was checked against a local fake Bot API server. Whether the menu shows up in the Telegram client needs a check with the real bot token.
