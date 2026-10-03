@@ -491,7 +491,7 @@ async def poll_venue_account(bot: Bot, repo: Repo, adapter_obj, account: VenueAc
     active_algo = bool(await repo.active_algos(key))
     if changed or active_algo or previous is None:      # baseline poll sets the trades cursor
         cursor = await repo.get_cursor(key, 'trades')
-        result = await adapter_obj.fetch_events(account, cursor)
+        result = await adapter_obj.fetch_events(account, cursor, (previous or {}).get('', {}))
         if result is None:
             fills = diff_fills(previous.get('', {}) if previous else {}, snap.positions, now) if changed else []
         else:

@@ -116,7 +116,8 @@ class LighterAdapter:
             return AccountSnapshot({}, None)
         return parse_account(raw)
 
-    async def fetch_events(self, account: VenueAccount, cursor: Optional[str]) -> tuple[list[dict], Optional[str]]:
+    async def fetch_events(self, account: VenueAccount, cursor: Optional[str],
+                           positions_before: Optional[dict] = None) -> tuple[list[dict], Optional[str]]:
         """Trades newer than the cursor (last trade_id seen), oldest first.
 
         The API pages newest-first and its next_cursor walks backwards, so the cursor stored here is
