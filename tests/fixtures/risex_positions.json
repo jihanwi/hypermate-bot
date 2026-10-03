@@ -1,0 +1,27 @@
+{
+ "data": {
+  "positions": [
+   {
+    "account": "0x068731bac41a937440e14859f0fa8c3b453c2266",
+    "market_id": "1",
+    "block_number": "0",
+    "log_index": "0",
+    "worker_timestamp": "0",
+    "size": "-20892000000000000",
+    "quote_amount": "1771694908027200000000",
+    "margin_mode": 0,
+    "side": "SELL",
+    "isolated_usdc_balance": "0",
+    "last_funding_payment": "-84808065542809782734",
+    "leverage": "10000000000000000000",
+    "avg_entry_price": "84828000000000000000000",
+    "unsettled_funding": "0"
+   }
+  ],
+  "total_count": 1,
+  "page": 1,
+  "page_size": 100,
+  "has_next_page": false
+ },
+ "request_id": "1d207373-6e8c-4488-811d-3142ee15cf99"
+}

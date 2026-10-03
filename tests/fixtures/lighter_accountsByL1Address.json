@@ -1,0 +1,21 @@
+{
+ "code": 200,
+ "l1_address": "0x4f266b1a1fc148c38dfc5fc4c7926bee34150566",
+ "sub_accounts": [
+  {
+   "code": 0,
+   "account_type": 0,
+   "index": 702389,
+   "l1_address": "0x4f266b1a1fc148c38dfc5fc4c7926bee34150566",
+   "cancel_all_time": 0,
+   "total_order_count": 0,
+   "total_isolated_order_count": 0,
+   "pending_order_count": 0,
+   "available_balance": "",
+   "status": 1,
+   "collateral": "2744767.511855",
+   "transaction_time": 0,
+   "account_trading_mode": 0
+  }
+ ]
+}
