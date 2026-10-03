@@ -1,6 +1,7 @@
 """Fill classification and order aggregation (spec 5.2), on recorded and synthetic fills."""
 
 from collections import Counter
+import json
 from decimal import Decimal
 
 from hypermate.core.events import EventType
@@ -142,3 +143,15 @@ def test_build_spot_names_maps_index_and_pair_names():
     assert names['PURR/USDC'] == 'PURR' and names['@0'] == 'PURR'
     assert names['@107'] == 'HYPE'
     assert names['@200'] == 'FOO/PURR'
+
+
+def test_payload_is_aggregates_only():
+    """Retention: no raw fills in payload_json; first and last tid, counts and sums only."""
+    fills = load_fixture('hl_userFillsByTime.json')
+    event = max(adapter.fill_events(1, fills), key=lambda e: e.meta['fills'])
+    payload = event.payload()
+    assert event.meta['fills'] > 1
+    assert 'venue' not in payload and 'venue_account_id' not in payload
+    assert set(payload['meta']) >= {'tid_first', 'tid_last', 'fills', 'oid'}
+    assert not any(isinstance(v, list) for v in payload['meta'].values())
+    assert len(json.dumps(payload)) < 600

@@ -150,3 +150,63 @@ async def test_events_sent_messages_and_algo_state(repo):
     assert stored['total_ntl'] == '43000.10' and stored['fills_count'] == 3
     await repo.delete_algo(va, 'BTC', 1)
     assert await repo.active_algos(va) == {}
+
+
+async def test_prune_checkpoint_stats_and_algo_rows(repo):
+    import os
+    await repo.add_subscription(1, A, 'a', 1000)
+    (va, _), = await repo.tracked_accounts()
+    old = await repo.record_event('old', va, 'position_open', 1_000, {'coin': 'BTC'}, 'sent', 1)
+    new = await repo.record_event('new', va, 'position_close', 9_000, {'coin': 'BTC'}, 'sent', 1)
+    await repo.add_sent_message(old, 1, 1, 7)
+    await repo.add_sent_message(new, 1, 1, 8)
+    stats = await repo.db_stats(10_000)
+    assert stats == {'events_total': 2, 'events_24h': [('position_close', 1), ('position_open', 1)], 'sent_messages': 2}
+
+    assert await repo.prune_events(5_000) == (1, 1)
+    assert await repo.get_event_by_key('old') is None
+    assert await repo.sent_messages(new) == {1: (1, 8)}
+    await repo.checkpoint()
+    assert os.path.getsize(repo.path + '-wal') == 0
+
+    await repo.upsert_algo(va, {'coin': 'BTC', 'sign': -1, 'started_ms': 1, 'last_fill_ms': 2, 'fills_count': 3,
+                                'total_sz': Decimal('0.5'), 'total_ntl': Decimal('43000')})
+    rows = await repo.all_active_algos()
+    assert [(r['address'], r['coin'], r['sign'], r['fills_count']) for r in rows] == [(A, 'BTC', -1, 3)]
+
+
+async def test_startup_slims_legacy_payloads_once(tmp_path, caplog):
+    import json
+    import logging
+    path = str(tmp_path / 'hm.db')
+    repo = Repo(path)
+    await repo.connect()
+    await repo.add_subscription(1, A, 'a', 1000)
+    (va, _), = await repo.tracked_accounts()
+    fat = {'venue': 'hyperliquid', 'venue_account_id': va, 'type': 'position_open', 'coin': 'BTC',
+           'meta': {'dir': 'Open Long', 'fills': 3, 'oid': 1},
+           'chain': {'key': ['BTC', 'Open Long'], 'orders': 2,
+                     'meta': {'dir': 'Open Long', 'oid': 1, 'fills': 3, 'first_ms': 5, 'fee': '1', 'sign': 1}}}
+    await repo.record_event('k', va, 'position_open', 5000, fat, 'sent', 1)
+    await repo.db.execute("PRAGMA user_version = 0")
+    await repo.db.commit()
+    await repo.close()
+
+    caplog.set_level(logging.INFO, logger='hypermate.db.repo')
+    repo = Repo(path)
+    await repo.connect()
+    stored = (await repo.get_event_by_key('k'))['payload']
+    assert 'venue' not in stored and 'venue_account_id' not in stored
+    assert stored['meta'] == fat['meta']                                   # the order's own meta is kept
+    assert stored['chain']['meta'] == {'dir': 'Open Long', 'sign': 1}    # copied meta reduced
+    assert 'Slimmed 1 of 1' in caplog.text
+    cur = await repo.db.execute("PRAGMA user_version")
+    assert (await cur.fetchone())[0] == Repo.PAYLOAD_VERSION
+    await repo.close()
+    # second start: nothing to do
+    caplog.clear()
+    repo = Repo(path)
+    await repo.connect()
+    assert 'Slimmed' not in caplog.text
+    assert json.loads(json.dumps(stored)) == stored
+    await repo.close()

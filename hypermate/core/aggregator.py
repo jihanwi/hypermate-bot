@@ -46,8 +46,16 @@ def start_chain(payload: dict) -> dict:
         'orders': 1,
         'first_ms': (payload.get('meta') or {}).get('first_ms', payload['ts_ms']),
         'last_ms': payload['ts_ms'],
-        'meta': payload.get('meta') or {},
+        'meta': chain_meta(payload.get('meta') or {}),
     }
+
+
+CHAIN_META_KEYS = ('dir', 'sign', 'dex', 'display_coin')
+
+
+def chain_meta(meta: dict) -> dict:
+    """The part of an order's meta a merged message still needs (the rest is on the order's own row)."""
+    return {k: meta[k] for k in CHAIN_META_KEYS if k in meta}
 
 
 def merge_into_chain(chain: dict, payload: dict) -> dict:

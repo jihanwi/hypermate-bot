@@ -177,9 +177,10 @@ def order_event(venue_account_id: int, fills: list[dict]) -> Event:
     vwap = notional / size if size else None
     pnl = sum((to_decimal(f.get('closedPnl')) or ZERO for f in fills), ZERO)
     fee = sum((to_decimal(f.get('fee')) or ZERO for f in fills), ZERO)
+    # Aggregates only: the raw fills are not stored (events.payload_json stays small)
     meta = {'dir': first.get('dir'), 'oid': first.get('oid'), 'fills': len(fills), 'sign': sign,
             'first_ms': int(first['time']), 'fee': str(fee), 'fee_token': first.get('feeToken'),
-            'dex': coin_dex(coin)}
+            'dex': coin_dex(coin), 'tid_first': first.get('tid'), 'tid_last': last.get('tid')}
 
     if is_spot_coin(coin):
         event_type = EventType.SPOT_BUY if sign > 0 else EventType.SPOT_SELL

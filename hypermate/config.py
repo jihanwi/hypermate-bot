@@ -41,6 +41,7 @@ class Config:
     BACKUP_DIR: str = os.getenv("BACKUP_DIR", "")       # default: <DATABASE_PATH dir>/backups
     BACKUP_KEEP_DAYS: int = 7
     BACKUP_HOUR_KST: int = 4
+    EVENTS_RETENTION_DAYS: int = 30                  # pruned after the daily backup
     SPOT_META_TTL_SEC: int = 3600
     PERP_DEXS_TTL_SEC: int = 3600
 

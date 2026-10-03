@@ -435,6 +435,7 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 - 진입 시 `ALGO_START` 이벤트 1건 (10 의 algo 예시) 을 새 메시지로 보낸다 (텔레그램 알림이 가야 하므로 edit 승격 아님, 오너 결정 2026-10-03). 진입 판정 전 사이클의 체결 메시지(debounce 누적)는 그대로 둔다. 이후 같은 키의 개별 fill 이벤트는 `delivery='suppressed_algo'` 로 기록만 한다. 따라서 algo 하나당 메시지는 감지 전 체결 메시지 + START + END.
 - 메시지 방향 표기: 시작 시점 포지션과 같은 방향으로 늘리면 `accumulating LONG/SHORT`, 반대 방향(Close)이면 `reducing LONG/SHORT` (오너 결정). 예: CASHCAT Close Short (+) → `algo reducing SHORT $CASHCAT`. ALGO_END 도 같은 표기: `algo done accumulating LONG $BTC`, `algo done reducing SHORT $CASHCAT`.
 - 진행: START 메시지를 `algo_progress_sec` (600) 마다 edit (누적 fills, 누적 notional, VWAP, 경과시간). 새 메시지 아님. `sent_messages` 테이블 사용.
+- 운영 (fix/db-retention): `events.payload_json` 은 집계값만 저장 (fills 수, size, notional, VWAP, 첫/마지막 tid). 원본 fills 배열은 저장하지 않는다. events 는 30일 보존, 매일 백업 job 뒤에 prune 과 `PRAGMA wal_checkpoint(TRUNCATE)`. `/health` 에 WAL 크기, events 행 수, `algo_active` 행 목록.
 - 종료: 마지막 fill 이후 `algo_idle_sec` (600) 동안 fill 없음 → `ALGO_END` 1건 (총 size, notional, VWAP, 소요시간) 후 상태 삭제.
 - 반대 방향 체결, 청산, 포지션 완전 종료는 즉시 정상 알림. 상태는 유지.
 - 메시지 형식은 네이티브 TWAP 과 맞추되 라벨은 "TWAP" 대신 "algo".
@@ -443,7 +444,7 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 
 **TWAP**
 - 1차 폴링에서 포지션 변화 감지 시, 또는 `twap_active` 에 행이 있는 계정은, 그 사이클에 `webData2` 호출.
-- `twapStates` 에 있는데 `twap_active` 에 없는 twapId → `TWAP_START`. meta: twap_id, coin, side, sz, minutes, reduceOnly, 예상 종료 시각 (`timestamp + minutes*60*1000`).
+- `twapStates` 에 있는데 `twap_active` 에 없는 twapId → `TWAP_START`. meta: twap_id, coin, side, sz, minutes, reduceOnly, 예상 종료 시각 (`timestamp + minutes*60*1000`). TWAP 의 `timestamp` 가 추적 시작 시각 (cursors kind `twap`, /add 때 기록) 보다 앞서면, 즉 /add 시점에 이미 돌고 있었으면 "started TWAP" 대신 "TWAP in progress (started 2h ago)" 로 표시 (meta `in_progress`).
 - `twap_active` 에 있는데 `twapStates` 에서 사라진 twapId → `twapHistory` 로 최종 status 조회 → `TWAP_END`. meta: status, executedSz, executedNtl, 평균가 `executedNtl / executedSz`, 실제 소요 시간. `twapHistory` 에서 못 찾으면 (호출 실패 등) 마지막 state로 status `unknown`.
 - **억제 규칙**: `twap_active` 에 (account, coin) 이 있는 동안, 그 coin의 같은 방향 fills 기반 포지션 이벤트는 알림 생성하지 않음 (events 테이블에는 `delivery='suppressed_twap'` 로 기록, `/recent` 에서는 보임). 반대 방향 체결(TWAP 중 수동 반대매매)은 정상 알림.
 - 슬라이스 체결은 `userFills` 에 안 나오므로 억제 규칙은 "같은 방향의 수동 체결" 만 대상이 된다. 슬라이스 자체는 1차 폴링의 snapshot 변화로만 보임. snapshot 변화가 TWAP 활성 coin 때문이면 fills 조회를 **건너뛴다** (weight 절약).

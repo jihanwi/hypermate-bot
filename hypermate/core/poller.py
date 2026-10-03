@@ -164,13 +164,18 @@ async def weight_log_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.info(f"HL weight last minute: {weight}/{budget.per_minute}, 429s: {rate_limited}")
 
 
-def health_report(context: ContextTypes.DEFAULT_TYPE, counts: dict, db_path: str) -> dict:
+def _size(path: str) -> Optional[int]:
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return None
+
+
+def health_report(context: ContextTypes.DEFAULT_TYPE, counts: dict, db_path: str,
+                  db_stats: Optional[dict] = None, algos: Optional[list] = None) -> dict:
     state = get_state(context)
     budget: Optional[scheduler.WeightBudget] = context.bot_data.get('budget')
-    try:
-        db_bytes = os.path.getsize(db_path)
-    except OSError:
-        db_bytes = None
+    db_bytes = _size(db_path)
     return {
         'last_poll_ms': dict(state.last_poll_ms),
         'accounts': state.accounts,
@@ -181,6 +186,9 @@ def health_report(context: ContextTypes.DEFAULT_TYPE, counts: dict, db_path: str
         'twaps': counts.get('twaps', 0),
         'algos': counts.get('algos', 0),
         'db_bytes': db_bytes,
+        'wal_bytes': _size(db_path + '-wal'),
+        'db_stats': db_stats or {},
+        'algo_rows': algos or [],
         'uptime_ms': adapter.now_ms() - state.started_ms,
         'started_ms': state.started_ms,
     }

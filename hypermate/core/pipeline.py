@@ -121,15 +121,20 @@ async def sync_twaps(bot: Bot, repo: Repo, client: HyperliquidClient, key: int, 
     current = twap.parse_twap_states(web_data2)
     prices = twap.mark_prices(web_data2)
     now = adapter.now_ms()
+    tracking_since = await _cursor(repo, key, 'twap')   # set on /add, never advanced
 
     for twap_id, state in current.items():
         started = int(state.get('timestamp') or now)
         await repo.upsert_twap(key, twap_id, state, started)
         if twap_id not in active:
-            logger.info(f"TWAP {twap_id} started: {state.get('side')} {state.get('coin')} for {address}")
+            in_progress = started < tracking_since   # already running when the wallet was added
+            logger.info(f"TWAP {twap_id} {'in progress' if in_progress else 'started'}: "
+                        f"{state.get('side')} {state.get('coin')} for {address}")
             await emit(bot, repo, key, EventType.TWAP_START, twap_id, started,
-                       {'twap_id': twap_id, 'state': state, 'mark_px': prices.get(state.get('coin'))},
-                       lambda alias, s=state: format_twap_start(address, alias, s, prices.get(s.get('coin')), now))
+                       {'twap_id': twap_id, 'state': state, 'mark_px': prices.get(state.get('coin')),
+                        'in_progress': in_progress},
+                       lambda alias, s=state, ip=in_progress: format_twap_start(
+                           address, alias, s, prices.get(s.get('coin')), now, ip))
 
     ended = [twap_id for twap_id in active if twap_id not in current]
     history = None
