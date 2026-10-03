@@ -176,6 +176,8 @@ def lighter_interval_sec(n_accounts: int, ws_connected: bool) -> int:
 
 
 def venue_interval_sec(venue: str, adapter_obj, n_accounts: int) -> int:
+    if venue == venues.ASTER:
+        return Config.ASTER_POLL_SEC
     if venue == venues.LIGHTER:
         stream = getattr(adapter_obj, 'stream', None)
         return lighter_interval_sec(n_accounts, bool(stream is not None and stream.connected))

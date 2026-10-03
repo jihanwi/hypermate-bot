@@ -771,6 +771,12 @@ def _mb(size: Optional[int]) -> str:
 
 
 
+def format_privacy_on(wallet_address: str, alias: str, venue: str) -> str:
+    """Aster privacy turned on (spec 6.4): positions are hidden from now on."""
+    return (f"{badge(venue)} 🔒 <b>{alias_link(wallet_address, alias, venue)}</b> turned on Aster privacy. "
+            f"Aster positions and fills are hidden from now on; tracking resumes if it is turned off again.")
+
+
 # Multi-algo summary mode (spec 5.2 멀티 알고 요약, spec 10) -----------------------------
 
 def format_multi_algo_summary(wallet_address: str, alias: str, groups: list[dict], coins: int,
