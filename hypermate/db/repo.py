@@ -20,7 +20,7 @@ ADDRESS_EXISTS = 'address_exists'
 
 HYPERLIQUID = 'hyperliquid'
 # Cursor kinds the Phase 0 pipeline keeps per venue account
-CURSOR_KINDS = ('fills', 'ledger', 'twap')   # 'twap': when TWAP tracking began (never advanced)
+CURSOR_KINDS = ('fills', 'ledger', 'twap', 'trades')   # 'twap': when TWAP tracking began (never advanced)
 
 
 def slim_payload(payload: dict) -> dict:
@@ -310,6 +310,85 @@ class Repo:
             "AND EXISTS (SELECT 1 FROM subscriptions s WHERE s.wallet_id = va.wallet_id) "
             "ORDER BY va.venue_account_id", (HYPERLIQUID,))
         return [(va_id, address, last) for va_id, address, last in await cur.fetchall()]
+
+    # Multi-venue accounts (spec 6.1) ------------------------------------------------
+
+    async def ensure_venue_account(self, address: str, venue: str, account_ref: str, active: bool,
+                                   now_ms: int, meta: Optional[dict] = None) -> tuple[int, bool]:
+        """Create or update one venue account of a wallet. Returns (venue_account_id, created).
+        A newly created active account starts its cursors at now (no history replay)."""
+        wallet_id = await self.wallet_id(address)
+        if wallet_id is None:
+            await self.db.execute("INSERT OR IGNORE INTO wallets (evm_address) VALUES (?)", (address.lower(),))
+            wallet_id = await self.wallet_id(address)
+        cur = await self.db.execute(
+            "SELECT venue_account_id, active FROM venue_accounts WHERE venue = ? AND account_ref = ?",
+            (venue, account_ref))
+        row = await cur.fetchone()
+        if row is None:
+            cur = await self.db.execute(
+                "INSERT INTO venue_accounts (wallet_id, venue, account_ref, active, last_activity_ms, dexs_json) "
+                "VALUES (?, ?, ?, ?, ?, ?)", (wallet_id, venue, account_ref, int(active), now_ms,
+                                              json.dumps((meta or {}).get('dexs', []))))
+            key = cur.lastrowid
+            for kind in CURSOR_KINDS:
+                await self.db.execute(
+                    "INSERT OR REPLACE INTO cursors (venue_account_id, kind, cursor, updated_at) VALUES (?, ?, ?, ?)",
+                    (key, kind, str(now_ms), now_ms))
+            await self.db.commit()
+            return key, True
+        key, was_active = row
+        if int(was_active) != int(active):
+            await self.db.execute("UPDATE venue_accounts SET active = ?, last_activity_ms = ? WHERE venue_account_id = ?",
+                                  (int(active), now_ms if active else None, key))
+            if active:   # re-activated: start again from now
+                await self.db.execute("DELETE FROM snapshots WHERE venue_account_id = ?", (key,))
+                for kind in CURSOR_KINDS:
+                    await self.db.execute(
+                        "INSERT OR REPLACE INTO cursors (venue_account_id, kind, cursor, updated_at) "
+                        "VALUES (?, ?, ?, ?)", (key, kind, str(now_ms), now_ms))
+            await self.db.commit()
+        return key, False
+
+    async def venue_accounts_of(self, address: str) -> list[dict]:
+        """Every venue account row of a wallet: {key, venue, account_ref, active, last_activity_ms, dexs}."""
+        cur = await self.db.execute(
+            "SELECT va.venue_account_id, va.venue, va.account_ref, va.active, va.last_activity_ms, va.dexs_json "
+            "FROM venue_accounts va JOIN wallets w USING (wallet_id) WHERE w.evm_address = ? "
+            "ORDER BY va.venue, va.account_ref", (address.lower(),))
+        return [{'key': r[0], 'venue': r[1], 'account_ref': r[2], 'active': bool(r[3]), 'last_activity_ms': r[4],
+                 'dexs': json.loads(r[5] or '[]')} for r in await cur.fetchall()]
+
+    async def tracked_venue_accounts(self, venue: str) -> list[dict]:
+        """Active accounts of one venue with at least one subscriber: {key, account_ref, address, last_activity_ms}."""
+        cur = await self.db.execute(
+            "SELECT va.venue_account_id, va.account_ref, w.evm_address, va.last_activity_ms FROM venue_accounts va "
+            "JOIN wallets w USING (wallet_id) WHERE va.venue = ? AND va.active = 1 "
+            "AND EXISTS (SELECT 1 FROM subscriptions s WHERE s.wallet_id = va.wallet_id) "
+            "ORDER BY va.venue_account_id", (venue,))
+        return [{'key': r[0], 'account_ref': r[1], 'address': r[2], 'last_activity_ms': r[3]}
+                for r in await cur.fetchall()]
+
+    async def venue_of(self, venue_account_id: int) -> Optional[tuple[str, str, str]]:
+        """(venue, account_ref, address) of a venue account."""
+        cur = await self.db.execute(
+            "SELECT va.venue, va.account_ref, w.evm_address FROM venue_accounts va JOIN wallets w USING (wallet_id) "
+            "WHERE va.venue_account_id = ?", (venue_account_id,))
+        row = await cur.fetchone()
+        return (row[0], row[1], row[2]) if row else None
+
+    async def subscribed_wallets(self) -> list[str]:
+        cur = await self.db.execute(
+            "SELECT DISTINCT w.evm_address FROM wallets w JOIN subscriptions s USING (wallet_id) ORDER BY w.evm_address")
+        return [r[0] for r in await cur.fetchall()]
+
+    async def account_value_sum(self, address: str) -> Optional[str]:
+        """Sum of the stored snapshot account values over the wallet's active venue accounts, Decimal text."""
+        cur = await self.db.execute(
+            "SELECT s.account_value FROM snapshots s JOIN venue_accounts va USING (venue_account_id) "
+            "JOIN wallets w USING (wallet_id) WHERE w.evm_address = ? AND va.active = 1", (address.lower(),))
+        values = [Decimal(r[0]) for r in await cur.fetchall() if r[0] is not None]
+        return str(sum(values, Decimal(0))) if values else None
 
     async def touch_activity(self, venue_account_id: int, now_ms: int) -> None:
         await self.db.execute("UPDATE venue_accounts SET last_activity_ms = ? WHERE venue_account_id = ?",

@@ -7,6 +7,7 @@
 
 import asyncio
 import logging
+from decimal import Decimal
 from typing import Callable, Optional
 
 from telegram import Bot
@@ -20,6 +21,8 @@ from hypermate.core.formatter import (algo_label, format_algo_end, format_algo_p
                                       format_ledger_event, format_twap_end, format_twap_start)
 from hypermate.core.numbers import to_decimal
 from hypermate.db.repo import Repo
+from hypermate.venues import base as venues
+from hypermate.venues.base import VenueAccount, fill_direction
 from hypermate.venues.hyperliquid import adapter, twap
 from hypermate.venues.hyperliquid.client import HyperliquidClient
 
@@ -37,13 +40,32 @@ def settings() -> dict:
     return Config.DEFAULT_SETTINGS
 
 
+# Venue of each account key (spec 6.1): filled by the poller / commands before events are rendered.
+# Keys not registered are Hyperliquid (Phase 0/1 behaviour).
+_ACCOUNTS: dict[int, VenueAccount] = {}
+
+
+def register_account(key: int, account: VenueAccount) -> None:
+    _ACCOUNTS[key] = account
+
+
+def venue_of(key: int) -> str:
+    account = _ACCOUNTS.get(key)
+    return account.venue if account is not None else venues.HYPERLIQUID
+
+
+def label_for(key: int, alias: str) -> str:
+    account = _ACCOUNTS.get(key)
+    return account.label(alias) if account is not None else alias
+
+
 # Delivery --------------------------------------------------------------------
 
 async def deliver(bot: Bot, repo: Repo, account_key: int, render: Render, event_id: Optional[int] = None) -> None:
     """Send to every subscriber (rendered with their alias); remember message ids for later edits."""
     subscribers = await repo.subscribers(account_key)
     for i, (user_id, alias) in enumerate(subscribers):
-        text = render(alias)
+        text = render(label_for(account_key, alias))
         if text is None:
             continue
         try:
@@ -62,7 +84,7 @@ async def edit_or_send(bot: Bot, repo: Repo, account_key: int, target_event_id: 
     sent = await repo.sent_messages(target_event_id)
     subscribers = await repo.subscribers(account_key)
     for i, (user_id, alias) in enumerate(subscribers):
-        text = render(alias)
+        text = render(label_for(account_key, alias))
         if text is None:
             continue
         if user_id in sent:
@@ -257,12 +279,12 @@ async def _send_fill_event(bot: Bot, repo: Repo, key: int, address: str, event_i
         await repo.update_event_payload(event_id, {**payload, 'chain_base': base['event_id']})
         held = await _held_ms(repo, key, {**payload, 'type': chain['type']})
         await edit_or_send(bot, repo, key, base['event_id'],
-                           lambda alias: format_fill_message(address, alias, chain, held))
+                           lambda alias: format_fill_message(address, alias, chain, held, venue_of(key)))
         return
     chain = aggregator.start_chain(payload)
     await repo.update_event_payload(event_id, {**payload, 'chain': chain})
     held = await _held_ms(repo, key, payload)
-    await deliver(bot, repo, key, lambda alias: format_fill_message(address, alias, chain, held), event_id)
+    await deliver(bot, repo, key, lambda alias: format_fill_message(address, alias, chain, held, venue_of(key)), event_id)
 
 
 async def _liquidation_already_alerted(repo: Repo, key: int, coins: list[str], ts_ms: int) -> bool:
@@ -289,7 +311,7 @@ async def _start_algo(bot: Bot, repo: Repo, key: int, address: str, algo_key: tu
     logger.info(f"Algo started: {verb} {side} {coin} for {address} ({len(orders)} orders)")
     if event_id is not None:
         await deliver(bot, repo, key,
-                      lambda alias: format_algo_progress(address, alias, state, verb, side, position_after),
+                      lambda alias: format_algo_progress(address, alias, state, verb, side, position_after, venue_of(key)),
                       event_id)
     return state
 
@@ -317,7 +339,7 @@ async def process_fills(bot: Bot, repo: Repo, client: HyperliquidClient, key: in
 
     for event in fill_events:
         event.meta['poll_ms'] = poll_ms
-        if event.type in SPOT_TYPES:
+        if event.type in SPOT_TYPES and client is not None:
             event.meta['display_coin'] = await client.spot_display_name(event.coin)
 
     twap_states = list((await repo.active_twaps(key)).values())
@@ -383,7 +405,7 @@ async def maintain_algos(bot: Bot, repo: Repo, key: int, address: str, now: int)
             logger.info(f"Algo ended: {verb} {side} {coin} for {address}")
             await emit(bot, repo, key, EventType.ALGO_END, source, now,
                        {**state, 'verb': verb, 'side': side},
-                       lambda alias, s=state, v=verb, sd=side: format_algo_end(address, alias, s, v, sd))
+                       lambda alias, s=state, v=verb, sd=side: format_algo_end(address, alias, s, v, sd, venue_of(key)))
             await repo.delete_algo(key, coin, sign)
             continue
         if start and now - int(meta.get('last_progress_ms', 0)) >= int(st['algo_progress_sec']) * 1000:
@@ -391,7 +413,68 @@ async def maintain_algos(bot: Bot, repo: Repo, key: int, address: str, now: int)
             await repo.update_event_payload(start['event_id'], {**meta, 'last_progress_ms': now})
             await edit_or_send(bot, repo, key, start['event_id'],
                                lambda alias, s=state, v=verb, sd=side, pa=position_after:
-                                   format_algo_progress(address, alias, s, v, sd, pa))
+                                   format_algo_progress(address, alias, s, v, sd, pa, venue_of(key)))
+
+
+# Other venues (spec 6.1): snapshot, then fills through the shared pipeline, or a snapshot diff ---------
+
+def diff_fills(previous: dict[str, dict], current: dict[str, dict], now_ms: int) -> list[dict]:
+    """Synthetic fills from two snapshots for venues without a fills endpoint (spec 6.1):
+    one fill per coin whose size changed, priced at the new entry price (or the old one on a close),
+    no realized PnL, oid/tid derived from the time so the event has a dedupe key."""
+    fills = []
+    for coin in sorted(set(previous) | set(current)):
+        before = to_decimal((previous.get(coin) or {}).get('szi')) or Decimal(0)
+        after = to_decimal((current.get(coin) or {}).get('szi')) or Decimal(0)
+        if before == after:
+            continue
+        delta = after - before
+        side = 'B' if delta > 0 else 'A'
+        price = to_decimal((current.get(coin) or previous.get(coin) or {}).get('entry_px'))
+        direction, _ = fill_direction(side, before, abs(delta))
+        fills.append({'coin': coin, 'px': str(price or 0), 'sz': str(abs(delta)), 'side': side, 'time': now_ms,
+                      'startPosition': str(before), 'dir': direction, 'oid': f"diff:{coin}:{now_ms}",
+                      'tid': f"diff:{coin}:{now_ms}", 'closedPnl': '0', 'fee': '0', 'feeToken': 'USDC',
+                      'synthetic': True})
+    return fills
+
+
+async def poll_venue_account(bot: Bot, repo: Repo, adapter_obj, account: VenueAccount) -> tuple[bool, int]:
+    """One poll of a non-HL venue account. Returns (activity seen, snapshot weight).
+
+    Fills are fetched when a position size changed or an algo is active (spec 3.5 gating);
+    an adapter without fills (fetch_events returns None) gets snapshot-diff fills instead.
+    """
+    key = account.venue_account_id
+    register_account(key, account)
+    client = None
+    now = adapter.now_ms()
+    previous = await repo.get_snapshot(key)
+    snap = await adapter_obj.snapshot(account)
+    current = {'': snap.positions}
+    changed = previous is not None and adapter.snapshot_changed(previous, current)
+    if previous is None:
+        logger.info(f"Baseline {account.venue} snapshot for {account.address}#{account.account_ref}: "
+                    f"{len(snap.positions)} positions")
+    await repo.save_snapshot(key, current, now, str(snap.account_value) if snap.account_value is not None else None)
+    activity = changed
+    active_algo = bool(await repo.active_algos(key))
+    if changed or active_algo or previous is None:      # baseline poll sets the trades cursor
+        cursor = await repo.get_cursor(key, 'trades')
+        result = await adapter_obj.fetch_events(account, cursor)
+        if result is None:
+            fills = diff_fills(previous.get('', {}) if previous else {}, snap.positions, now) if changed else []
+        else:
+            fills, new_cursor = result
+            if new_cursor != cursor:
+                await repo.set_cursor(key, 'trades', str(new_cursor), now)
+        if fills:
+            await process_fills(bot, repo, client, key, account.address, fills, now)
+            activity = True
+    await maintain_algos(bot, repo, key, account.address, adapter.now_ms())
+    if activity:
+        await repo.touch_activity(key, now)
+    return activity, adapter_obj.cost('snapshot')
 
 
 async def process_ledger(bot: Bot, repo: Repo, key: int, address: str, updates: list[dict]) -> None:
