@@ -238,7 +238,7 @@ class FakeWS:
 
 
 async def test_stream_degrades_to_rest_and_resubscribes_on_recovery(monkeypatch):
-    monkeypatch.setattr('hypermate.venues.lighter.stream.RECONNECT_MIN_SEC', 0)
+    monkeypatch.setattr('hypermate.venues.stream.RECONNECT_MIN_SEC', 0)
     account_msg = {'channel': f'account_all_positions/{INDEX}',
                    'positions': {'0': {'market_id': 0, 'symbol': 'ETH', 'sign': 1, 'position': '2.5',
                                        'avg_entry_price': '2600', 'position_value': '6500', 'unrealized_pnl': '1'}},
