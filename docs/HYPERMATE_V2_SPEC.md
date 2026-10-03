@@ -572,7 +572,7 @@ Arbitrum 브릿지 (선택, `ARBISCAN_API_KEY` 있을 때만): 레거시 브릿�
 | `referral` | weak | referredBy 또는 referralStates |
 | `vault_follow` | weak | userVaultEquities, vaultDetails.followers |
 
-시스템 주소 제외 (오너 결정 2026-10-03, 거래소 태그 대체): `0x2000…0000` (HIP-3/시스템 에스크로), `0x0000…0000`, `0xfefe…fefe` (assistance fund), `0xdfc24b077bc1425ad1dea75bcb6f8158e10df303` (HLP vault), 그리고 하위 36자리가 한 문자 반복이거나 두 문자 반복인 주소는 시스템으로 간주. 같은 계정의 spot/perp 이동 (`send` 의 user == destination) 은 상대방이 아니다. 거래소 핫월렛 제외는 Phase 3 범위 밖 (백로그), "거래소 N곳 사용" 요약 줄 없음.
+시스템 주소 제외 (오너 결정 2026-10-03, 거래소 태그 대체): `0x2000…0000` (HIP-3/시스템 에스크로), `0x0000…0000`, `0xfefe…fefe` (assistance fund), `0xdfc24b077bc1425ad1dea75bcb6f8158e10df303` (HLP vault), 그리고 `0x2` 또는 `0x0` 뒤에 `0` 이 28개 이상 연속하는 주소 (spot 토큰 / HIP-3 에스크로, 토큰 인덱스가 끝에 붙음: `0x2000…0079`, `0x2000…010c`, PM 라이브 리뷰 2026-10-03) 는 시스템으로 간주. 같은 계정의 spot/perp 이동 (`send` 의 user == destination) 은 상대방이 아니다. 거래소 핫월렛 제외는 Phase 3 범위 밖 (백로그), "거래소 N곳 사용" 요약 줄 없음.
 
 ### 7.3 UX
 

@@ -14,6 +14,7 @@ decision 2026-10-03), backlog.
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Optional
@@ -47,16 +48,15 @@ CONFIDENCE_ORDER = (CONFIRMED, LIKELY, WEAK)
 TRANSFER_TYPES = ('spotTransfer', 'send', 'internalTransfer', 'subAccountTransfer')
 
 
+_SYSTEM_PATTERN = re.compile(r'^0x[02]0{28,}[0-9a-f]*$')
+
+
 def is_system_address(address: str) -> bool:
-    """Listed system addresses, plus any address whose last 36 hex digits repeat one or two characters
-    (0x2000…0000, 0x0000…, 0xfefe…fe)."""
+    """Listed system addresses, plus the HL system pattern: 0x2 or 0x0 followed by at least 28 zeros.
+    Spot token and HIP-3 escrow addresses carry the token index at the end (0x2000…0079, 0x2000…010c),
+    PM live review 2026-10-03."""
     address = address.lower()
-    if address in SYSTEM_ADDRESSES:
-        return True
-    tail = address[6:]
-    if len(tail) != 36:
-        return False
-    return len(set(tail)) == 1 or tail == tail[:2] * 18
+    return address in SYSTEM_ADDRESSES or bool(_SYSTEM_PATTERN.match(address))
 
 
 @dataclass

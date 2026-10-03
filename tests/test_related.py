@@ -119,8 +119,12 @@ def test_counterparty_rules_and_system_addresses():
     assert related.is_system_address('0x2000000000000000000000000000000000000000')
     assert related.is_system_address('0xfefefefefefefefefefefefefefefefefefefefe')
     assert related.is_system_address('0xDFC24B077BC1425AD1DEA75BCB6F8158E10DF303')      # HLP, any case
-    assert related.is_system_address('0x3000000000000000000000000000000000000000')      # pattern: zeros
-    assert related.is_system_address('0xabababababababababababababababababababab')      # pattern: repeat
+    # HL spot token / HIP-3 escrow addresses: 0x2 or 0x0, 28+ zeros, token index at the end
+    for escrow in ('0x2000000000000000000000000000000000000079', '0x2000000000000000000000000000000000000168',
+                   '0x200000000000000000000000000000000000010c', '0x0000000000000000000000000000000000000abc'):
+        assert related.is_system_address(escrow), escrow
+    assert not related.is_system_address('0x3000000000000000000000000000000000000000')  # not 0x2 / 0x0
+    assert not related.is_system_address('0x2000000000000000000000000000abcdef000079')  # zeros broken
     assert not related.is_system_address(MASTER)
 
     def tx(kind, user, dest, usd, t=1):
