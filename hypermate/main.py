@@ -13,9 +13,14 @@ from hypermate.config import Config
 from hypermate.core import poller
 from hypermate.db import backup
 from hypermate.db.repo import Repo
+from hypermate.venues import base as venues
 from hypermate.venues.hyperliquid import adapter
 from hypermate.venues.hyperliquid.client import HyperliquidClient
 from hypermate.venues.hyperliquid.scheduler import WeightBudget
+from hypermate.venues.hyperliquid.venue import HyperliquidVenue
+from hypermate.venues.lighter.adapter import LighterAdapter
+from hypermate.venues.lighter.client import LighterClient
+from hypermate.venues.lighter.stream import LighterStream
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +56,7 @@ async def post_init(application: Application) -> None:
     await client.start()
     application.bot_data['hl'] = client
     poller.get_state(application)
+    await build_venues(application, client)
     # One-time payload slimming runs in the background so the bot answers right away (fix/migration-oom)
     application.bot_data['maintenance_task'] = asyncio.create_task(
         backup.startup_maintenance(repo, adapter.now_ms()))
@@ -61,7 +67,29 @@ async def post_init(application: Application) -> None:
     logger.info(f"Registered {len(texts.MENU_COMMANDS)} menu commands")
 
 
+async def build_venues(application: Application, hl: HyperliquidClient) -> None:
+    """Venue adapters (spec 3.2): HL wrapper plus Lighter (REST bucket 50/min, WS stream best effort)."""
+    lighter_budget = WeightBudget(Config.LIGHTER_REQ_BUDGET)
+    lighter = LighterClient(Config.LIGHTER_API_URL, lighter_budget)
+    await lighter.start()
+    stream = None
+    if Config.LIGHTER_WS_ENABLED:
+        stream = LighterStream(Config.LIGHTER_WS_URL)
+        stream.start()
+    application.bot_data['lighter'] = lighter
+    application.bot_data['lighter_budget'] = lighter_budget
+    application.bot_data['lighter_stream'] = stream
+    application.bot_data['venues'] = {
+        venues.HYPERLIQUID: HyperliquidVenue(hl),
+        venues.LIGHTER: LighterAdapter(lighter, stream),
+    }
+
+
 async def post_shutdown(application: Application) -> None:
+    if application.bot_data.get('lighter_stream') is not None:
+        await application.bot_data['lighter_stream'].stop()
+    if 'lighter' in application.bot_data:
+        await application.bot_data['lighter'].close()
     if 'hl' in application.bot_data:
         await application.bot_data['hl'].close()
     if 'repo' in application.bot_data:
@@ -90,7 +118,10 @@ def build_application() -> Application:
     job_queue = application.job_queue
     # poll_job itself skips cycles while the adaptive interval (spec 3.5) has not elapsed
     job_queue.run_repeating(poller.poll_job, interval=Config.POLL_FAST_SEC, first=10)
+    job_queue.run_repeating(poller.venue_poll_job, interval=Config.POLL_FAST_SEC, first=15)
     job_queue.run_repeating(poller.weight_log_job, interval=60, first=60)
+    job_queue.run_daily(poller.rescan_job, time=datetime.time(hour=Config.VENUE_RESCAN_HOUR_KST,
+                                                              minute=Config.VENUE_RESCAN_MINUTE, tzinfo=backup.KST))
     job_queue.run_daily(backup.backup_job, time=datetime.time(hour=Config.BACKUP_HOUR_KST, tzinfo=backup.KST))
     return application
 

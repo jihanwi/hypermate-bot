@@ -1,0 +1,90 @@
+[
+ {
+  "channel": "positions",
+  "data": [
+   {
+    "account": "0x068731bac41a937440e14859f0fa8c3b453c2266",
+    "avg_entry_price": "84828",
+    "block_number": "0",
+    "isolated_usdc_balance": "0",
+    "last_funding_payment": "-84.808065542809782734",
+    "leverage": "10",
+    "log_index": "0",
+    "margin_mode": 0,
+    "market_id": "1",
+    "quote_amount": "1771.6949080272",
+    "side": "SELL",
+    "size": "-0.020892",
+    "unsettled_funding": "0",
+    "worker_timestamp": "0"
+   }
+  ],
+  "method": "snapshot",
+  "position_count": 1,
+  "type": "snapshot",
+  "worker_timestamp": "1791041078044222341"
+ },
+ {
+  "type": "subscribed",
+  "method": "subscribe",
+  "status": "success",
+  "message": "Successfully subscribed to positions for 3 market(s) with 3 maker filter(s)",
+  "channel": "positions",
+  "data": {
+   "market_ids": [
+    1,
+    2,
+    3
+   ],
+   "makers": [
+    "0x52d35e76d1e4af55469036eba1b757944ed20bab",
+    "0xeafa69936fd638741f785a983ea7b7e9cbee35e7",
+    "0x068731bac41a937440e14859f0fa8c3b453c2266"
+   ]
+  }
+ },
+ {
+  "channel": "trades",
+  "type": "update",
+  "market_id": "1",
+  "data": {
+   "id": "0x9c62e4b5ed2e0f640ed5dc5e104a62c45bf13c5d00000272-0x727f5cb58b0fdc58f6801b56b8628844a490e8e3000000d8",
+   "maker_order_id": "0x9c62e4b5ed2e0f640ed5dc5e104a62c45bf13c5d00000272",
+   "taker_order_id": "0x727f5cb58b0fdc58f6801b56b8628844a490e8e3000000d8",
+   "maker": "0x7534f8817db178fcc8b7d19e9d83ec43d4b939fe",
+   "taker": "0x0a66ece27dfdc8dfad9d3c2ed1cf2482840f36b3",
+   "maker_side": 1,
+   "price": "84828.1",
+   "size": "0.000153",
+   "fee_maker": "0.00129786993",
+   "fee_taker": "0.00389360979",
+   "fee_liquidation": "0"
+  },
+  "tx_hash": "0xfe1acfa820f7520c5a3b6753951b3571fcc3e8aa5d5ccf6971eba7eee87c6b89",
+  "block_number": 23435321,
+  "log_index": 215,
+  "worker_timestamp": "1791041078375230377"
+ },
+ {
+  "channel": "trades",
+  "type": "update",
+  "market_id": "1",
+  "data": {
+   "id": "0x9c62e4b5ed2e0f640ed5dc5e104a62c45bf13c5d00000272-0x0fae5c32941aef752623034130709902c03088d8000000fb",
+   "maker_order_id": "0x9c62e4b5ed2e0f640ed5dc5e104a62c45bf13c5d00000272",
+   "taker_order_id": "0x0fae5c32941aef752623034130709902c03088d8000000fb",
+   "maker": "0x7534f8817db178fcc8b7d19e9d83ec43d4b939fe",
+   "taker": "0x0416b03747a007fb6b87bbc1ed6dfeff61a3cefc",
+   "maker_side": 1,
+   "price": "84828.1",
+   "size": "0.000505",
+   "fee_maker": "0.00428381905",
+   "fee_taker": "0.01285145715",
+   "fee_liquidation": "0"
+  },
+  "tx_hash": "0x0a2b59b1ca50a37cb44c092905c4113565e88c3bc2bcaf7b3ab4ddd2d69eabbe",
+  "block_number": 23435322,
+  "log_index": 250,
+  "worker_timestamp": "1791041079866356289"
+ }
+]

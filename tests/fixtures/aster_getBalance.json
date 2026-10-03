@@ -1,0 +1,14 @@
+{
+ "result": {
+  "address": "0x84bd0dc61fea2e69393b7e5bfca71cebd7324d94",
+  "accountPrivacy": "disabled",
+  "staking": {
+   "totalStakedAmount": null,
+   "totalUnclaimedRewards": null,
+   "totalPendingStakeAmount": null,
+   "totalPendingUnstakeAmount": null
+  }
+ },
+ "id": 1,
+ "jsonrpc": "2.0"
+}

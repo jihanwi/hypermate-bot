@@ -91,8 +91,9 @@ async def test_loracle_hour_gives_two_algo_starts_and_two_ends(repo, clock):
     assert sum('reduced SHORT $CASHCAT' in t for t in texts) == 1
     for text in texts:
         check_telegram_html(text)
+    # suppressed orders leave no rows: only the orders sent before detection remain
     position_events = [e for e in events if e['type'].startswith('position_')]
-    assert sum(e['delivery'] == 'suppressed_algo' for e in position_events) > 1000
+    assert all(e['delivery'] == 'sent' for e in position_events) and len(position_events) < 40
     # progress edits about every 10 minutes
     assert len([e for e in bot.edits if 'algo' in e['text']]) >= 8
 

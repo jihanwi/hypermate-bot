@@ -18,6 +18,8 @@ class EventType(str, Enum):
     TWAP_END = "twap_end"
     ALGO_START = "algo_start"
     ALGO_END = "algo_end"
+    MULTI_ALGO_ENTER = "multi_algo_enter"
+    MULTI_ALGO_EXIT = "multi_algo_exit"
     SPOT_BUY = "spot_buy"
     SPOT_SELL = "spot_sell"
     DEPOSIT = "deposit"
@@ -37,8 +39,7 @@ SPOT_TYPES = (EventType.SPOT_BUY, EventType.SPOT_SELL)
 
 # events.delivery values (spec 3.4 / 5.2)
 SENT = 'sent'
-SUPPRESSED_TWAP = 'suppressed_twap'
-SUPPRESSED_ALGO = 'suppressed_algo'
+SUMMARIZED = 'summarized'          # ALGO_START / ALGO_END recorded during multi-algo summary mode, not sent
 FILTERED_SETTINGS = 'filtered_settings'
 FILTERED_THRESHOLD = 'filtered_threshold'
 MUTED = 'muted'

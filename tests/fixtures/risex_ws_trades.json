@@ -1,0 +1,38 @@
+[
+ {
+  "type": "subscribed",
+  "method": "subscribe",
+  "status": "success",
+  "message": "Successfully subscribed to trades for 3 market(s)",
+  "channel": "trades",
+  "data": {
+   "market_ids": [
+    1,
+    2,
+    3
+   ]
+  }
+ },
+ {
+  "channel": "trades",
+  "type": "update",
+  "market_id": "1",
+  "data": {
+   "id": "0x52d35e76d1e4af55469036eba1b757944ed20bab00000102-0xeafa69936fd638741f785a983ea7b7e9cbee35e700000311",
+   "maker_order_id": "0x52d35e76d1e4af55469036eba1b757944ed20bab00000102",
+   "taker_order_id": "0xeafa69936fd638741f785a983ea7b7e9cbee35e700000311",
+   "maker": "0x07e4dae16c4a1f595ffb360d489c949f00a34312",
+   "taker": "0x068731bac41a937440e14859f0fa8c3b453c2266",
+   "maker_side": 0,
+   "price": "84828",
+   "size": "0.020892",
+   "fee_maker": "-0.0886113288",
+   "fee_taker": "0.5316679728",
+   "fee_liquidation": "0"
+  },
+  "tx_hash": "0x4f0e4eabcef89884bac59efe612d6e67af518d473db0bbabb8676b92bda348f5",
+  "block_number": 23435320,
+  "log_index": 784,
+  "worker_timestamp": "1791041077813029107"
+ }
+]

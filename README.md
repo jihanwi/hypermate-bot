@@ -21,11 +21,16 @@ The v2 upgrade plan is in [docs/HYPERMATE_V2_SPEC.md](docs/HYPERMATE_V2_SPEC.md)
 
 Aliases are matched case-insensitively. On startup the bot registers these commands as the Telegram `/` command menu for private chats.
 
+### Venues
+
+`/add` resolves the wallet on every venue in parallel and tracks the ones with activity: Hyperliquid (positions, account value or spot balance) and Lighter (sub-accounts of the L1 address). The reply says which: `✅ Wallet added as cl · HL ✅ (xyz) · Lighter ✅ (2 sub-accounts)`. `/rescan` repeats it, and a daily job at 04:10 KST re-checks the venues a wallet is not active on. Alerts carry a venue badge (`[HL]`, `[LTR]`) and Lighter sub-accounts show as `alias#index`. `/positions` has one section per venue account and `/list` sums the account values over venues. Lighter polls use the WebSocket stream when it connects and REST otherwise (interval raised with the account count so the public 60 req/min limit holds); `/health` shows the mode.
+
 ### Alerts
 
 - One alert per order: fills of the same order (coin, direction, oid) are summed (size, notional, VWAP, realized PnL from `closedPnl`). Further orders for the same coin and direction within 60 s edit that alert instead of sending a new one.
 - Native TWAPs: one alert at start and one at the end; fills in the same direction while it runs are not alerted. A TWAP that was already running when the wallet was added is reported as "TWAP in progress (started 2h ago)".
-- Bot-driven executions (repeated small orders from an external bot, no native TWAP) are detected after a few cycles. The fill alerts sent before detection stay; then one "algo" alert is sent and updated every 10 minutes, and an end alert follows after 10 idle minutes.
+- Bot-driven executions (repeated small orders from an external bot, no native TWAP) are detected after a few cycles. The fill alerts sent before detection stay; then one "algo" alert is sent and updated every 10 minutes, and an end alert follows after 10 idle minutes. The suppressed fills are not stored; `/recent` shows one "🤖 algo $DOGE · 18,423 fills $1.52M (active)" line per running algo instead.
+- When one wallet runs 5 or more algos at once (a custom TWAP bot across many coins) the bot switches to one summary message per wallet ("running TWAP-style algos on 17 coins", grouped by direction, edited hourly) instead of per-coin algo alerts. Position opens, closes, flips, liquidations and single orders of $100k or 10% of the position are still alerted. It ends with "algos wound down · 24h total …" after 30 minutes with 2 or fewer algos left.
 - Transfer counterparties seen in alerts are stored as weak links for `/related` in the background, without alerts.
 - HIP-3 dex coins are shown as `$MU (xyz)`. Collateral moves between the main account and a HIP-3 dex, spot/perp class transfers and vault deposits/withdrawals are recorded but not sent (off by default, spec 9.4).
 
@@ -53,6 +58,10 @@ python -m hypermate.main
 | `POLL_FAST_SEC` | no | `20` | Floor for the position poll interval. Raised automatically when polling would need over 40% of the budget |
 | `POLL_LEDGER_SEC` | no | `180` | Ledger (deposits, withdrawals, transfers) poll interval, stretched up to 600 s when the budget is short |
 | `BACKUP_DIR` | no | `<DATABASE_PATH dir>/backups` | Where the daily DB backup goes |
+| `LIGHTER_API_URL` | no | `https://mainnet.zklighter.elliot.ai/api/v1` | Lighter public REST base |
+| `LIGHTER_WS_URL` | no | `wss://mainnet.zklighter.elliot.ai/stream` | Lighter WebSocket stream |
+| `LIGHTER_WS_ENABLED` | no | `true` | Try the Lighter WS; REST polling is the fallback either way |
+| `LIGHTER_REQ_BUDGET` | no | `50` | Lighter requests per minute the bot allows itself (public limit 60) |
 
 `WALLET_ENCRYPTION_KEY` is no longer used (wallet generation was removed).
 

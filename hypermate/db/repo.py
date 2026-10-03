@@ -20,7 +20,7 @@ ADDRESS_EXISTS = 'address_exists'
 
 HYPERLIQUID = 'hyperliquid'
 # Cursor kinds the Phase 0 pipeline keeps per venue account
-CURSOR_KINDS = ('fills', 'ledger', 'twap')   # 'twap': when TWAP tracking began (never advanced)
+CURSOR_KINDS = ('fills', 'ledger', 'twap', 'trades')   # 'twap': when TWAP tracking began (never advanced)
 
 
 def slim_payload(payload: dict) -> dict:
@@ -143,7 +143,44 @@ class Repo:
         await self.db.commit()
 
     PAYLOAD_VERSION = 1
+    SUPPRESSED_CLEANUP_VERSION = 2
     SLIM_BATCH = 1000
+
+    async def user_version(self) -> int:
+        cur = await self.db.execute("PRAGMA user_version")
+        (version,) = await cur.fetchone()
+        return version
+
+    async def suppressed_rows_need_cleanup(self) -> bool:
+        return await self.user_version() < self.SUPPRESSED_CLEANUP_VERSION
+
+    async def delete_suppressed_rows(self, batch: int = 5000) -> int:
+        """One-time removal of the 'suppressed_algo' / 'suppressed_twap' rows older versions recorded
+        (fix/multi-algo-summary), in event_id batches. Returns the number of rows removed."""
+        if not await self.suppressed_rows_need_cleanup():
+            return 0
+        removed = batches = 0
+        while True:
+            cur = await self.db.execute(
+                "SELECT event_id FROM events WHERE delivery IN ('suppressed_algo', 'suppressed_twap') "
+                "ORDER BY event_id LIMIT ?", (batch,))
+            ids = [r[0] for r in await cur.fetchall()]
+            if not ids:
+                break
+            await self.db.execute(
+                f"DELETE FROM sent_messages WHERE event_id IN ({','.join('?' * len(ids))})", ids)
+            await self.db.execute(f"DELETE FROM events WHERE event_id IN ({','.join('?' * len(ids))})", ids)
+            await self.db.commit()
+            removed += len(ids)
+            batches += 1
+            if batches % 10 == 0:
+                logger.info(f"Removing suppressed fill rows: {removed} so far")
+            del ids
+            await asyncio.sleep(0)
+        await self.db.execute(f"PRAGMA user_version = {self.SUPPRESSED_CLEANUP_VERSION}")
+        await self.db.commit()
+        logger.info(f"Removed {removed} suppressed fill rows")
+        return removed
 
     async def payloads_need_slimming(self) -> bool:
         cur = await self.db.execute("PRAGMA user_version")
@@ -184,8 +221,9 @@ class Repo:
                 logger.info(f"Slimming event payloads: {seen} rows seen, {changed} rewritten")
             del rows, updates
             await asyncio.sleep(0)          # let the bot handle updates between batches
-        await self.db.execute(f"PRAGMA user_version = {self.PAYLOAD_VERSION}")
-        await self.db.commit()
+        if await self.user_version() < self.PAYLOAD_VERSION:
+            await self.db.execute(f"PRAGMA user_version = {self.PAYLOAD_VERSION}")
+            await self.db.commit()
         logger.info(f"Slimmed {changed} of {seen} event payloads")
         return seen, changed
 
@@ -213,6 +251,47 @@ class Repo:
         cur = await self.db.execute("SELECT COUNT(*) FROM sent_messages")
         (messages,) = await cur.fetchone()
         return {'events_total': events_total, 'events_24h': by_type, 'sent_messages': messages}
+
+    # multi-algo summary mode (spec 5.2) ----------------------------------------------
+
+    async def multi_algo_mode(self, venue_account_id: int) -> Optional[dict]:
+        cur = await self.db.execute(
+            "SELECT entered_ms, event_id, message_ids_json, last_update_ms, below_since_ms "
+            "FROM multi_algo_mode WHERE venue_account_id = ?", (venue_account_id,))
+        row = await cur.fetchone()
+        if not row:
+            return None
+        return {'entered_ms': row[0], 'event_id': row[1], 'message_ids': json.loads(row[2]),
+                'last_update_ms': row[3], 'below_since_ms': row[4]}
+
+    async def multi_algo_modes(self) -> dict[int, dict]:
+        cur = await self.db.execute("SELECT venue_account_id, entered_ms, below_since_ms FROM multi_algo_mode")
+        return {r[0]: {'entered_ms': r[1], 'below_since_ms': r[2]} for r in await cur.fetchall()}
+
+    async def enter_multi_algo_mode(self, venue_account_id: int, entered_ms: int, event_id: Optional[int],
+                                    message_ids: dict) -> None:
+        await self.db.execute(
+            "INSERT OR REPLACE INTO multi_algo_mode (venue_account_id, entered_ms, event_id, message_ids_json, "
+            "last_update_ms, below_since_ms) VALUES (?, ?, ?, ?, ?, NULL)",
+            (venue_account_id, entered_ms, event_id, json.dumps(message_ids), entered_ms))
+        await self.db.commit()
+
+    async def update_multi_algo_mode(self, venue_account_id: int, last_update_ms: Optional[int] = None,
+                                     below_since_ms: Optional[int] = None, clear_below: bool = False) -> None:
+        if last_update_ms is not None:
+            await self.db.execute("UPDATE multi_algo_mode SET last_update_ms = ? WHERE venue_account_id = ?",
+                                  (last_update_ms, venue_account_id))
+        if clear_below:
+            await self.db.execute("UPDATE multi_algo_mode SET below_since_ms = NULL WHERE venue_account_id = ?",
+                                  (venue_account_id,))
+        elif below_since_ms is not None:
+            await self.db.execute("UPDATE multi_algo_mode SET below_since_ms = ? WHERE venue_account_id = ?",
+                                  (below_since_ms, venue_account_id))
+        await self.db.commit()
+
+    async def exit_multi_algo_mode(self, venue_account_id: int) -> None:
+        await self.db.execute("DELETE FROM multi_algo_mode WHERE venue_account_id = ?", (venue_account_id,))
+        await self.db.commit()
 
     async def all_active_algos(self) -> list[dict]:
         """Every algo_active row with its address (debug view for /health)."""
@@ -310,6 +389,85 @@ class Repo:
             "AND EXISTS (SELECT 1 FROM subscriptions s WHERE s.wallet_id = va.wallet_id) "
             "ORDER BY va.venue_account_id", (HYPERLIQUID,))
         return [(va_id, address, last) for va_id, address, last in await cur.fetchall()]
+
+    # Multi-venue accounts (spec 6.1) ------------------------------------------------
+
+    async def ensure_venue_account(self, address: str, venue: str, account_ref: str, active: bool,
+                                   now_ms: int, meta: Optional[dict] = None) -> tuple[int, bool]:
+        """Create or update one venue account of a wallet. Returns (venue_account_id, created).
+        A newly created active account starts its cursors at now (no history replay)."""
+        wallet_id = await self.wallet_id(address)
+        if wallet_id is None:
+            await self.db.execute("INSERT OR IGNORE INTO wallets (evm_address) VALUES (?)", (address.lower(),))
+            wallet_id = await self.wallet_id(address)
+        cur = await self.db.execute(
+            "SELECT venue_account_id, active FROM venue_accounts WHERE venue = ? AND account_ref = ?",
+            (venue, account_ref))
+        row = await cur.fetchone()
+        if row is None:
+            cur = await self.db.execute(
+                "INSERT INTO venue_accounts (wallet_id, venue, account_ref, active, last_activity_ms, dexs_json) "
+                "VALUES (?, ?, ?, ?, ?, ?)", (wallet_id, venue, account_ref, int(active), now_ms,
+                                              json.dumps((meta or {}).get('dexs', []))))
+            key = cur.lastrowid
+            for kind in CURSOR_KINDS:
+                await self.db.execute(
+                    "INSERT OR REPLACE INTO cursors (venue_account_id, kind, cursor, updated_at) VALUES (?, ?, ?, ?)",
+                    (key, kind, str(now_ms), now_ms))
+            await self.db.commit()
+            return key, True
+        key, was_active = row
+        if int(was_active) != int(active):
+            await self.db.execute("UPDATE venue_accounts SET active = ?, last_activity_ms = ? WHERE venue_account_id = ?",
+                                  (int(active), now_ms if active else None, key))
+            if active:   # re-activated: start again from now
+                await self.db.execute("DELETE FROM snapshots WHERE venue_account_id = ?", (key,))
+                for kind in CURSOR_KINDS:
+                    await self.db.execute(
+                        "INSERT OR REPLACE INTO cursors (venue_account_id, kind, cursor, updated_at) "
+                        "VALUES (?, ?, ?, ?)", (key, kind, str(now_ms), now_ms))
+            await self.db.commit()
+        return key, False
+
+    async def venue_accounts_of(self, address: str) -> list[dict]:
+        """Every venue account row of a wallet: {key, venue, account_ref, active, last_activity_ms, dexs}."""
+        cur = await self.db.execute(
+            "SELECT va.venue_account_id, va.venue, va.account_ref, va.active, va.last_activity_ms, va.dexs_json "
+            "FROM venue_accounts va JOIN wallets w USING (wallet_id) WHERE w.evm_address = ? "
+            "ORDER BY va.venue, va.account_ref", (address.lower(),))
+        return [{'key': r[0], 'venue': r[1], 'account_ref': r[2], 'active': bool(r[3]), 'last_activity_ms': r[4],
+                 'dexs': json.loads(r[5] or '[]')} for r in await cur.fetchall()]
+
+    async def tracked_venue_accounts(self, venue: str) -> list[dict]:
+        """Active accounts of one venue with at least one subscriber: {key, account_ref, address, last_activity_ms}."""
+        cur = await self.db.execute(
+            "SELECT va.venue_account_id, va.account_ref, w.evm_address, va.last_activity_ms FROM venue_accounts va "
+            "JOIN wallets w USING (wallet_id) WHERE va.venue = ? AND va.active = 1 "
+            "AND EXISTS (SELECT 1 FROM subscriptions s WHERE s.wallet_id = va.wallet_id) "
+            "ORDER BY va.venue_account_id", (venue,))
+        return [{'key': r[0], 'account_ref': r[1], 'address': r[2], 'last_activity_ms': r[3]}
+                for r in await cur.fetchall()]
+
+    async def venue_of(self, venue_account_id: int) -> Optional[tuple[str, str, str]]:
+        """(venue, account_ref, address) of a venue account."""
+        cur = await self.db.execute(
+            "SELECT va.venue, va.account_ref, w.evm_address FROM venue_accounts va JOIN wallets w USING (wallet_id) "
+            "WHERE va.venue_account_id = ?", (venue_account_id,))
+        row = await cur.fetchone()
+        return (row[0], row[1], row[2]) if row else None
+
+    async def subscribed_wallets(self) -> list[str]:
+        cur = await self.db.execute(
+            "SELECT DISTINCT w.evm_address FROM wallets w JOIN subscriptions s USING (wallet_id) ORDER BY w.evm_address")
+        return [r[0] for r in await cur.fetchall()]
+
+    async def account_value_sum(self, address: str) -> Optional[str]:
+        """Sum of the stored snapshot account values over the wallet's active venue accounts, Decimal text."""
+        cur = await self.db.execute(
+            "SELECT s.account_value FROM snapshots s JOIN venue_accounts va USING (venue_account_id) "
+            "JOIN wallets w USING (wallet_id) WHERE w.evm_address = ? AND va.active = 1", (address.lower(),))
+        values = [Decimal(r[0]) for r in await cur.fetchall() if r[0] is not None]
+        return str(sum(values, Decimal(0))) if values else None
 
     async def touch_activity(self, venue_account_id: int, now_ms: int) -> None:
         await self.db.execute("UPDATE venue_accounts SET last_activity_ms = ? WHERE venue_account_id = ?",

@@ -18,9 +18,14 @@ from typing import Optional
 
 from telegram.ext import ContextTypes
 
+import math
+
 from hypermate.config import Config
 from hypermate.core import pipeline
+from hypermate.core.venues import resolve_wallet
 from hypermate.db.repo import Repo
+from hypermate.venues import base as venues
+from hypermate.venues.base import VenueAccount
 from hypermate.venues.hyperliquid import adapter, scheduler
 from hypermate.venues.hyperliquid.client import HyperliquidClient
 
@@ -41,6 +46,9 @@ class PollState:
     last_poll_ms: dict[str, int] = field(default_factory=dict)      # venue -> last completed cycle
     dormant: set[int] = field(default_factory=set)
     accounts: int = 0
+    venue_last_cycle_ms: dict[str, int] = field(default_factory=dict)   # other venues: last cycle start
+    venue_interval_sec: dict[str, int] = field(default_factory=dict)
+    venue_accounts: dict[str, int] = field(default_factory=dict)
 
 
 def get_state(context) -> PollState:
@@ -100,6 +108,7 @@ async def poll_account(context: ContextTypes.DEFAULT_TYPE, key: int, address: st
         if await pipeline.poll_ledger(bot, repo, client, key, address):
             activity = True
     await pipeline.maintain_algos(bot, repo, key, address, adapter.now_ms())
+    await pipeline.maintain_summary_mode(bot, repo, key, address, adapter.now_ms())
 
     if activity:
         await repo.touch_activity(key, now)
@@ -153,6 +162,87 @@ async def poll_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 f"({len(state.dormant)} dormant), fast={state.poll_fast_sec}s ledger={state.ledger_interval_sec}s")
 
 
+# Other venues (spec 6.1): one job for Lighter / RISEx / Aster accounts ---------------------------
+
+def lighter_interval_sec(n_accounts: int, ws_connected: bool) -> int:
+    """REST polling needs 2 requests per account per cycle (account + trades) inside LIGHTER_REQ_BUDGET
+    per minute: 10 accounts -> 40 s floor, 25 accounts -> 60 s. With the WS connected the caches are
+    free, so the HL fast interval is used."""
+    if ws_connected:
+        return Config.POLL_FAST_SEC
+    if n_accounts == 0:
+        return Config.LIGHTER_POLL_MIN_SEC
+    return max(Config.LIGHTER_POLL_MIN_SEC, math.ceil(2 * n_accounts * 60 / Config.LIGHTER_REQ_BUDGET))
+
+
+def venue_interval_sec(venue: str, adapter_obj, n_accounts: int) -> int:
+    if venue == venues.LIGHTER:
+        stream = getattr(adapter_obj, 'stream', None)
+        return lighter_interval_sec(n_accounts, bool(stream is not None and stream.connected))
+    return Config.POLL_FAST_SEC
+
+
+async def venue_poll_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Polls the accounts of every non-HL venue adapter on that venue's own interval."""
+    repo: Repo = context.bot_data['repo']
+    adapters: dict = context.bot_data.get('venues') or {}
+    state = get_state(context)
+    now = adapter.now_ms()
+    for venue, adapter_obj in adapters.items():
+        if venue == venues.HYPERLIQUID:
+            continue
+        accounts = await repo.tracked_venue_accounts(venue)
+        state.venue_accounts[venue] = len(accounts)
+        interval = venue_interval_sec(venue, adapter_obj, len(accounts))
+        state.venue_interval_sec[venue] = interval
+        if now - state.venue_last_cycle_ms.get(venue, 0) < interval * 1000 - 500:
+            continue
+        state.venue_last_cycle_ms[venue] = now
+        stream = getattr(adapter_obj, 'stream', None)
+        for row in accounts:
+            account = VenueAccount(venue, row['account_ref'], row['address'], row['key'])
+            if stream is not None and int(row['account_ref']) not in stream.indexes:
+                await stream.subscribe(int(row['account_ref']))
+            try:
+                await pipeline.poll_venue_account(context.bot, repo, adapter_obj, account)
+            except Exception as e:
+                logger.error(f"{venue} poll failed for {account.address}#{account.account_ref}: {e}")
+        state.last_poll_ms[venue] = adapter.now_ms()
+        logger.info(f"{venue}: polled {len(accounts)} accounts, interval {interval}s")
+
+
+async def rescan_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Daily (04:10 KST): resolve the venues each tracked wallet is not active on yet (spec 6.1)."""
+    repo: Repo = context.bot_data['repo']
+    adapters: dict = context.bot_data.get('venues') or {}
+    activated = 0
+    for address in await repo.subscribed_wallets():
+        try:
+            results = await resolve_wallet(repo, adapters, address, adapter.now_ms(), only_inactive=True)
+        except Exception as e:
+            logger.error(f"Daily rescan failed for {address}: {e}")
+            continue
+        activated += sum(len(a) for a in results.values() if a)
+    logger.info(f"Daily venue rescan: {activated} accounts activated")
+
+
+async def venue_health(context: ContextTypes.DEFAULT_TYPE) -> dict[str, dict]:
+    """{venue: {mode, detail, accounts, interval_sec, last_poll_ms}} for /health."""
+    adapters: dict = context.bot_data.get('venues') or {}
+    state = get_state(context)
+    out = {}
+    for venue, adapter_obj in adapters.items():
+        if venue == venues.HYPERLIQUID:
+            continue
+        try:
+            info = await adapter_obj.health()
+        except Exception as e:
+            info = {'mode': 'error', 'detail': str(e)}
+        out[venue] = {**info, 'accounts': state.venue_accounts.get(venue, 0),
+                      'interval_sec': state.venue_interval_sec.get(venue), 'last_poll_ms': state.last_poll_ms.get(venue)}
+    return out
+
+
 async def weight_log_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """One INFO line per minute: weight used and 429s in the last completed minute (spec 3.5)."""
     budget: Optional[scheduler.WeightBudget] = context.bot_data.get('budget')
@@ -172,7 +262,8 @@ def _size(path: str) -> Optional[int]:
 
 
 def health_report(context: ContextTypes.DEFAULT_TYPE, counts: dict, db_path: str,
-                  db_stats: Optional[dict] = None, algos: Optional[list] = None) -> dict:
+                  db_stats: Optional[dict] = None, algos: Optional[list] = None,
+                  summary_modes: Optional[dict] = None, venues_info: Optional[dict] = None) -> dict:
     state = get_state(context)
     budget: Optional[scheduler.WeightBudget] = context.bot_data.get('budget')
     db_bytes = _size(db_path)
@@ -189,6 +280,8 @@ def health_report(context: ContextTypes.DEFAULT_TYPE, counts: dict, db_path: str
         'wal_bytes': _size(db_path + '-wal'),
         'db_stats': db_stats or {},
         'algo_rows': algos or [],
+        'summary_modes': summary_modes or {},
+        'venues': venues_info or {},
         'uptime_ms': adapter.now_ms() - state.started_ms,
         'started_ms': state.started_ms,
     }
