@@ -7,6 +7,7 @@
 
 import asyncio
 import logging
+from decimal import Decimal
 from typing import Callable, Optional
 
 from telegram import Bot
@@ -17,7 +18,8 @@ from hypermate.config import Config
 from hypermate.core import aggregator, events, related
 from hypermate.core.events import POSITION_TYPES, SPOT_TYPES, Event, EventType
 from hypermate.core.formatter import (algo_label, format_algo_end, format_algo_progress, format_fill_message,
-                                      format_ledger_event, format_twap_end, format_twap_start)
+                                      format_ledger_event, format_multi_algo_exit, format_multi_algo_summary,
+                                      format_twap_end, format_twap_start)
 from hypermate.core.numbers import to_decimal
 from hypermate.db.repo import Repo
 from hypermate.venues.hyperliquid import adapter, twap
@@ -272,7 +274,7 @@ async def _liquidation_already_alerted(repo: Repo, key: int, coins: list[str], t
 
 
 async def _start_algo(bot: Bot, repo: Repo, key: int, address: str, algo_key: tuple[str, int],
-                      orders: list[dict], now: int) -> dict:
+                      orders: list[dict], now: int, summarized: bool = False) -> dict:
     """ALGO_START as a new message (owner decision, PR C): the fill messages sent before detection
     stay as they are; progress edits go to the START message."""
     coin, sign = algo_key
@@ -284,10 +286,11 @@ async def _start_algo(bot: Bot, repo: Repo, key: int, address: str, algo_key: tu
                'position_after': str(position_after) if position_after is not None else None,
                'started_ms': state['started_ms'], 'last_progress_ms': now}
     source = algo_source(coin, sign, state['started_ms'])
+    delivery = events.SUMMARIZED if summarized else events.SENT
     event_id = await repo.record_event(events.dedupe_key(events.HYPERLIQUID, key, EventType.ALGO_START, source),
-                                       key, EventType.ALGO_START.value, now, payload, events.SENT, now)
-    logger.info(f"Algo started: {verb} {side} {coin} for {address} ({len(orders)} orders)")
-    if event_id is not None:
+                                       key, EventType.ALGO_START.value, now, payload, delivery, now)
+    logger.info(f"Algo started: {verb} {side} {coin} for {address} ({len(orders)} orders, {delivery})")
+    if event_id is not None and not summarized:
         await deliver(bot, repo, key,
                       lambda alias: format_algo_progress(address, alias, state, verb, side, position_after),
                       event_id)
@@ -325,6 +328,7 @@ async def process_fills(bot: Bot, repo: Repo, client: HyperliquidClient, key: in
     st = settings()
     payloads = [e.payload() for e in fill_events]
     twap_hit = [twap.is_suppressed(p, twap_states) for p in payloads]
+    summary = await repo.multi_algo_mode(key)
 
     # Synthetic TWAP entry (spec 5.2): this poll's orders plus the ones sent earlier in the window
     batches: dict[tuple, list[dict]] = {}
@@ -333,46 +337,70 @@ async def process_fills(bot: Bot, repo: Repo, client: HyperliquidClient, key: in
         if k is not None and not hit and k not in algos:
             batches.setdefault(k, []).append(p)
     window_since = poll_ms - int(st['algo_window_sec']) * 1000
-    started_now = set()
+    to_start: dict[tuple, list[dict]] = {}
     for k, batch in batches.items():
         recorded = [dict(e['payload'], _event_id=e['event_id'], _delivery=e['delivery'])
                     for e in await repo.events_since(key, window_since, list(aggregator.ALGO_TYPES))
                     if aggregator.algo_key(e['payload']) == k and e['delivery'] == events.SENT]
         orders = sorted(recorded + batch, key=lambda o: int(o['ts_ms']))
         if aggregator.should_start_algo(orders, st):
-            algos[k] = await _start_algo(bot, repo, key, address, k, orders, poll_ms)
-            started_now.add(k)
+            to_start[k] = orders
+    # Summary mode (spec 5.2 멀티 알고 요약): entered before the STARTs that cross the threshold, so none
+    # of them goes out as a per-coin message
+    entering = summary is None and bool(to_start) and len(algos) + len(to_start) >= int(st['multi_algo_min'])
+    started_now = set()
+    for k, orders in to_start.items():
+        algos[k] = await _start_algo(bot, repo, key, address, k, orders, poll_ms,
+                                     summarized=summary is not None or entering)
+        started_now.add(k)
+    if entering:
+        summary = await _enter_summary_mode(bot, repo, key, address, poll_ms, len(algos))
 
     for event, p, hit in zip(fill_events, payloads, twap_hit):
         k = aggregator.algo_key(p)
-        delivery = events.SENT
+        suppressed = False
         if hit:
-            delivery = events.SUPPRESSED_TWAP
+            suppressed = True                      # native TWAP in the same direction: state lives in twap_active
         elif k in algos:
             if k not in started_now:  # orders of the START cycle are already in its totals
                 algos[k] = aggregator.add_to_algo(algos[k], p)
                 await repo.upsert_algo(key, algos[k])
                 await _update_algo_position(repo, key, k, algos[k], p)
             if p['type'] != EventType.POSITION_CLOSE.value:  # a full close is always alerted
-                delivery = events.SUPPRESSED_ALGO
+                suppressed = True
+        if suppressed and summary is not None and _big_order(p, st):
+            suppressed = False                     # summary mode still alerts large single orders
+        if suppressed:
+            continue                               # no events row: algo_active / twap_active carry the totals
         if event.type == EventType.LIQUIDATION and \
                 await _liquidation_already_alerted(repo, key, [event.coin], event.ts_ms):
             logger.info(f"Liquidation {event.coin} already alerted from the ledger, skipping")
             continue
-        event_id = await repo.record_event(event.dedupe_key, key, p['type'], event.ts_ms, p, delivery,
+        event_id = await repo.record_event(event.dedupe_key, key, p['type'], event.ts_ms, p, events.SENT,
                                            adapter.now_ms())
         if event_id is None:
             logger.info(f"Duplicate event {event.dedupe_key}, not sent")
             continue
-        if delivery != events.SENT:
-            logger.info(f"Event {event.dedupe_key} recorded as {delivery}, not sent")
-            continue
         await _send_fill_event(bot, repo, key, address, event_id, p)
 
 
+def _big_order(payload: dict, st: dict) -> bool:
+    """Summary mode exception: one order worth >= multi_algo_big_order_pct of the position or >= the USD floor."""
+    notional = to_decimal(payload.get('notional_usd')) or Decimal(0)
+    if notional >= Decimal(str(st['multi_algo_big_order_usd'])):
+        return True
+    after = to_decimal(payload.get('position_after'))
+    price = to_decimal(payload.get('price'))
+    if after is None or price is None or after == 0:
+        return False
+    return notional >= abs(after) * price * Decimal(str(st['multi_algo_big_order_pct'])) / 100
+
+
 async def maintain_algos(bot: Bot, repo: Repo, key: int, address: str, now: int) -> None:
-    """Progress edits every algo_progress_sec; ALGO_END after algo_idle_sec without fills (spec 5.2)."""
+    """Progress edits every algo_progress_sec; ALGO_END after algo_idle_sec without fills (spec 5.2).
+    In summary mode START/END are recorded as 'summarized' and the summary message is edited instead."""
     st = settings()
+    summary = await repo.multi_algo_mode(key)
     for (coin, sign), state in (await repo.active_algos(key)).items():
         source = algo_source(coin, sign, int(state['started_ms']))
         start = await repo.get_event_by_key(events.dedupe_key(events.HYPERLIQUID, key, EventType.ALGO_START, source))
@@ -383,15 +411,93 @@ async def maintain_algos(bot: Bot, repo: Repo, key: int, address: str, now: int)
             logger.info(f"Algo ended: {verb} {side} {coin} for {address}")
             await emit(bot, repo, key, EventType.ALGO_END, source, now,
                        {**state, 'verb': verb, 'side': side},
-                       lambda alias, s=state, v=verb, sd=side: format_algo_end(address, alias, s, v, sd))
+                       lambda alias, s=state, v=verb, sd=side: format_algo_end(address, alias, s, v, sd),
+                       events.SUMMARIZED if summary is not None else events.SENT)
             await repo.delete_algo(key, coin, sign)
             continue
+        if summary is not None:
+            continue                               # no per-coin progress messages in summary mode
         if start and now - int(meta.get('last_progress_ms', 0)) >= int(st['algo_progress_sec']) * 1000:
             position_after = to_decimal(meta.get('position_after'))
             await repo.update_event_payload(start['event_id'], {**meta, 'last_progress_ms': now})
             await edit_or_send(bot, repo, key, start['event_id'],
                                lambda alias, s=state, v=verb, sd=side, pa=position_after:
                                    format_algo_progress(address, alias, s, v, sd, pa))
+
+
+# Multi-algo summary mode (spec 5.2 멀티 알고 요약) ------------------------------------------
+
+async def _algo_groups(repo: Repo, key: int, now: int) -> tuple[list[dict], Decimal]:
+    """Active algos grouped by (verb, side): [{verb, side, coins: [(coin, notional)], notional}], plus the
+    24 h total: notional of the active algos and of the algos that ended in the last 24 h."""
+    groups: dict[tuple[str, str], dict] = {}
+    for (coin, sign), state in (await repo.active_algos(key)).items():
+        start = await repo.get_event_by_key(events.dedupe_key(
+            events.HYPERLIQUID, key, EventType.ALGO_START, algo_source(coin, sign, int(state['started_ms']))))
+        meta = start['payload'] if start else {}
+        verb, side = algo_label(sign, to_decimal(meta.get('position_after')))
+        verb, side = meta.get('verb', verb), meta.get('side', side)
+        group = groups.setdefault((verb, side), {'verb': verb, 'side': side, 'coins': [], 'notional': Decimal(0)})
+        notional = to_decimal(state.get('total_ntl')) or Decimal(0)
+        group['coins'].append((coin, notional))
+        group['notional'] += notional
+    ended = await repo.events_since(key, now - 24 * 3600 * 1000, [EventType.ALGO_END.value])
+    total = sum((g['notional'] for g in groups.values()), Decimal(0))
+    total += sum((to_decimal(e['payload'].get('total_ntl')) or Decimal(0) for e in ended), Decimal(0))
+    for e in ended:   # ended algos count in their group's 24 h notional too
+        g = groups.get((e['payload'].get('verb'), e['payload'].get('side')))
+        if g is not None:
+            g['notional'] += to_decimal(e['payload'].get('total_ntl')) or Decimal(0)
+    ordered = sorted(groups.values(), key=lambda g: (-len(g['coins']), -g['notional']))
+    for g in ordered:
+        g['coins'].sort(key=lambda c: -c[1])
+    return ordered, total
+
+
+async def _enter_summary_mode(bot: Bot, repo: Repo, key: int, address: str, now: int, coins: int) -> dict:
+    """Send the one summary message (MULTI_ALGO_ENTER) and store the mode row. Called after the STARTs
+    of this cycle are recorded, so the groups are complete."""
+    logger.info(f"Multi-algo summary mode for {address}: {coins} algos")
+    source = f"summary:{now}"
+    groups, _ = await _algo_groups(repo, key, now)
+    event_id = await emit(bot, repo, key, EventType.MULTI_ALGO_ENTER, source, now,
+                          {'coins': coins, 'entered_ms': now},
+                          lambda alias: format_multi_algo_summary(address, alias, groups, coins, now, now))
+    messages = await repo.sent_messages(event_id) if event_id is not None else {}
+    await repo.enter_multi_algo_mode(key, now, event_id, {str(u): list(m) for u, m in messages.items()})
+    return {'entered_ms': now, 'event_id': event_id, 'message_ids': messages, 'last_update_ms': now,
+            'below_since_ms': None}
+
+
+async def maintain_summary_mode(bot: Bot, repo: Repo, key: int, address: str, now: int) -> None:
+    """Hourly edit of the summary message; exit after multi_algo_exit_idle_sec at or under multi_algo_exit."""
+    summary = await repo.multi_algo_mode(key)
+    if summary is None:
+        return
+    st = settings()
+    active = await repo.active_algos(key)
+    if len(active) <= int(st['multi_algo_exit']):
+        since = summary.get('below_since_ms')
+        if since is None:
+            await repo.update_multi_algo_mode(key, below_since_ms=now)
+            since = now
+        if now - int(since) >= int(st['multi_algo_exit_idle_sec']) * 1000:
+            _, total = await _algo_groups(repo, key, now)
+            logger.info(f"Multi-algo summary mode ended for {address}: {len(active)} algos left")
+            await emit(bot, repo, key, EventType.MULTI_ALGO_EXIT, f"summary:{summary['entered_ms']}", now,
+                       {'entered_ms': summary['entered_ms'], 'total_24h': str(total), 'left': len(active)},
+                       lambda alias: format_multi_algo_exit(address, alias, total))
+            await repo.exit_multi_algo_mode(key)
+            return
+    elif summary.get('below_since_ms') is not None:
+        await repo.update_multi_algo_mode(key, clear_below=True)
+    if now - int(summary.get('last_update_ms') or summary['entered_ms']) >= int(st['multi_algo_update_sec']) * 1000:
+        groups, _ = await _algo_groups(repo, key, now)
+        await repo.update_multi_algo_mode(key, last_update_ms=now)
+        if summary.get('event_id') is not None:
+            await edit_or_send(bot, repo, key, summary['event_id'],
+                               lambda alias: format_multi_algo_summary(address, alias, groups, len(active),
+                                                                       summary['entered_ms'], now))
 
 
 async def process_ledger(bot: Bot, repo: Repo, key: int, address: str, updates: list[dict]) -> None:
@@ -459,6 +565,7 @@ async def monitor_transfers_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             await poll_fills(context.bot, repo, client, key, address)
             await poll_ledger(context.bot, repo, client, key, address)
             await maintain_algos(context.bot, repo, key, address, adapter.now_ms())
+            await maintain_summary_mode(context.bot, repo, key, address, adapter.now_ms())
         except Exception as e:
             logger.error(f"Transfer check failed for {address}: {e}")
         if i < len(accounts) - 1:
