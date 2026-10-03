@@ -12,6 +12,9 @@ from telegram.ext import ContextTypes
 from hypermate.bot import texts
 from hypermate.config import Config
 from hypermate.core import formatter, poller, related
+from hypermate.core.venues import resolve_summary, resolve_wallet
+from hypermate.venues import base as venues
+from hypermate.venues.base import VenueAccount, as_clearinghouse_state
 from hypermate.core.events import HYPERLIQUID, EventType, dedupe_key
 from hypermate.core.formatter import h
 from hypermate.core.pipeline import algo_source
@@ -30,6 +33,11 @@ def _repo(context: ContextTypes.DEFAULT_TYPE) -> Repo:
 
 def _hl(context: ContextTypes.DEFAULT_TYPE) -> HyperliquidClient:
     return context.bot_data['hl']
+
+
+def _venues(context: ContextTypes.DEFAULT_TYPE) -> dict:
+    """{venue: adapter}; empty in tests that only wire the HL client."""
+    return context.bot_data.get('venues') or {}
 
 
 async def reply(update: Update, text: str) -> None:
@@ -85,10 +93,10 @@ async def _add(context: ContextTypes.DEFAULT_TYPE, user_id: int, address: str, a
     result = await _repo(context).add_subscription(user_id, address, alias, now_ms())
     if result == ADDED:
         logger.info(f"User {user_id} added wallet {address} as '{alias}'")
-        dexs = await _scan_dexs(context, address)
+        summary = await _resolve_venues(context, address)
         message = texts.WALLET_ADDED.format(alias=h(alias))
-        if dexs:
-            message += texts.WALLET_ADDED_DEXS.format(dexs=h(", ".join(dexs)))
+        if summary:
+            message += texts.WALLET_VENUES.format(venues=h(summary))
         return message
     if result == ALIAS_EXISTS:
         return texts.ALIAS_EXISTS
@@ -111,8 +119,9 @@ async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def _account_value(context: ContextTypes.DEFAULT_TYPE, address: str):
-    """Account value from the last positions poll; live clearinghouseState only if not polled yet."""
-    stored = to_decimal(await _repo(context).hl_account_value(address))
+    """Account value summed over the wallet's active venues from the last polls (spec 6.1);
+    live clearinghouseState only if nothing was polled yet."""
+    stored = to_decimal(await _repo(context).account_value_sum(address))
     if stored is not None:
         return stored
     state = await _perp_state_or_none(context, address)
@@ -147,19 +156,37 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await reply(update, texts.ALIAS_NOT_FOUND.format(alias=h(" ".join(context.args))))
         return
     alias, address = subscription
+    rows = await _repo(context).venue_accounts_of(address)
+    hl_active = any(r['venue'] == venues.HYPERLIQUID and r['active'] for r in rows) or not _venues(context)
     va = await _repo(context).hl_account_id(address)
     dexs = await _repo(context).get_dexs(va) if va is not None else []
-    try:
-        perp_states = {'': await _hl(context).clearinghouse_state(address)}
-        for dex in dexs:
-            perp_states[dex] = await _hl(context).clearinghouse_state(address, dex)
-        spot_state = await _hl(context).spot_clearinghouse_state(address)
-    except HyperliquidAPIError as e:
-        logger.error(f"positions {address}: {e}")
-        await reply(update, texts.HL_API_ERROR)
-        return
+    perp_states, spot_state = None, {}
+    if hl_active:
+        try:
+            perp_states = {'': await _hl(context).clearinghouse_state(address)}
+            for dex in dexs:
+                perp_states[dex] = await _hl(context).clearinghouse_state(address, dex)
+            spot_state = await _hl(context).spot_clearinghouse_state(address)
+        except HyperliquidAPIError as e:
+            logger.error(f"positions {address}: {e}")
+            await reply(update, texts.HL_API_ERROR)
+            return
+    sections = []
+    for row in rows:
+        adapter_obj = _venues(context).get(row['venue'])
+        if row['venue'] == venues.HYPERLIQUID or not row['active'] or adapter_obj is None:
+            continue
+        account = VenueAccount(row['venue'], row['account_ref'], address, row['key'])
+        try:
+            snap = await adapter_obj.snapshot(account)
+        except Exception as e:
+            logger.error(f"positions {row['venue']} {address}#{row['account_ref']}: {e}")
+            continue
+        title = f"{venues.NAMES.get(row['venue'], row['venue'])} #{row['account_ref']}" \
+            if row['venue'] == venues.LIGHTER else venues.NAMES.get(row['venue'], row['venue'])
+        sections.append((title, as_clearinghouse_state(snap)))
     dust = to_decimal(Config.DEFAULT_SETTINGS['dust_notional_usd'])
-    await reply(update, formatter.format_positions(alias, address, perp_states, spot_state, dust))
+    await reply(update, formatter.format_positions(alias, address, perp_states, spot_state, dust, sections))
     logger.info(f"User {user_id} checked positions for {address} ({alias})")
 
 
@@ -193,6 +220,21 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     message = formatter.format_stats(alias, address, portfolio)
     await reply(update, message if message is not None else texts.STATS_NOT_AVAILABLE)
     logger.info(f"User {user_id} checked stats for {address} ({alias})")
+
+
+async def _resolve_venues(context: ContextTypes.DEFAULT_TYPE, address: str) -> str:
+    """Run every adapter's resolve (spec 6.1) and the HL HIP-3 dex scan; returns the summary line.
+    Without adapters (HL-only wiring) only the dex scan runs and the summary names the dexs."""
+    adapters = _venues(context)
+    dexs = await _scan_dexs(context, address)
+    if not adapters:
+        return ("HL ✅" + (f" ({', '.join(dexs)})" if dexs else "")) if dexs else ""
+    try:
+        results = await resolve_wallet(_repo(context), adapters, address, now_ms())
+    except Exception as e:
+        logger.error(f"resolve failed for {address}: {e}")
+        return ""
+    return resolve_summary(results, dexs)
 
 
 async def _scan_dexs(context: ContextTypes.DEFAULT_TYPE, address: str) -> list[str]:
@@ -276,6 +318,10 @@ async def rescan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if subscription is None:
         return
     alias, address = subscription
+    if _venues(context):
+        summary = await _resolve_venues(context, address)
+        await reply(update, texts.RESCAN_VENUES.format(alias=h(alias), venues=h(summary or "no venue answered")))
+        return
     dexs = await _scan_dexs(context, address)
     await reply(update, texts.RESCAN_RESULT.format(
         alias=h(alias), dexs=(" + HIP-3 " + h(", ".join(dexs))) if dexs else ", no HIP-3 dex positions"))
@@ -365,7 +411,8 @@ async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     repo = _repo(context)
     report = poller.health_report(context, await repo.counts(), repo.path,
-                                  await repo.db_stats(now_ms()), await repo.all_active_algos())
+                                  await repo.db_stats(now_ms()), await repo.all_active_algos(),
+                                  await poller.venue_health(context))
     await reply(update, formatter.format_health(report, now_ms()))
 
 

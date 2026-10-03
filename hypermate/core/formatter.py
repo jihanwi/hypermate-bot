@@ -11,7 +11,8 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
 from hypermate.core.events import is_system_address  # noqa: F401  (re-exported)
-from hypermate.core.links import hl_address_url
+from hypermate.core.links import address_url, hl_address_url
+from hypermate.venues.base import BADGES, HYPERLIQUID
 from hypermate.core.numbers import to_decimal
 
 logger = logging.getLogger(__name__)
@@ -45,8 +46,12 @@ def counterparty(address: str) -> str:
     return f"<code>{h(short_address(address))}</code>"
 
 
-def alias_link(address: str, alias: str) -> str:
-    return f'<a href="{h(hl_address_url(address))}">{h(alias)}</a>'
+def alias_link(address: str, alias: str, venue: str = HYPERLIQUID) -> str:
+    return f'<a href="{h(address_url(venue, address))}">{h(alias)}</a>'
+
+
+def badge(venue: str) -> str:
+    return BADGES.get(venue, BADGES[HYPERLIQUID])
 
 
 def format_transfer_message(transfer: dict, wallet_address: str, alias: str) -> Optional[str]:
@@ -137,13 +142,16 @@ def _futures_lines(perp_state: dict, dust_usd: Decimal = ZERO) -> list[str]:
 
 
 def format_positions(alias: str, address: str, perp_states, spot_state: dict,
-                     dust_usd: Decimal = Decimal(10)) -> str:
-    """/positions <alias> view: perp positions per dex (main + HIP-3), spot balances, account value.
+                     dust_usd: Decimal = Decimal(10), venue_sections: Optional[list[tuple[str, dict]]] = None) -> str:
+    """/positions <alias> view: perp positions per dex (main + HIP-3), spot balances, account value,
+    then one section per other venue account (spec 6.1): venue_sections = [(title, clearinghouse-like state)].
 
-    perp_states is {dex: clearinghouseState} ("" = main dex) or a single main-dex state.
-    Positions with notional under dust_usd (settings.dust_notional_usd) are folded into one line.
+    perp_states is {dex: clearinghouseState} ("" = main dex), a single main-dex state, or None when the
+    wallet is not active on Hyperliquid. Positions with notional under dust_usd are folded into one line.
     """
-    if 'assetPositions' in perp_states or 'marginSummary' in perp_states:
+    if perp_states is None:
+        perp_states = {}
+    elif 'assetPositions' in perp_states or 'marginSummary' in perp_states:
         perp_states = {'': perp_states}
 
     sections = []
@@ -164,8 +172,18 @@ def format_positions(alias: str, address: str, perp_states, spot_state: dict,
             body = "\n".join(lines) if lines else "- No open positions\n"
             sections.append(f"📈 <b>Futures ({h(dex)} dex)</b> · account {value_str}\n{body}")
 
+    for title, state in venue_sections or []:
+        value = account_value(state)
+        if value is not None:
+            total += value
+            has_value = True
+        lines = _futures_lines(state, dust_usd)
+        value_str = usd(value) if value is not None else "N/A"
+        body = "\n".join(lines) if lines else "- No open positions\n"
+        sections.append(f"📈 <b>{h(title)}</b> · account {value_str}\n{body}")
+
     spot_lines = []
-    for balance in spot_state.get('balances', []):
+    for balance in (spot_state or {}).get('balances', []):
         total_bal = to_decimal(balance.get('total')) or ZERO
         entry_ntl = to_decimal(balance.get('entryNtl')) or ZERO
         # v1 behavior: entry notional approximates USD value
@@ -174,13 +192,15 @@ def format_positions(alias: str, address: str, perp_states, spot_state: dict,
             spot_lines.append(f"- {h(balance.get('coin', 'Unknown'))}: {total_bal:,.2f} ({usd(usd_val)})")
     spot = "\n".join(spot_lines) if spot_lines else "- No spot assets"
     margin_balance = usd(total) if has_value else "N/A"
-    label = "Margin Balance" if len(perp_states) == 1 else "Margin Balance (all dexs)"
+    multi = len(perp_states) > 1 or bool(venue_sections)
+    label = "Margin Balance (all venues)" if venue_sections else ("Margin Balance (all dexs)" if multi else "Margin Balance")
+    spot_block = f"💰 <b>Spot:</b>\n{spot}\n\n" if perp_states or spot_state else ""
     return (
         f"📊 <b>Positions for {h(alias)}</b>\n"
         f"<code>{h(address)}</code>\n\n"
         + "\n".join(sections) + "\n"
-        f"💰 <b>Spot:</b>\n{spot}\n\n"
-        f"📊 <b>{label}:</b> {margin_balance}"
+        + spot_block
+        + f"📊 <b>{label}:</b> {margin_balance}"
     )
 
 
@@ -429,7 +449,8 @@ _POSITION_HEADERS = {
 }
 
 
-def format_fill_message(wallet_address: str, alias: str, chain: dict, held_ms: Optional[int] = None) -> str:
+def format_fill_message(wallet_address: str, alias: str, chain: dict, held_ms: Optional[int] = None,
+                        venue: str = HYPERLIQUID) -> str:
     """Position or spot event, possibly several orders merged by debounce (aggregator chain dict)."""
     event_type = chain['type']
     coin = chain.get('coin') or '?'
@@ -439,20 +460,20 @@ def format_fill_message(wallet_address: str, alias: str, chain: dict, held_ms: O
     px = notional / size if size else None
     qty = f"{quantity(size)} {h(display or base_coin(coin))}"
     at = f" @ {plain_price(px)}" if px is not None else ""
-    who = f"<b>{alias_link(wallet_address, alias)}</b>"
+    who = f"<b>{alias_link(wallet_address, alias, venue)}</b>"
     fills = int(chain.get('fills') or 1)
     tail = f" · {fills} fills" if fills > 1 else ""
 
     if event_type in ('spot_buy', 'spot_sell'):
         emoji, verb = ('🟢', 'bought') if event_type == 'spot_buy' else ('🔴', 'sold')
-        return (f"{VENUE_BADGE_HL} {emoji} {who} {verb} {quantity(size)} {coin_label(coin, display)}\n"
+        return (f"{badge(venue)} {emoji} {who} {verb} {quantity(size)} {coin_label(coin, display)}\n"
                 f"{compact_usd(notional)}{at}{tail}")
 
     side = chain.get('side') or ''
     emoji, verb = _POSITION_HEADERS[event_type]
     if emoji is None:
         emoji = '📈' if side == 'LONG' else '📉'
-    header = f"{VENUE_BADGE_HL} {emoji} {who} {verb} {side} {coin_label(coin)}"
+    header = f"{badge(venue)} {emoji} {who} {verb} {side} {coin_label(coin)}"
     details = []
     after = to_decimal(chain.get('position_after'))
     now_value = abs(after) * px if after is not None and px is not None else None
@@ -498,7 +519,7 @@ def algo_label(sign: int, position_after: Optional[Decimal]) -> tuple[str, str]:
 
 
 def format_algo_progress(wallet_address: str, alias: str, state: dict, verb: str, side: str,
-                         position_after: Optional[Decimal]) -> str:
+                         position_after: Optional[Decimal], venue: str = HYPERLIQUID) -> str:
     """ALGO_START text; the same message is edited with fresh numbers every algo_progress_sec.
 
     Elapsed time runs from the first to the last fill (not to now), so it matches ALGO_END.
@@ -513,11 +534,12 @@ def format_algo_progress(wallet_address: str, alias: str, state: dict, verb: str
         line += f" · pos {compact_usd(abs(position_after) * vwap)}"
     if vwap is not None:
         line += f" avg {plain_price(vwap)}"
-    return (f"{VENUE_BADGE_HL} 🤖 <b>{alias_link(wallet_address, alias)}</b> algo {verb} {side} "
+    return (f"{badge(venue)} 🤖 <b>{alias_link(wallet_address, alias, venue)}</b> algo {verb} {side} "
             f"{coin_label(state['coin'])}\n{line}")
 
 
-def format_algo_end(wallet_address: str, alias: str, state: dict, verb: str, side: str) -> str:
+def format_algo_end(wallet_address: str, alias: str, state: dict, verb: str, side: str,
+                    venue: str = HYPERLIQUID) -> str:
     total = to_decimal(state.get('total_ntl')) or ZERO
     total_sz = to_decimal(state.get('total_sz')) or ZERO
     vwap = total / total_sz if total_sz else None
@@ -527,7 +549,7 @@ def format_algo_end(wallet_address: str, alias: str, state: dict, verb: str, sid
         line += f" avg {plain_price(vwap)}"
     line += (f" · {int(state['fills_count'])} fills · "
              f"{humanize_ms(int(state['last_fill_ms']) - int(state['started_ms']))}")
-    return (f"{VENUE_BADGE_HL} ✅ <b>{alias_link(wallet_address, alias)}</b> algo done {verb} {side} "
+    return (f"{badge(venue)} ✅ <b>{alias_link(wallet_address, alias, venue)}</b> algo done {verb} {side} "
             f"{coin_label(state['coin'])}\n{line}")
 
 
@@ -613,6 +635,12 @@ def format_health(report: dict, now_ms: int) -> str:
         by_type = ", ".join(f"{t} {n}" for t, n in stats.get('events_24h', [])[:5]) or "none"
         db_line += (f"\nEvents: {stats.get('events_total', 0)} rows · last 24h: {by_type} · "
                     f"sent_messages {stats.get('sent_messages', 0)}")
+    venue_lines = []
+    for venue, info in sorted((report.get('venues') or {}).items()):
+        last = info.get('last_poll_ms')
+        last_text = f"{humanize_ms(max(0, now_ms - int(last)))} ago" if last else "no cycle yet"
+        venue_lines.append(f"- {h(venue)}: {info.get('accounts', 0)} accounts · {h(str(info.get('detail', '')))} · "
+                           f"every {info.get('interval_sec') or '?'}s · last {last_text}")
     algo_lines = []
     for row in report.get('algo_rows') or []:
         idle = humanize_ms(max(0, now_ms - int(row['last_fill_ms'] or now_ms)))
@@ -628,6 +656,7 @@ def format_health(report: dict, now_ms: int) -> str:
         f"Active TWAPs: {report.get('twaps', 0)} · algos: {report.get('algos', 0)}\n"
         f"DB: {db_line}\n"
         f"Uptime: {humanize_ms(int(report.get('uptime_ms', 0)))}"
+        + (("\nVenues:\n" + "\n".join(venue_lines)) if venue_lines else "")
         + (("\nalgo_active:\n" + "\n".join(algo_lines)) if algo_lines else "")
     )
 
