@@ -268,7 +268,8 @@ async def _liquidation_already_alerted(repo: Repo, key: int, coins: list[str], t
 
 async def _start_algo(bot: Bot, repo: Repo, key: int, address: str, algo_key: tuple[str, int],
                       orders: list[dict], now: int) -> dict:
-    """ALGO_START: promote the debounce message of the earlier cycles to the algo message (spec 5.2)."""
+    """ALGO_START as a new message (owner decision, PR C): the fill messages sent before detection
+    stay as they are; progress edits go to the START message."""
     coin, sign = algo_key
     state = aggregator.new_algo_state(coin, sign, orders)
     position_after = to_decimal(orders[-1].get('position_after'))
@@ -281,22 +282,10 @@ async def _start_algo(bot: Bot, repo: Repo, key: int, address: str, algo_key: tu
     event_id = await repo.record_event(events.dedupe_key(events.HYPERLIQUID, key, EventType.ALGO_START, source),
                                        key, EventType.ALGO_START.value, now, payload, events.SENT, now)
     logger.info(f"Algo started: {verb} {side} {coin} for {address} ({len(orders)} orders)")
-    if event_id is None:
-        return state
-
-    def render(alias):
-        return format_algo_progress(address, alias, state, verb, side, position_after, now)
-
-    # Earlier cycles of this algo went out as one debounced message: turn that message into the START
-    chain_base = next((o.get('chain_base', o.get('_event_id')) for o in reversed(orders)
-                       if o.get('_delivery') == events.SENT), None)
-    previous_messages = await repo.sent_messages(chain_base) if chain_base is not None else {}
-    if previous_messages:
-        for user_id, (chat_id, message_id) in previous_messages.items():
-            await repo.add_sent_message(event_id, user_id, chat_id, message_id)
-        await edit_or_send(bot, repo, key, event_id, render)
-    else:
-        await deliver(bot, repo, key, render, event_id)
+    if event_id is not None:
+        await deliver(bot, repo, key,
+                      lambda alias: format_algo_progress(address, alias, state, verb, side, position_after),
+                      event_id)
     return state
 
 
@@ -397,7 +386,7 @@ async def maintain_algos(bot: Bot, repo: Repo, key: int, address: str, now: int)
             await repo.update_event_payload(start['event_id'], {**meta, 'last_progress_ms': now})
             await edit_or_send(bot, repo, key, start['event_id'],
                                lambda alias, s=state, v=verb, sd=side, pa=position_after:
-                                   format_algo_progress(address, alias, s, v, sd, pa, now))
+                                   format_algo_progress(address, alias, s, v, sd, pa))
 
 
 async def process_ledger(bot: Bot, repo: Repo, key: int, address: str, updates: list[dict]) -> None:
@@ -414,26 +403,40 @@ async def process_ledger(bot: Bot, repo: Repo, key: int, address: str, updates: 
                    lambda alias, p=payload: format_ledger_event(address, alias, p), delivery)
 
 
+async def poll_fills(bot: Bot, repo: Repo, client: HyperliquidClient, key: int, address: str) -> bool:
+    """Fetch and process new fills. Returns True if any fill arrived."""
+    poll_ms = adapter.now_ms()
+    cursor = await _cursor(repo, key, 'fills')
+    fills, new_cursor = await adapter.fetch_fills(client, address, cursor)
+    await process_fills(bot, repo, client, key, address, fills, poll_ms)
+    if new_cursor != cursor:
+        await repo.set_cursor(key, 'fills', str(new_cursor), adapter.now_ms())
+    return bool(fills)
+
+
+async def poll_ledger(bot: Bot, repo: Repo, client: HyperliquidClient, key: int, address: str) -> bool:
+    """Fetch and process new ledger updates. Returns True if any arrived."""
+    cursor = await _cursor(repo, key, 'ledger')
+    updates, new_cursor = await adapter.fetch_ledger(client, address, cursor)
+    await process_ledger(bot, repo, key, address, updates)
+    if new_cursor != cursor:
+        await repo.set_cursor(key, 'ledger', str(new_cursor), adapter.now_ms())
+    return bool(updates)
+
+
 async def monitor_transfers_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Fills (all dexs, perp and spot), ledger, and synthetic TWAP upkeep."""
+    """Fills, ledger and algo upkeep for every account, unconditionally.
+
+    The production loop is poller.poll_job, which fetches fills only on activity (spec 3.5);
+    this job is the ungated path used by the replay tests.
+    """
     repo: Repo = context.bot_data['repo']
     client: HyperliquidClient = context.bot_data['hl']
     accounts = await repo.tracked_accounts()
     for i, (key, address) in enumerate(accounts):
         try:
-            poll_ms = adapter.now_ms()
-            cursor = await _cursor(repo, key, 'fills')
-            fills, new_cursor = await adapter.fetch_fills(client, address, cursor)
-            await process_fills(context.bot, repo, client, key, address, fills, poll_ms)
-            if new_cursor != cursor:
-                await repo.set_cursor(key, 'fills', str(new_cursor), adapter.now_ms())
-
-            cursor = await _cursor(repo, key, 'ledger')
-            updates, new_cursor = await adapter.fetch_ledger(client, address, cursor)
-            await process_ledger(context.bot, repo, key, address, updates)
-            if new_cursor != cursor:
-                await repo.set_cursor(key, 'ledger', str(new_cursor), adapter.now_ms())
-
+            await poll_fills(context.bot, repo, client, key, address)
+            await poll_ledger(context.bot, repo, client, key, address)
             await maintain_algos(context.bot, repo, key, address, adapter.now_ms())
         except Exception as e:
             logger.error(f"Transfer check failed for {address}: {e}")

@@ -16,6 +16,7 @@ The v2 upgrade plan is in [docs/HYPERMATE_V2_SPEC.md](docs/HYPERMATE_V2_SPEC.md)
 - `/recent <alias> [n]` - Last n events (default 10, max 30), including ones that were not sent and why
 - `/stats <alias>` - PnL and volume
 - `/rescan <alias>` - Look for Hyperliquid HIP-3 dex positions again
+- `/health` - Admins only (`ADMIN_USER_IDS`): last poll time, active accounts, HL weight use and 429s over the last hour, active TWAPs and algos, DB size, uptime. Not in the `/` menu
 
 Aliases are matched case-insensitively. On startup the bot registers these commands as the Telegram `/` command menu for private chats.
 
@@ -23,7 +24,7 @@ Aliases are matched case-insensitively. On startup the bot registers these comma
 
 - One alert per order: fills of the same order (coin, direction, oid) are summed (size, notional, VWAP, realized PnL from `closedPnl`). Further orders for the same coin and direction within 60 s edit that alert instead of sending a new one.
 - Native TWAPs: one alert at start and one at the end; fills in the same direction while it runs are not alerted.
-- Bot-driven executions (repeated small orders from an external bot, no native TWAP) are detected and shown as one "algo" alert that is updated every 10 minutes, plus an end alert after 10 idle minutes.
+- Bot-driven executions (repeated small orders from an external bot, no native TWAP) are detected after a few cycles. The fill alerts sent before detection stay; then one "algo" alert is sent and updated every 10 minutes, and an end alert follows after 10 idle minutes.
 - HIP-3 dex coins are shown as `$MU (xyz)`. Collateral moves between the main account and a HIP-3 dex, spot/perp class transfers and vault deposits/withdrawals are recorded but not sent (off by default, spec 9.4).
 
 ## Running locally
@@ -45,6 +46,11 @@ python -m hypermate.main
 | `DATABASE_PATH` | no | `/data/hypermate.db` | SQLite file. The directory is created on startup if missing |
 | `LOG_LEVEL` | no | `INFO` | Python log level |
 | `HYPERLIQUID_API_URL` | no | `https://api.hyperliquid.xyz` | Hyperliquid API base URL |
+| `ADMIN_USER_IDS` | no | | Telegram user ids allowed to run `/health`, comma or space separated |
+| `HL_WEIGHT_BUDGET` | no | `1020` | Hyperliquid info API weight per minute the bot allows itself (HL limit 1200) |
+| `POLL_FAST_SEC` | no | `20` | Floor for the position poll interval. Raised automatically when polling would need over 40% of the budget |
+| `POLL_LEDGER_SEC` | no | `180` | Ledger (deposits, withdrawals, transfers) poll interval, stretched up to 600 s when the budget is short |
+| `BACKUP_DIR` | no | `<DATABASE_PATH dir>/backups` | Where the daily DB backup goes |
 
 `WALLET_ENCRYPTION_KEY` is no longer used (wallet generation was removed).
 
@@ -93,7 +99,13 @@ fly logs
 - `DATABASE_PATH` and `LOG_LEVEL` are set in `fly.toml` `[env]`. `BOT_TOKEN` is a Fly secret.
 - The container starts as root only long enough for `docker-entrypoint.sh` to `chown` the volume (Fly mounts it owned by root), then runs the bot as the unprivileged `app` user.
 
+### Polling and API budget
+
+Every `POLL_FAST_SEC` the bot reads each wallet's positions (`clearinghouseState`, main dex plus HIP-3 dexs) and spot balances (`spotClearinghouseState`), 2 weight each. Fills are fetched only when a position size or a spot balance changed, or while a native TWAP or an algo is being tracked. Wallets with no activity for 7 days are polled every third cycle until they move again. All requests go through one token bucket of `HL_WEIGHT_BUDGET` per minute with priority positions > TWAP > fills > ledger; a 429 pauses every request for `Retry-After` seconds (30 s without the header). One INFO log line per minute reports the weight used and the 429 count.
+
 ### DB backup
+
+The bot writes a backup every day at 04:00 KST to `<BACKUP_DIR>/hypermate-YYYYMMDD.db` with SQLite's online backup API and keeps the last 7 days. For a manual copy:
 
 ```bash
 fly ssh console -C "sqlite3 /data/hypermate.db '.backup /data/backup.db'"

@@ -97,8 +97,19 @@ def format_transfer_message(transfer: dict, wallet_address: str, alias: str) -> 
     return None
 
 
-def _futures_lines(perp_state: dict) -> list[str]:
+def _funding_text(position: dict) -> str:
+    """HL cumFunding.sinceOpen is positive when the position paid funding."""
+    funding = to_decimal((position.get('cumFunding') or {}).get('sinceOpen'))
+    if not funding:
+        return ""
+    received = -funding
+    return f" · funding {'+' if received >= 0 else '-'}{compact_usd(abs(received))}"
+
+
+def _futures_lines(perp_state: dict, dust_usd: Decimal = ZERO) -> list[str]:
+    """One line per position; positions below dust_usd notional are folded into a last line."""
     lines = []
+    dust = 0
     for pos in perp_state.get('assetPositions', []):
         position = pos.get('position')
         if not position:
@@ -106,29 +117,31 @@ def _futures_lines(perp_state: dict) -> list[str]:
         szi = to_decimal(position.get('szi')) or ZERO
         if szi == 0:
             continue
+        position_value = to_decimal(position.get('positionValue'))
+        if position_value is not None and abs(position_value) < dust_usd:
+            dust += 1
+            continue
         side = "LONG" if szi > 0 else "SHORT"
         side_emoji = "📈" if side == "LONG" else "📉"
-        position_value = to_decimal(position.get('positionValue'))
         size_str = usd(position_value, 0) if position_value is not None else f"{abs(szi):,.2f}"
         entry_px = to_decimal(position.get('entryPx'))
         entry_str = price(entry_px) if entry_px is not None else "N/A"
         upnl = to_decimal(position.get('unrealizedPnl'))
         pnl_str = f"{'🟢' if upnl >= 0 else '🔴'} {usd(upnl)}" if upnl is not None else "N/A"
-        funding_str = ""
-        funding = to_decimal((position.get('cumFunding') or {}).get('sinceOpen'))
-        if funding:
-            funding_text = f"Received {usd(abs(funding))}" if funding < 0 else f"Paid {usd(abs(funding))}"
-            funding_str = f"\n🔁 Funding PnL: {funding_text}"
         lines.append(
             f"- {side_emoji} <b>{side}</b> ${h(base_coin(position.get('coin', 'Unknown')))} — Size: {size_str} "
-            f"— Entry: {entry_str} — PnL: {pnl_str}{funding_str}\n")
+            f"— Entry: {entry_str} — PnL: {pnl_str}{_funding_text(position)}\n")
+    if dust:
+        lines.append(f"- + {dust} dust position{'s' if dust > 1 else ''} (under {usd(dust_usd, 0)})\n")
     return lines
 
 
-def format_positions(alias: str, address: str, perp_states, spot_state: dict) -> str:
+def format_positions(alias: str, address: str, perp_states, spot_state: dict,
+                     dust_usd: Decimal = Decimal(10)) -> str:
     """/positions <alias> view: perp positions per dex (main + HIP-3), spot balances, account value.
 
     perp_states is {dex: clearinghouseState} ("" = main dex) or a single main-dex state.
+    Positions with notional under dust_usd (settings.dust_notional_usd) are folded into one line.
     """
     if 'assetPositions' in perp_states or 'marginSummary' in perp_states:
         perp_states = {'': perp_states}
@@ -142,7 +155,7 @@ def format_positions(alias: str, address: str, perp_states, spot_state: dict) ->
         if value is not None:
             total += value
             has_value = True
-        lines = _futures_lines(state)
+        lines = _futures_lines(state, dust_usd)
         if dex == '':
             body = "\n".join(lines) if lines else "- No open futures positions\n"
             sections.append(f"📈 <b>Futures:</b>\n{body}")
@@ -479,13 +492,17 @@ def algo_label(sign: int, position_after: Optional[Decimal]) -> tuple[str, str]:
 
 
 def format_algo_progress(wallet_address: str, alias: str, state: dict, verb: str, side: str,
-                         position_after: Optional[Decimal], now_ms: int) -> str:
-    """ALGO_START text; the same message is edited with fresh numbers every algo_progress_sec."""
+                         position_after: Optional[Decimal]) -> str:
+    """ALGO_START text; the same message is edited with fresh numbers every algo_progress_sec.
+
+    Elapsed time runs from the first to the last fill (not to now), so it matches ALGO_END.
+    """
     total = to_decimal(state.get('total_ntl')) or ZERO
     total_sz = to_decimal(state.get('total_sz')) or ZERO
     vwap = total / total_sz if total_sz else None
     signed = f"{'+' if int(state['sign']) > 0 else '-'}{compact_usd(total)}"
-    line = f"{int(state['fills_count'])} fills {signed} in {humanize_ms(now_ms - int(state['started_ms']))}"
+    elapsed = humanize_ms(int(state['last_fill_ms']) - int(state['started_ms']))
+    line = f"{int(state['fills_count'])} fills {signed} in {elapsed}"
     if position_after is not None and vwap is not None:
         line += f" · pos {compact_usd(abs(position_after) * vwap)}"
     if vwap is not None:
@@ -565,3 +582,30 @@ def format_twap_list(rows: list[dict], now_ms: int) -> str:
                          f"{int(state['fills_count'])} fills {compact_usd(to_decimal(state['total_ntl']) or ZERO)} · "
                          f"since {kst_time(int(state['started_ms']), now_ms)}")
     return "⏳ <b>Active TWAPs</b>\n" + "\n".join(lines)
+
+
+# /health -----------------------------------------------------------------------
+
+def format_health(report: dict, now_ms: int) -> str:
+    """Admin view (spec 11): polling, budget, tracked state, DB size, uptime."""
+    polls = report.get('last_poll_ms') or {}
+    poll_lines = [f"- {h(venue)}: {kst_time(ms, now_ms)} ({humanize_ms(now_ms - ms)} ago)"
+                  for venue, ms in sorted(polls.items())] or ["- no cycle completed yet"]
+    weight = report.get('weight')
+    if weight:
+        weight_line = (f"avg {int(weight['avg'])} / max {int(weight['max'])} per min over "
+                       f"{weight['minutes']} min · 429s: {weight['rate_limited']}")
+    else:
+        weight_line = "n/a"
+    db_bytes = report.get('db_bytes')
+    db_line = f"{Decimal(db_bytes) / Decimal(1_048_576):.1f} MB" if db_bytes is not None else "n/a"
+    return (
+        "🩺 <b>Health</b>\n"
+        "Last poll:\n" + "\n".join(poll_lines) + "\n"
+        f"Accounts: {report.get('accounts', 0)} active ({report.get('dormant', 0)} dormant) · "
+        f"fast {report.get('poll_fast_sec')}s · ledger {report.get('ledger_interval_sec')}s\n"
+        f"HL weight (1h): {weight_line}\n"
+        f"Active TWAPs: {report.get('twaps', 0)} · algos: {report.get('algos', 0)}\n"
+        f"DB: {db_line}\n"
+        f"Uptime: {humanize_ms(int(report.get('uptime_ms', 0)))}"
+    )

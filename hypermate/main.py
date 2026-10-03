@@ -1,6 +1,7 @@
 """HyperMate entry point: python -m hypermate.main"""
 
 import asyncio
+import datetime
 import logging
 import os
 
@@ -9,9 +10,11 @@ from telegram.ext import Application, CommandHandler
 
 from hypermate.bot import commands, texts
 from hypermate.config import Config
-from hypermate.core import pipeline
+from hypermate.core import poller
+from hypermate.db import backup
 from hypermate.db.repo import Repo
 from hypermate.venues.hyperliquid.client import HyperliquidClient
+from hypermate.venues.hyperliquid.scheduler import WeightBudget
 
 logger = logging.getLogger(__name__)
 
@@ -28,15 +31,25 @@ def warn_legacy_files() -> None:
                 logger.warning(f"Legacy file {path} found; it is not read anymore")
 
 
+def quiet_noisy_loggers() -> None:
+    """httpx logs every Telegram request URL (with the bot token) at INFO; apscheduler logs each job run."""
+    for name in ('httpx', 'apscheduler', 'apscheduler.executors.default', 'apscheduler.scheduler'):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
 async def post_init(application: Application) -> None:
     """Runs inside PTB's event loop before polling starts (B7: no get_event_loop in our code)."""
     warn_legacy_files()
     repo = Repo(Config.DATABASE_PATH)
     await repo.connect()
     application.bot_data['repo'] = repo
-    client = HyperliquidClient(Config.HYPERLIQUID_API_URL, Config.SPOT_META_TTL_SEC, Config.PERP_DEXS_TTL_SEC)
+    budget = WeightBudget(Config.HL_WEIGHT_BUDGET)
+    application.bot_data['budget'] = budget
+    client = HyperliquidClient(Config.HYPERLIQUID_API_URL, Config.SPOT_META_TTL_SEC, Config.PERP_DEXS_TTL_SEC,
+                               budget)
     await client.start()
     application.bot_data['hl'] = client
+    poller.get_state(application)
     # "/" autocomplete menu in private chats (spec 9.1, commands implemented so far)
     await application.bot.set_my_commands(
         [BotCommand(command, description) for command, description in texts.MENU_COMMANDS],
@@ -65,11 +78,14 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("recent", commands.recent_command))
     application.add_handler(CommandHandler("twap", commands.twap_command))
     application.add_handler(CommandHandler("rescan", commands.rescan_command))
+    application.add_handler(CommandHandler("health", commands.health_command))
     application.add_error_handler(commands.error_handler)
 
     job_queue = application.job_queue
-    job_queue.run_repeating(pipeline.monitor_positions_job, interval=Config.POSITIONS_POLL_SEC, first=10)
-    job_queue.run_repeating(pipeline.monitor_transfers_job, interval=Config.TRANSFERS_POLL_SEC, first=25)
+    # poll_job itself skips cycles while the adaptive interval (spec 3.5) has not elapsed
+    job_queue.run_repeating(poller.poll_job, interval=Config.POLL_FAST_SEC, first=10)
+    job_queue.run_repeating(poller.weight_log_job, interval=60, first=60)
+    job_queue.run_daily(backup.backup_job, time=datetime.time(hour=Config.BACKUP_HOUR_KST, tzinfo=backup.KST))
     return application
 
 
@@ -78,6 +94,7 @@ def main() -> None:
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         level=getattr(logging, Config.LOG_LEVEL.upper())
     )
+    quiet_noisy_loggers()
     try:
         Config.validate_config()
     except ValueError as e:

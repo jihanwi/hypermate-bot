@@ -432,7 +432,7 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
   - 누적 fills 수 >= `algo_min_fills` (8)
   - 각 fill notional 의 중앙값이 그 coin 현재 포지션 notional 의 `algo_max_slice_pct` (2%) 미만. 포지션이 0 에서 시작하면 이 조건은 보지 않는다 (오너 결정 2026-10-03: 누적 notional 기준이면 같은 크기 fill 이 50건 넘게 쌓여야 2% 미만이 되어 사실상 감지 불가)
   - 카운트 단위는 "체결 집계" 로 묶은 주문(oid) 단위 (오너 결정). 시장가 1건이 호가 수십 개를 쓸어도 1로 센다. 메시지의 "N fills" 도 주문 수
-- 진입 시 `ALGO_START` 이벤트 1건 (10 의 algo 예시). 진입 판정 전 사이클의 fills 는 debounce 로 한 메시지에 누적되어 있으므로, 진입 시 그 메시지를 START 로 edit 한다 (없거나 edit 실패면 새 메시지). 이후 같은 키의 개별 fill 이벤트는 `delivery='suppressed_algo'` 로 기록만 한다.
+- 진입 시 `ALGO_START` 이벤트 1건 (10 의 algo 예시) 을 새 메시지로 보낸다 (텔레그램 알림이 가야 하므로 edit 승격 아님, 오너 결정 2026-10-03). 진입 판정 전 사이클의 체결 메시지(debounce 누적)는 그대로 둔다. 이후 같은 키의 개별 fill 이벤트는 `delivery='suppressed_algo'` 로 기록만 한다. 따라서 algo 하나당 메시지는 감지 전 체결 메시지 + START + END.
 - 메시지 방향 표기: 시작 시점 포지션과 같은 방향으로 늘리면 `accumulating LONG/SHORT`, 반대 방향(Close)이면 `reducing LONG/SHORT` (오너 결정). 예: CASHCAT Close Short (+) → `algo reducing SHORT $CASHCAT`. ALGO_END 도 같은 표기: `algo done accumulating LONG $BTC`, `algo done reducing SHORT $CASHCAT`.
 - 진행: START 메시지를 `algo_progress_sec` (600) 마다 edit (누적 fills, 누적 notional, VWAP, 경과시간). 새 메시지 아님. `sent_messages` 테이블 사용.
 - 종료: 마지막 fill 이후 `algo_idle_sec` (600) 동안 fill 없음 → `ALGO_END` 1건 (총 size, notional, VWAP, 소요시간) 후 상태 삭제.
