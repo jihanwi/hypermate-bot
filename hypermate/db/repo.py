@@ -1,10 +1,11 @@
 """Database access. All SQL lives here. aiosqlite, WAL mode, schema in schema.sql."""
 
 import json
+from decimal import Decimal
 import logging
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import aiosqlite
 
@@ -60,6 +61,86 @@ class Repo:
         if 'spot_json' not in columns:
             await self.db.execute("ALTER TABLE snapshots ADD COLUMN spot_json TEXT")
             logger.info("Migrated snapshots: added spot_json")
+
+    # api_cache (spec 3.4): expensive calls such as userRole (weight 60) -----------------
+
+    async def cache_get(self, cache_key: str, now_ms: int) -> Optional[Any]:
+        cur = await self.db.execute(
+            "SELECT value_json, expires_at FROM api_cache WHERE cache_key = ?", (cache_key,))
+        row = await cur.fetchone()
+        if not row or (row[1] is not None and row[1] <= now_ms):
+            return None
+        return json.loads(row[0])
+
+    async def cache_set(self, cache_key: str, value: Any, expires_at: int) -> None:
+        await self.db.execute(
+            "INSERT OR REPLACE INTO api_cache (cache_key, value_json, expires_at) VALUES (?, ?, ?)",
+            (cache_key, json.dumps(value), expires_at))
+        await self.db.commit()
+
+    # wallet_links (spec 7) ------------------------------------------------------------
+
+    async def wallet_id(self, address: str) -> Optional[int]:
+        cur = await self.db.execute("SELECT wallet_id FROM wallets WHERE evm_address = ?", (address.lower(),))
+        row = await cur.fetchone()
+        return row[0] if row else None
+
+    async def replace_links(self, wallet_id: int, links: list[dict], now_ms: int) -> None:
+        """Store a full discovery result (rows: related_address, link_type, confidence, evidence)."""
+        await self.db.execute("DELETE FROM wallet_links WHERE wallet_id = ?", (wallet_id,))
+        for link in links:
+            await self.db.execute(
+                "INSERT OR REPLACE INTO wallet_links (wallet_id, related_address, related_venue, link_type, "
+                "confidence, evidence_json, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (wallet_id, link['related_address'].lower(), link.get('related_venue', HYPERLIQUID),
+                 link['link_type'], link['confidence'], json.dumps(link.get('evidence') or {}), now_ms))
+        await self.db.commit()
+
+    async def links(self, wallet_id: int) -> list[dict]:
+        """Rows ordered confirmed > likely > weak, then address. 'row_id' is the SQLite rowid (callbacks)."""
+        cur = await self.db.execute(
+            "SELECT rowid, related_address, related_venue, link_type, confidence, evidence_json, discovered_at "
+            "FROM wallet_links WHERE wallet_id = ? "
+            "ORDER BY CASE confidence WHEN 'confirmed' THEN 0 WHEN 'likely' THEN 1 ELSE 2 END, "
+            "link_type, related_address", (wallet_id,))
+        return [{'row_id': r[0], 'related_address': r[1], 'related_venue': r[2], 'link_type': r[3],
+                 'confidence': r[4], 'evidence': json.loads(r[5]), 'discovered_at': r[6]}
+                for r in await cur.fetchall()]
+
+    async def link_by_row(self, row_id: int) -> Optional[dict]:
+        cur = await self.db.execute(
+            "SELECT wallet_id, related_address, link_type FROM wallet_links WHERE rowid = ?", (row_id,))
+        row = await cur.fetchone()
+        return {'wallet_id': row[0], 'related_address': row[1], 'link_type': row[2]} if row else None
+
+    async def links_discovered_at(self, wallet_id: int) -> Optional[int]:
+        """Time of the last full discovery (rows with evidence.discovery = True), None if never run."""
+        cur = await self.db.execute(
+            "SELECT MAX(discovered_at) FROM wallet_links WHERE wallet_id = ? "
+            "AND json_extract(evidence_json, '$.discovery') = 1", (wallet_id,))
+        row = await cur.fetchone()
+        return row[0] if row and row[0] is not None else None
+
+    async def add_weak_counterparty(self, wallet_id: int, address: str, direction: str, usd: str,
+                                    ts_ms: int) -> None:
+        """Background accumulation (spec 7.3): a ledger transfer counterparty becomes or updates a weak
+        transfer_counterparty row. Never downgrades a row a discovery rated higher."""
+        address = address.lower()
+        cur = await self.db.execute(
+            "SELECT confidence, evidence_json FROM wallet_links WHERE wallet_id = ? AND related_address = ? "
+            "AND link_type = 'transfer_counterparty'", (wallet_id, address))
+        row = await cur.fetchone()
+        evidence = json.loads(row[1]) if row else {'in': 0, 'out': 0, 'usd': '0', 'last_ms': 0}
+        evidence[direction] = int(evidence.get(direction, 0)) + 1
+        evidence['usd'] = str(Decimal(str(evidence.get('usd', '0'))) + Decimal(str(usd or '0')))
+        evidence['last_ms'] = max(int(evidence.get('last_ms', 0)), ts_ms)
+        evidence['background'] = True
+        confidence = row[0] if row else 'weak'
+        await self.db.execute(
+            "INSERT OR REPLACE INTO wallet_links (wallet_id, related_address, related_venue, link_type, "
+            "confidence, evidence_json, discovered_at) VALUES (?, ?, ?, 'transfer_counterparty', ?, ?, ?)",
+            (wallet_id, address, HYPERLIQUID, confidence, json.dumps(evidence), ts_ms))
+        await self.db.commit()
 
     PAYLOAD_VERSION = 1
 
