@@ -23,7 +23,7 @@ Aliases are matched case-insensitively. On startup the bot registers these comma
 
 ### Venues
 
-`/add` resolves the wallet on every venue in parallel and tracks the ones with activity: Hyperliquid (positions, account value or spot balance), Lighter (sub-accounts of the L1 address) and RISEx (open positions or any trade history). The reply says which: `✅ Wallet added as cl · HL ✅ (xyz) · Lighter ✅ (2 sub-accounts)`. `/rescan` repeats it, and a daily job at 04:10 KST re-checks the venues a wallet is not active on. Alerts carry a venue badge (`[HL]`, `[LTR]`, `[RISE]`) and Lighter sub-accounts show as `alias#index`. RISEx uses one WebSocket for all tracked wallets (positions and trades channels) with REST as the fallback. `/positions` has one section per venue account and `/list` sums the account values over venues. Lighter polls use the WebSocket stream when it connects and REST otherwise (interval raised with the account count so the public 60 req/min limit holds); `/health` shows the mode.
+`/add` resolves the wallet on every venue in parallel and tracks the ones with activity: Hyperliquid (positions, account value or spot balance), Lighter (sub-accounts of the L1 address), RISEx (open positions or any trade history) and Aster (positions or a wallet balance; the reply shows the privacy state). The reply says which: `✅ Wallet added as cl · HL ✅ (xyz) · Lighter ✅ (2 sub-accounts)`. `/rescan` repeats it, and a daily job at 04:10 KST re-checks the venues a wallet is not active on. Alerts carry a venue badge (`[HL]`, `[LTR]`, `[RISE]`, `[ASTER]`) and Lighter sub-accounts show as `alias#index`. Aster is polled every 30 s over JSON-RPC; when a wallet turns on Aster privacy the bot says so once and stops tracking it there until the daily rescan sees it open again. RISEx uses one WebSocket for all tracked wallets (positions and trades channels) with REST as the fallback. `/positions` has one section per venue account and `/list` sums the account values over venues. Lighter polls use the WebSocket stream when it connects and REST otherwise (interval raised with the account count so the public 60 req/min limit holds); `/health` shows the mode.
 
 ### Alerts
 
@@ -66,6 +66,8 @@ python -m hypermate.main
 | `RISEX_WS_URL` | no | `wss://api.rise.trade/ws/` | RISEx WebSocket |
 | `RISEX_WS_ENABLED` | no | `true` | Use the RISEx WS (positions and trades channels); REST is the fallback |
 | `RISEX_REQ_BUDGET` | no | `2400` | RISEx requests per minute (public limit 500 per 10 s) |
+| `ASTER_RPC_URL` | no | `https://tapi.asterdex.com/info` | Aster Chain JSON-RPC endpoint |
+| `ASTER_REQ_BUDGET` | no | `300` | Aster requests per minute to start with; halved on every 429 |
 
 `WALLET_ENCRYPTION_KEY` is no longer used (wallet generation was removed).
 
