@@ -237,8 +237,10 @@ async def test_stream_snapshot_and_trades_then_rest_fallback(monkeypatch):
     # snapshot from the WS cache (human units) and the balance fetched once over REST
     snap = await ad.snapshot(account)
     assert snap.positions['BTC']['szi'] == '-0.020892' and snap.account_value == Decimal('241.23')
-    assert ('positions', ADDR) not in client.calls and client.calls.count(('balance', ADDR)) == 1
+    # the first snapshot reconciles the cache against REST once; the balance is fetched once
+    assert client.calls.count(('positions', ADDR)) == 1 and client.calls.count(('balance', ADDR)) == 1
     await ad.snapshot(account)
+    assert client.calls.count(('positions', ADDR)) == 1                    # cache only within 5 minutes
     assert client.calls.count(('balance', ADDR)) == 1                      # cached while connected
     # trades from the WS buffer, no REST call
     await ad.fetch_events(account, None, {})                                 # baseline
