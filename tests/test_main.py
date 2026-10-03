@@ -33,6 +33,7 @@ async def test_post_init_registers_menu_and_creates_db(tmp_path, monkeypatch):
             ('recent', 'Recent events: /recent alias [n]'),
             ('stats', 'PnL and volume: /stats alias'),
             ('rescan', 'Re-detect venues for a wallet: /rescan alias'),
+            ('related', 'Find linked wallets: /related alias'),
             ('help', 'Commands and examples'),
         ]
         assert all(len(c.description) <= 256 for c in commands_arg)
