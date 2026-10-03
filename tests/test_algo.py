@@ -221,3 +221,45 @@ def test_entry_rule():
     # position started from 0: the slice rule is skipped (owner decision)
     fresh = [_order(i, i // 3, '1000', start='0' if i == 0 else '1', after='200') for i in range(9)]
     assert aggregator.should_start_algo(fresh, SETTINGS)
+
+
+async def test_backlog_in_one_cycle_does_not_start_an_algo(repo, clock):
+    """Item 2c: the 3-cycle rule counts poll cycles, not fill times. 20 orders spread over 5 minutes
+    that all arrive in one poll (after a gap) are one cycle and must not start an algo."""
+    await repo.add_subscription(7, W, 'w', T0)
+    hl, bot = FakeHLClient(), FakeBot()
+    hl.fills[W] = [fill('BTC', 'Open Long', '0.01', '86000', T0 + 1000 + 15_000 * i, str(400 + Decimal('0.01') * i),
+                        oid=i + 1) for i in range(20)]
+    (va, _), = await repo.tracked_accounts()
+    hl.now = clock
+    clock.ms = T0 + 6 * 60_000                          # one poll sees all 20 orders at once
+    await pipeline.monitor_transfers_job(make_context({'repo': repo, 'hl': hl}, bot=bot))
+    assert await repo.events_since(va, 0, ['algo_start']) == []
+    assert len(bot.sent) == 1                           # one debounced message
+    polls = {e['payload']['meta']['poll_ms'] for e in await repo.events_since(va, 0)}
+    assert len(polls) == 1
+
+
+async def test_algo_key_is_never_duplicated_and_ends_on_idle(repo, clock):
+    """Item 2a/2b: one row per (coin, sign); END exactly when algo_idle_sec has passed since last_fill_ms."""
+    await repo.add_subscription(7, W, 'loracle', T0)
+    hl, bot = FakeHLClient(), FakeBot()
+    hl.fills[W] = [f for f in loracle_fills(10) if f['coin'] == 'BTC']
+    (va, _), = await repo.tracked_accounts()
+    await run_cycles(repo, hl, bot, clock, T0 + 10 * 60_000)
+    assert list(await repo.active_algos(va)) == [('BTC', 1)]
+    starts = await repo.events_since(va, 0, ['algo_start'])
+    assert len(starts) == 1
+    # more cycles with the same key active: no second row, no second START
+    hl.fills[W].append(fill('BTC', 'Open Long', '0.05', '86000', clock.ms + 1000, '420', oid=5000))
+    await run_cycles(repo, hl, bot, clock, clock.ms + 3 * CYCLE_MS)
+    assert list(await repo.active_algos(va)) == [('BTC', 1)]
+    assert len(await repo.events_since(va, 0, ['algo_start'])) == 1
+    last_fill = int((await repo.active_algos(va))[('BTC', 1)]['last_fill_ms'])
+    assert last_fill == hl.fills[W][-1]['time']
+    # idle: no END before algo_idle_sec (600 s) from the last fill, END on the first cycle after
+    await run_cycles(repo, hl, bot, clock, last_fill + 600_000 - CYCLE_MS)
+    assert await repo.events_since(va, 0, ['algo_end']) == []
+    await run_cycles(repo, hl, bot, clock, last_fill + 600_000 + CYCLE_MS)
+    assert len(await repo.events_since(va, 0, ['algo_end'])) == 1
+    assert await repo.active_algos(va) == {}

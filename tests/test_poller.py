@@ -159,6 +159,7 @@ async def test_cycle_waits_for_the_adaptive_interval(repo, clock, monkeypatch):
 
 async def test_health_command_is_admin_only(repo, clock, monkeypatch):
     monkeypatch.setattr(Config, 'ADMIN_USER_IDS', frozenset({1}))
+    monkeypatch.setattr(commands, 'now_ms', clock)
     await repo.add_subscription(7, A, 'w', T0)
     hl = FakeHLClient()
     hl.now = clock
@@ -178,6 +179,17 @@ async def test_health_command_is_admin_only(repo, clock, monkeypatch):
     check_telegram_html(text)
     assert 'hyperliquid:' in text and '1 active (0 dormant)' in text
     assert 'max 100' in text and '429s: 0' in text and 'DB:' in text and 'Uptime: 1m' in text
+    assert 'WAL' in text and 'Events: 0 rows' in text and 'algo_active' not in text
+    (va, _), = await repo.tracked_accounts()
+    await repo.upsert_algo(va, {'coin': 'xyz:MU', 'sign': 1, 'started_ms': T0, 'last_fill_ms': clock.ms - 120_000,
+                                'fills_count': 12, 'total_ntl': Decimal(41000), 'total_sz': Decimal(1)})
+    await repo.record_event('k', va, 'position_open', clock.ms, {'coin': 'BTC'}, 'sent', clock.ms)
+    update = make_update(1)
+    await commands.health_command(update, context)
+    text = update.message.replies[0]['text']
+    check_telegram_html(text)
+    assert 'Events: 1 rows · last 24h: position_open 1' in text
+    assert 'algo_active:\n- 0xaaaa...aaaa $MU (xyz) + · 12 fills $41k · last fill 2m ago' in text
 
 
 # 50 addresses, 30 minutes, no 429 (spec 5.3) ------------------------------------------

@@ -277,3 +277,36 @@ def test_suppression_rules():
     assert not twap.is_suppressed(event('liquidation', -1), [sell])
     assert not twap.is_suppressed(event('position_flip', -1), [sell])
     assert not twap.is_suppressed(event('position_increase', 1, coin='ETH'), [buy])
+
+
+async def test_twap_running_at_add_time_is_reported_as_in_progress(repo, monkeypatch):
+    """Item 3: a TWAP that started before /add shows 'TWAP in progress (started Xh ago)'."""
+    web = load_fixture('hl_webData2.json')
+    oldest = min(int(t[1]['timestamp']) for t in web['twapStates'])
+    # add the wallet two hours after the TWAPs in the fixture started
+    monkeypatch.setattr(pipeline.asyncio, 'sleep', _no_sleep)
+    add_ms = oldest + 2 * 3600_000
+    monkeypatch.setattr(adapter, 'now_ms', lambda: add_ms)
+    await repo.add_subscription(7, W, 'loracle', add_ms)
+    hl, bot = FakeHLClient(), FakeBot()
+    hl.clearinghouse[W] = clearinghouse(position('BTC', '0.01444'))
+    hl.web[W] = web
+    context = make_context({'repo': repo, 'hl': hl}, bot=bot)
+    await pipeline.monitor_positions_job(context)
+    hl.clearinghouse[W] = clearinghouse(position('BTC', '0.015'))
+    await pipeline.monitor_positions_job(context)
+    texts = sent_texts(bot)
+    assert len(texts) == 5 and all('TWAP in progress' in t and 'started TWAP' not in t for t in texts)
+    assert any('(started 2h' in t for t in texts)
+    for t in texts:
+        check_telegram_html(t)
+
+    # a TWAP that starts after tracking began is still "started TWAP"
+    bot.sent.clear()
+    later = add_ms + 60_000
+    monkeypatch.setattr(adapter, 'now_ms', lambda: later)
+    fresh = copy.deepcopy(web)
+    fresh['twapStates'].append([999, {**web['twapStates'][0][1], 'timestamp': later - 1000, 'coin': 'ETH'}])
+    hl.web[W] = fresh
+    await pipeline.monitor_positions_job(context)
+    assert len(bot.sent) == 1 and 'started TWAP' in bot.sent[0]['text']
