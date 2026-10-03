@@ -177,6 +177,17 @@ class WeightBudget:
             self.tokens -= weight
             self._record(weight, priority=priority)
 
+    MIN_PER_MINUTE = 30
+
+    def halve(self) -> int:
+        """Venues without a published limit (Aster): halve the budget on every 429, floor MIN_PER_MINUTE."""
+        self.per_minute = max(self.MIN_PER_MINUTE, self.per_minute // 2)
+        self.rate = self.per_minute / 60
+        self.capacity = self.per_minute / 6
+        self.tokens = min(self.tokens, self.capacity)
+        logger.warning(f"Budget halved to {self.per_minute}/min after a 429")
+        return self.per_minute
+
     def rate_limited(self, retry_after: Optional[float]) -> float:
         seconds = retry_after if retry_after and retry_after > 0 else DEFAULT_RETRY_AFTER_SEC
         self.paused_until = max(self.paused_until, self.clock() + seconds)
