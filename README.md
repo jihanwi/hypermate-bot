@@ -16,14 +16,14 @@ The v2 upgrade plan is in [docs/HYPERMATE_V2_SPEC.md](docs/HYPERMATE_V2_SPEC.md)
 - `/recent <alias> [n]` - Last n events (default 10, max 30), including ones that were not sent and why
 - `/stats <alias>` - PnL and volume
 - `/rescan <alias>` - Look for Hyperliquid HIP-3 dex positions again
-- `/health` - Admins only (`ADMIN_USER_IDS`): last poll time, active accounts, HL weight use and 429s over the last hour, active TWAPs and algos, DB size, uptime. Not in the `/` menu
+- `/health` - Admins only (`ADMIN_USER_IDS`): last poll time, active accounts, HL weight use and 429s over the last hour, active TWAPs and algos, DB and WAL size, event row counts (total and last 24 h by type), uptime, and the `algo_active` rows (coin, side, fills, time since the last fill). Not in the `/` menu
 
 Aliases are matched case-insensitively. On startup the bot registers these commands as the Telegram `/` command menu for private chats.
 
 ### Alerts
 
 - One alert per order: fills of the same order (coin, direction, oid) are summed (size, notional, VWAP, realized PnL from `closedPnl`). Further orders for the same coin and direction within 60 s edit that alert instead of sending a new one.
-- Native TWAPs: one alert at start and one at the end; fills in the same direction while it runs are not alerted.
+- Native TWAPs: one alert at start and one at the end; fills in the same direction while it runs are not alerted. A TWAP that was already running when the wallet was added is reported as "TWAP in progress (started 2h ago)".
 - Bot-driven executions (repeated small orders from an external bot, no native TWAP) are detected after a few cycles. The fill alerts sent before detection stay; then one "algo" alert is sent and updated every 10 minutes, and an end alert follows after 10 idle minutes.
 - HIP-3 dex coins are shown as `$MU (xyz)`. Collateral moves between the main account and a HIP-3 dex, spot/perp class transfers and vault deposits/withdrawals are recorded but not sent (off by default, spec 9.4).
 
@@ -105,7 +105,7 @@ Every `POLL_FAST_SEC` the bot reads each wallet's positions (`clearinghouseState
 
 ### DB backup
 
-The bot writes a backup every day at 04:00 KST to `<BACKUP_DIR>/hypermate-YYYYMMDD.db` with SQLite's online backup API and keeps the last 7 days. For a manual copy:
+The bot writes a backup every day at 04:00 KST to `<BACKUP_DIR>/hypermate-YYYYMMDD.db` with SQLite's online backup API and keeps the last 7 days. Right after a successful backup it deletes events older than 30 days (`EVENTS_RETENTION_DAYS`) with their `sent_messages` rows and runs `PRAGMA wal_checkpoint(TRUNCATE)`. Event payloads hold aggregates only (fill count, size, notional, VWAP, first and last tid), never the raw fills; an older database is slimmed once on startup. For a manual copy:
 
 ```bash
 fly ssh console -C "sqlite3 /data/hypermate.db '.backup /data/backup.db'"
