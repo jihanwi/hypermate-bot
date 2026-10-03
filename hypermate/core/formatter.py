@@ -328,7 +328,8 @@ def _twap_side(state: dict) -> str:
 
 
 def format_twap_start(wallet_address: str, alias: str, state: dict,
-                      mark_px: Optional[Decimal], now_ms: int) -> str:
+                      mark_px: Optional[Decimal], now_ms: int, in_progress: bool = False) -> str:
+    """in_progress: the TWAP was already running when tracking of the wallet began (e.g. right after /add)."""
     sz = to_decimal(state.get('sz')) or ZERO
     minutes = int(state.get('minutes') or 0)
     started = int(state.get('timestamp') or now_ms)
@@ -337,7 +338,12 @@ def format_twap_start(wallet_address: str, alias: str, state: dict,
     details = [f"{size} over {humanize_minutes(minutes)}", f"ends ~{kst_time(started + minutes * 60_000, now_ms)}"]
     if state.get('reduceOnly'):
         details.append('reduce-only')
-    return (f"{VENUE_BADGE_HL} ⏳ <b>{alias_link(wallet_address, alias)}</b> started TWAP {_twap_side(state)} {coin_label(coin)}\n"
+    if in_progress:
+        header = (f"TWAP in progress {_twap_side(state)} {coin_label(coin)} "
+                  f"(started {humanize_ms(max(0, now_ms - started))} ago)")
+    else:
+        header = f"started TWAP {_twap_side(state)} {coin_label(coin)}"
+    return (f"{VENUE_BADGE_HL} ⏳ <b>{alias_link(wallet_address, alias)}</b> {header}\n"
             + " · ".join(details))
 
 
@@ -580,7 +586,8 @@ def format_twap_list(rows: list[dict], now_ms: int) -> str:
             state = row['state']
             lines.append(f"{VENUE_BADGE_HL} 🤖 {who} algo {row['verb']} {row['side']} {coin_label(state['coin'])} · "
                          f"{int(state['fills_count'])} fills {compact_usd(to_decimal(state['total_ntl']) or ZERO)} · "
-                         f"since {kst_time(int(state['started_ms']), now_ms)}")
+                         f"since {kst_time(int(state['started_ms']), now_ms)} · "
+                         f"last fill {humanize_ms(max(0, now_ms - int(state['last_fill_ms'])))} ago")
     return "⏳ <b>Active TWAPs</b>\n" + "\n".join(lines)
 
 
@@ -597,8 +604,21 @@ def format_health(report: dict, now_ms: int) -> str:
                        f"{weight['minutes']} min · 429s: {weight['rate_limited']}")
     else:
         weight_line = "n/a"
-    db_bytes = report.get('db_bytes')
-    db_line = f"{Decimal(db_bytes) / Decimal(1_048_576):.1f} MB" if db_bytes is not None else "n/a"
+    db_line = _mb(report.get('db_bytes'))
+    wal_bytes = report.get('wal_bytes')
+    if wal_bytes is not None:
+        db_line += f" · WAL {_mb(wal_bytes)}"
+    stats = report.get('db_stats') or {}
+    if stats:
+        by_type = ", ".join(f"{t} {n}" for t, n in stats.get('events_24h', [])[:5]) or "none"
+        db_line += (f"\nEvents: {stats.get('events_total', 0)} rows · last 24h: {by_type} · "
+                    f"sent_messages {stats.get('sent_messages', 0)}")
+    algo_lines = []
+    for row in report.get('algo_rows') or []:
+        idle = humanize_ms(max(0, now_ms - int(row['last_fill_ms'] or now_ms)))
+        algo_lines.append(f"- {short_address(row['address'])} {coin_label(row['coin'])} "
+                          f"{'+' if int(row['sign']) > 0 else '-'} · {int(row['fills_count'] or 0)} fills "
+                          f"{compact_usd(to_decimal(row['total_ntl']) or ZERO)} · last fill {idle} ago")
     return (
         "🩺 <b>Health</b>\n"
         "Last poll:\n" + "\n".join(poll_lines) + "\n"
@@ -608,4 +628,10 @@ def format_health(report: dict, now_ms: int) -> str:
         f"Active TWAPs: {report.get('twaps', 0)} · algos: {report.get('algos', 0)}\n"
         f"DB: {db_line}\n"
         f"Uptime: {humanize_ms(int(report.get('uptime_ms', 0)))}"
+        + (("\nalgo_active:\n" + "\n".join(algo_lines)) if algo_lines else "")
     )
+
+
+def _mb(size: Optional[int]) -> str:
+    return f"{Decimal(size) / Decimal(1_048_576):.1f} MB" if size is not None else "n/a"
+

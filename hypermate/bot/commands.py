@@ -281,7 +281,8 @@ async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await reply(update, texts.ADMIN_ONLY)
         return
     repo = _repo(context)
-    report = poller.health_report(context, await repo.counts(), repo.path)
+    report = poller.health_report(context, await repo.counts(), repo.path,
+                                  await repo.db_stats(now_ms()), await repo.all_active_algos())
     await reply(update, formatter.format_health(report, now_ms()))
 
 
