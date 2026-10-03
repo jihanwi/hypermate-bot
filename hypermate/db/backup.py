@@ -61,10 +61,12 @@ async def startup_maintenance(repo: Repo, now_ms: int) -> None:
     """Background task after post_init: prune to the retention window first (fewer rows), then the
     batched payload slimming. Never blocks startup; errors are logged."""
     try:
-        if await repo.payloads_need_slimming():
+        pending = await repo.payloads_need_slimming() or await repo.suppressed_rows_need_cleanup()
+        if pending:
             events, messages = await repo.prune_events(now_ms - Config.EVENTS_RETENTION_DAYS * 24 * 3600 * 1000)
             logger.info(f"Startup prune before slimming: removed {events} events, {messages} sent_messages")
             await repo.slim_payloads()
+            await repo.delete_suppressed_rows()     # fix/multi-algo-summary: old suppressed fill rows
             await repo.checkpoint()
     except Exception as e:
         logger.error(f"Startup maintenance failed: {e}")

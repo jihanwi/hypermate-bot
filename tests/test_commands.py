@@ -124,11 +124,16 @@ async def test_rescan_and_recent(repo):
     for i in range(12):
         await repo.record_event(f'k{i}', va, 'position_increase', 1_790_000_000_000 + i * 1000,
                                 {'coin': 'BTC', 'side': 'LONG', 'notional_usd': '5000'},
-                                'suppressed_twap' if i % 2 else 'sent', 1)
+                                'summarized' if i % 2 else 'sent', 1)
     out = (await call(commands.recent_command, repo, hl, 5, 'whale_1'))[0]
     assert out.count('\n') == 10                        # header + 10 events (default)
     out = (await call(commands.recent_command, repo, hl, 5, 'whale_1', '3'))[0]
-    assert out.count('\n') == 3 and 'not sent (TWAP)' in out
+    assert out.count('\n') == 3 and 'not sent (summary mode)' in out
+    # active algos appear as one summary line each instead of their (unrecorded) fills
+    await repo.upsert_algo(va, {'coin': 'DOGE', 'sign': 1, 'started_ms': 1, 'last_fill_ms': 2, 'fills_count': 18423,
+                                'total_sz': '1', 'total_ntl': '1520000'})
+    out = (await call(commands.recent_command, repo, hl, 5, 'whale_1', '3'))[0]
+    assert out.endswith('🤖 algo $DOGE · 18,423 fills $1.52M (active)')
     assert await call(commands.recent_command, repo, hl, 5) == [texts.RECENT_USAGE]
 
 

@@ -556,7 +556,7 @@ def format_algo_end(wallet_address: str, alias: str, state: dict, verb: str, sid
 # /recent and /twap ------------------------------------------------------------------
 
 _DELIVERY_NOTES = {
-    'suppressed_twap': 'TWAP', 'suppressed_algo': 'algo', 'filtered_settings': 'off in settings',
+    'summarized': 'summary mode', 'filtered_settings': 'off in settings',
     'filtered_threshold': 'below threshold', 'muted': 'muted',
 }
 
@@ -581,10 +581,17 @@ def _recent_line(event: dict) -> str:
     return f"<i>{line} · not sent ({note})</i>" if note else line
 
 
-def format_recent(alias: str, events: list[dict]) -> str:
-    if not events:
+def _active_algo_line(state: dict) -> str:
+    """/recent: one line per active algo instead of its suppressed fills (they are not recorded)."""
+    return (f"🤖 algo {coin_label(state['coin'])} · {int(state['fills_count']):,} fills "
+            f"{compact_usd(to_decimal(state.get('total_ntl')) or ZERO)} (active)")
+
+
+def format_recent(alias: str, events: list[dict], algos: Optional[list[dict]] = None) -> str:
+    if not events and not algos:
         return f"No events recorded for <b>{h(alias)}</b> yet."
     lines = [_recent_line(e) for e in sorted(events, key=lambda e: (e['ts_ms'], e['event_id']))]
+    lines += [_active_algo_line(a) for a in sorted(algos or [], key=lambda a: a['coin'])]
     return f"🕘 <b>Recent events for {h(alias)}</b> (KST)\n" + "\n".join(lines)
 
 
@@ -642,7 +649,13 @@ def format_health(report: dict, now_ms: int) -> str:
         venue_lines.append(f"- {h(venue)}: {info.get('accounts', 0)} accounts · {h(str(info.get('detail', '')))} · "
                            f"every {info.get('interval_sec') or '?'}s · last {last_text}")
     algo_lines = []
+    modes = report.get('summary_modes') or {}      # address -> {entered_ms, count, alias}
+    for address, mode in sorted(modes.items()):
+        algo_lines.append(f"- {h(mode.get('alias') or short_address(address))}: {mode['count']} algos "
+                          f"(summary mode since {humanize_ms(max(0, now_ms - int(mode['entered_ms'])))})")
     for row in report.get('algo_rows') or []:
+        if row['address'] in modes:
+            continue
         idle = humanize_ms(max(0, now_ms - int(row['last_fill_ms'] or now_ms)))
         algo_lines.append(f"- {short_address(row['address'])} {coin_label(row['coin'])} "
                           f"{'+' if int(row['sign']) > 0 else '-'} · {int(row['fills_count'] or 0)} fills "
@@ -756,3 +769,25 @@ def format_related(alias: str, address: str, links: list[dict], now_ms: int, wei
 def _mb(size: Optional[int]) -> str:
     return f"{Decimal(size) / Decimal(1_048_576):.1f} MB" if size is not None else "n/a"
 
+
+
+# Multi-algo summary mode (spec 5.2 멀티 알고 요약, spec 10) -----------------------------
+
+def format_multi_algo_summary(wallet_address: str, alias: str, groups: list[dict], coins: int,
+                              entered_ms: int, now_ms: int, venue: str = HYPERLIQUID) -> str:
+    """[HL] 🤖 loracle running TWAP-style algos on 17 coins, then one line per (verb, side) group:
+    'reducing SHORT ×15 ($11.2M/24h): LINK, DOGE, SUI, ONDO, UNI +10'."""
+    who = f"<b>{alias_link(wallet_address, alias, venue)}</b>"
+    lines = [f"{badge(venue)} 🤖 {who} running TWAP-style algos on {coins} coin{'s' if coins != 1 else ''}"]
+    for group in groups:
+        names = [h(base_coin(coin)) for coin, _ in group['coins']]
+        shown = ", ".join(names[:5]) + (f" +{len(names) - 5}" if len(names) > 5 else "")
+        lines.append(f"{group['verb']} {group['side']} ×{len(names)} ({compact_usd(group['notional'])}/24h): {shown}")
+    if now_ms - entered_ms >= 60_000:
+        lines.append(f"<i>summary mode for {humanize_ms(now_ms - entered_ms)}, updated hourly</i>")
+    return "\n".join(lines)
+
+
+def format_multi_algo_exit(wallet_address: str, alias: str, total_24h: Decimal, venue: str = HYPERLIQUID) -> str:
+    return (f"{badge(venue)} ✅ <b>{alias_link(wallet_address, alias, venue)}</b> algos wound down · "
+            f"24h total {compact_usd(total_24h)}")

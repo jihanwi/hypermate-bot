@@ -163,6 +163,8 @@ class EventType(str, Enum):
     DEX_COLLATERAL_TRANSFER = "dex_collateral_transfer" # HL 메인 <-> HIP-3 덱스 담보 이동, 기본 알림 off
     ALGO_START = "algo_start"                # 합성 TWAP (외부 실행봇의 반복 소액 체결) 감지, 5.2 "합성 TWAP"
     ALGO_END = "algo_end"
+    MULTI_ALGO_ENTER = "multi_algo_enter"   # 멀티 알고 요약 모드 진입 (5.2)
+    MULTI_ALGO_EXIT = "multi_algo_exit"
     VAULT_DEPOSIT = "vault_deposit"
     VAULT_WITHDRAW = "vault_withdraw"
     PRIVACY_ON = "privacy_on"                # Aster 전용
@@ -275,6 +277,15 @@ CREATE TABLE algo_active (                    -- 합성 TWAP 추적 (5.2 "합성
   PRIMARY KEY (venue_account_id, coin, sign)
 );
 
+CREATE TABLE multi_algo_mode (                -- 멀티 알고 요약 모드 (5.2 "멀티 알고 요약")
+  venue_account_id INTEGER PRIMARY KEY REFERENCES venue_accounts,
+  entered_ms INTEGER NOT NULL,
+  event_id INTEGER,                           -- MULTI_ALGO_ENTER 이벤트 (그 sent_messages 를 edit)
+  message_ids_json TEXT NOT NULL DEFAULT '{}', -- {user_id: [chat_id, message_id]}
+  last_update_ms INTEGER,
+  below_since_ms INTEGER                      -- 활성 알고 <= multi_algo_exit 가 된 시각 (NULL: 초과)
+);
+
 CREATE TABLE events (
   event_id INTEGER PRIMARY KEY,
   dedupe_key TEXT UNIQUE NOT NULL,
@@ -282,7 +293,7 @@ CREATE TABLE events (
   type TEXT NOT NULL,
   ts_ms INTEGER NOT NULL,
   payload_json TEXT NOT NULL,
-  delivery TEXT NOT NULL DEFAULT 'sent',       -- 'sent' | 'suppressed_twap' | 'filtered_threshold' | 'filtered_settings' | 'muted'
+  delivery TEXT NOT NULL DEFAULT 'sent',       -- 'sent' | 'summarized' | 'filtered_threshold' | 'filtered_settings' | 'muted'
   created_at INTEGER
 );
 CREATE INDEX idx_events_account_ts ON events(venue_account_id, ts_ms);
@@ -432,7 +443,7 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
   - 누적 fills 수 >= `algo_min_fills` (8)
   - 각 fill notional 의 중앙값이 그 coin 현재 포지션 notional 의 `algo_max_slice_pct` (2%) 미만. 포지션이 0 에서 시작하면 이 조건은 보지 않는다 (오너 결정 2026-10-03: 누적 notional 기준이면 같은 크기 fill 이 50건 넘게 쌓여야 2% 미만이 되어 사실상 감지 불가)
   - 카운트 단위는 "체결 집계" 로 묶은 주문(oid) 단위 (오너 결정). 시장가 1건이 호가 수십 개를 쓸어도 1로 센다. 메시지의 "N fills" 도 주문 수
-- 진입 시 `ALGO_START` 이벤트 1건 (10 의 algo 예시) 을 새 메시지로 보낸다 (텔레그램 알림이 가야 하므로 edit 승격 아님, 오너 결정 2026-10-03). 진입 판정 전 사이클의 체결 메시지(debounce 누적)는 그대로 둔다. 이후 같은 키의 개별 fill 이벤트는 `delivery='suppressed_algo'` 로 기록만 한다. 따라서 algo 하나당 메시지는 감지 전 체결 메시지 + START + END.
+- 진입 시 `ALGO_START` 이벤트 1건 (10 의 algo 예시) 을 새 메시지로 보낸다 (텔레그램 알림이 가야 하므로 edit 승격 아님, 오너 결정 2026-10-03). 진입 판정 전 사이클의 체결 메시지(debounce 누적)는 그대로 둔다. 이후 같은 키의 개별 fill 은 **events 에 행을 만들지 않는다** (fix/multi-algo-summary: loracle 1개 지갑이 하루 26만 행을 만들었다). `algo_active` 의 fills_count / total_sz / total_ntl / last_fill_ms 만 갱신하고, `/recent` 는 활성 알고마다 "🤖 algo $DOGE · 18,423 fills $1.52M (active)" 요약 행 1개를 보여준다. 따라서 algo 하나당 메시지는 감지 전 체결 메시지 + START + END.
 - 메시지 방향 표기: 시작 시점 포지션과 같은 방향으로 늘리면 `accumulating LONG/SHORT`, 반대 방향(Close)이면 `reducing LONG/SHORT` (오너 결정). 예: CASHCAT Close Short (+) → `algo reducing SHORT $CASHCAT`. ALGO_END 도 같은 표기: `algo done accumulating LONG $BTC`, `algo done reducing SHORT $CASHCAT`.
 - 진행: START 메시지를 `algo_progress_sec` (600) 마다 edit (누적 fills, 누적 notional, VWAP, 경과시간). 새 메시지 아님. `sent_messages` 테이블 사용.
 - 운영 (fix/db-retention): `events.payload_json` 은 집계값만 저장 (fills 수, size, notional, VWAP, 첫/마지막 tid). 원본 fills 배열은 저장하지 않는다. events 는 30일 보존, 매일 백업 job 뒤에 prune 과 `PRAGMA wal_checkpoint(TRUNCATE)`. `/health` 에 WAL 크기, events 행 수, `algo_active` 행 목록.
@@ -442,11 +453,20 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 - 상태는 `algo_active` 테이블 (3.4, `twap_active` 와 별도). 재시작 후에도 DB 에 있으므로 이어서 추적.
 - 테스트 기대값: algo fixture 1시간 리플레이 → `ALGO_START` 2건 (BTC `+`, CASHCAT `+`), 개별 fill 알림 0건, 리플레이 끝에서 idle 경과 시 `ALGO_END` 2건.
 
+**멀티 알고 요약** (fix/multi-algo-summary, 오너 지시 2026-10-03)
+- 배경: 개인 트레이더의 커스텀 TWAP 봇이 17개 코인에 동시에 알고를 돌린 사례 (코인당 1.5만 fills/일, 전부 단방향). 코인별 START/END/진행 edit 로는 알림과 DB 모두 과하다.
+- 한 계정의 활성 알고(`algo_active` 행)가 `multi_algo_min` (5) 이상이 되면 계정을 요약 모드로 전환 (`multi_algo_mode` 테이블). 임계를 넘기는 사이클의 START 들은 코인별 메시지 없이 `delivery='summarized'` 로 기록하고, 요약 메시지 1건 (`MULTI_ALGO_ENTER`) 을 보낸다. 형식은 10 의 예시: 헤더 "running TWAP-style algos on N coins", 방향별 그룹 4종 (accumulating LONG / reducing LONG / accumulating SHORT / reducing SHORT) 각각 코인 수, 24h notional 합 (활성 알고 누적 + 최근 24h 에 끝난 알고), notional 상위 5개 코인 + "+N".
+- 요약 모드 중: 코인별 `ALGO_START` / `ALGO_END` 는 `summarized` 로 기록만 하고 전송하지 않음, 진행 edit 없음. 요약 메시지를 `multi_algo_update_sec` (3600) 마다 edit (활성 코인 수, 그룹별 합계, 경과시간).
+- 요약 모드 중에도 정상 알림: `POSITION_OPEN` / `CLOSE` / `FLIP` / `LIQUIDATION`, 그리고 단일 체결 묶음(주문) notional 이 그 코인 포지션 notional 의 `multi_algo_big_order_pct` (10%) 이상이거나 `multi_algo_big_order_usd` ($100k) 이상인 것.
+- 해제: 활성 알고가 `multi_algo_exit` (2) 이하인 상태가 `multi_algo_exit_idle_sec` (1800) 동안 이어지면 "algos wound down · 24h total $12.1M" 1건 (`MULTI_ALGO_EXIT`) 후 행 삭제. 남은 알고는 코인별 START(이미 기록됨)/END 메시지로 복귀 (다음 진행 edit 때 메시지가 없으면 새로 보냄).
+- 재시작 후 `multi_algo_mode` 행이 있으면 이어서. `/health` 의 algo_active 목록은 요약 모드 계정을 "loracle: 17 algos (summary mode since 3h)" 한 줄로 접는다.
+- 기동 시 1회 정리 (백그라운드, 배치, `PRAGMA user_version` 2): 이전 버전이 기록한 `suppressed_algo` / `suppressed_twap` 행 DELETE 후 `wal_checkpoint(TRUNCATE)`. VACUUM 은 하지 않는다 (볼륨 공간 2배 필요).
+
 **TWAP**
 - 1차 폴링에서 포지션 변화 감지 시, 또는 `twap_active` 에 행이 있는 계정은, 그 사이클에 `webData2` 호출.
 - `twapStates` 에 있는데 `twap_active` 에 없는 twapId → `TWAP_START`. meta: twap_id, coin, side, sz, minutes, reduceOnly, 예상 종료 시각 (`timestamp + minutes*60*1000`). TWAP 의 `timestamp` 가 추적 시작 시각 (cursors kind `twap`, /add 때 기록) 보다 앞서면, 즉 /add 시점에 이미 돌고 있었으면 "started TWAP" 대신 "TWAP in progress (started 2h ago)" 로 표시 (meta `in_progress`).
 - `twap_active` 에 있는데 `twapStates` 에서 사라진 twapId → `twapHistory` 로 최종 status 조회 → `TWAP_END`. meta: status, executedSz, executedNtl, 평균가 `executedNtl / executedSz`, 실제 소요 시간. `twapHistory` 에서 못 찾으면 (호출 실패 등) 마지막 state로 status `unknown`.
-- **억제 규칙**: `twap_active` 에 (account, coin) 이 있는 동안, 그 coin의 같은 방향 fills 기반 포지션 이벤트는 알림 생성하지 않음 (events 테이블에는 `delivery='suppressed_twap'` 로 기록, `/recent` 에서는 보임). 반대 방향 체결(TWAP 중 수동 반대매매)은 정상 알림.
+- **억제 규칙**: `twap_active` 에 (account, coin) 이 있는 동안, 그 coin의 같은 방향 fills 기반 포지션 이벤트는 알림 생성하지 않음 (events 에 행도 만들지 않는다. fix/multi-algo-summary 이전에는 `delivery='suppressed_twap'` 로 기록했음). 반대 방향 체결(TWAP 중 수동 반대매매)은 정상 알림.
 - 슬라이스 체결은 `userFills` 에 안 나오므로 억제 규칙은 "같은 방향의 수동 체결" 만 대상이 된다. 슬라이스 자체는 1차 폴링의 snapshot 변화로만 보임. snapshot 변화가 TWAP 활성 coin 때문이면 fills 조회를 **건너뛴다** (weight 절약).
 - 선택 (settings `twap_progress`, 기본 off): TWAP 활성 중 25/50/75% 도달 시 START 메시지를 edit 해서 진행률 표시. 새 메시지 아님.
 - TWAP 활성 중 봇이 재시작되면 `twap_active` 가 DB에 있으므로 이어서 추적.
@@ -457,7 +477,7 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 
 **ledger**
 - `deposit` → `DEPOSIT`, `withdraw` → `WITHDRAW`, `internalTransfer` / `spotTransfer` / `send` / `subAccountTransfer` → `user == 본인` 이면 `TRANSFER_OUT` 아니면 `TRANSFER_IN`, meta.counterparty 기록 (Phase 3가 씀). `accountClassTransfer` → `ACCOUNT_CLASS_TRANSFER` (기본 알림 off, 설정으로 on). 단 `send` 의 상대방이 시스템 주소이고 `sourceDex`/`destinationDex` 가 있으면 `DEX_COLLATERAL_TRANSFER` (기본 알림 off, 설정으로 on, meta 에 source/destination 덱스). `vaultDeposit`/`vaultWithdraw` → `VAULT_*`. `vaultLeaderCommission`, `rewardsClaim`, `spotGenesis`, `vaultDistribution`, `vaultCreate` 는 이벤트 생성 안 함. 모르는 delta type은 경고 로그 1회 + 무시.
-- 알림 안 나가는 이벤트도 events에 기록하되 `delivery` 컬럼으로 이유 표시 (`suppressed_twap`, `filtered_threshold`, `filtered_settings`, `muted`). `/recent` 가 이걸 보여준다.
+- 알림 안 나가는 이벤트도 events에 기록하되 `delivery` 컬럼으로 이유 표시 (`summarized`, `filtered_threshold`, `filtered_settings`, `muted`). `/recent` 가 이걸 보여준다. 예외: TWAP / algo 로 억제된 개별 fill 은 행을 만들지 않는다 (위).
 - cursor.ledger = 마지막 `time`.
 
 **spot**
@@ -681,7 +701,13 @@ Arbitrum 브릿지 (선택, `ARBISCAN_API_KEY` 있을 때만): 레거시 브릿�
   "algo_min_fills": 8,
   "algo_max_slice_pct": 2,
   "algo_progress_sec": 600,
-  "algo_idle_sec": 600
+  "algo_idle_sec": 600,
+  "multi_algo_min": 5,
+  "multi_algo_update_sec": 3600,
+  "multi_algo_exit": 2,
+  "multi_algo_exit_idle_sec": 1800,
+  "multi_algo_big_order_pct": 10,
+  "multi_algo_big_order_usd": 100000
 }
 ```
 
@@ -752,6 +778,16 @@ $450k @ 3,120 · 5x
 ```
 [HL] ✅ <b>loracle</b> algo done accumulating LONG $BTC
 +$1.2M (14.2 BTC) avg 86,040 · 412 fills · 58m
+```
+
+```
+[HL] 🤖 <b>loracle</b> running TWAP-style algos on 17 coins
+reducing SHORT ×15 ($11.2M/24h): LINK, DOGE, SUI, ONDO, UNI +10
+accumulating LONG ×2 ($900k/24h): BTC, CASHCAT
+```
+
+```
+[HL] ✅ <b>loracle</b> algos wound down · 24h total $12.1M
 ```
 
 규칙:

@@ -208,13 +208,13 @@ def test_recent_view_marks_unsent_events():
         {'event_id': 1, 'type': EventType.POSITION_OPEN.value, 'ts_ms': 1_790_000_000_000, 'delivery': 'sent',
          'payload': {'coin': 'BTC', 'side': 'LONG', 'notional_usd': '1250000'}},
         {'event_id': 2, 'type': EventType.POSITION_INCREASE.value, 'ts_ms': 1_790_000_060_000,
-         'delivery': 'suppressed_twap', 'payload': {'coin': 'BTC', 'side': 'LONG', 'notional_usd': '5000'}},
+         'delivery': 'summarized', 'payload': {'coin': 'BTC', 'side': 'LONG', 'notional_usd': '5000'}},
     ]
     text = formatter.format_recent('w_1', events)
     check_telegram_html(text)
     lines = text.split('\n')[1:]
     assert 'position open LONG $BTC $1.25M' in lines[0] and '<i>' not in lines[0]
-    assert lines[1].startswith('<i>') and 'not sent (TWAP)' in lines[1]
+    assert lines[1].startswith('<i>') and 'not sent (summary mode)' in lines[1]
     assert 'No events' in formatter.format_recent('w', [])
 
 
