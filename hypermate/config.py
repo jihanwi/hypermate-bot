@@ -37,6 +37,15 @@ class Config:
     ADMIN_USER_IDS: frozenset = frozenset(
         int(x) for x in os.getenv("ADMIN_USER_IDS", "").replace(",", " ").split() if x.strip().isdigit())
 
+    # Lighter (spec 6.2): public REST 60 req/min per IP and L1 address; the bucket uses 50
+    LIGHTER_API_URL: str = os.getenv("LIGHTER_API_URL", "https://mainnet.zklighter.elliot.ai/api/v1")
+    LIGHTER_WS_URL: str = os.getenv("LIGHTER_WS_URL", "wss://mainnet.zklighter.elliot.ai/stream")
+    LIGHTER_REQ_BUDGET: int = int(os.getenv("LIGHTER_REQ_BUDGET", "50"))
+    LIGHTER_WS_ENABLED: bool = os.getenv("LIGHTER_WS_ENABLED", "true").lower() == "true"
+    LIGHTER_POLL_MIN_SEC: int = 40                   # REST polling floor; raised with the account count
+    VENUE_RESCAN_HOUR_KST: int = 4                   # daily rescan of inactive venues at 04:10 KST
+    VENUE_RESCAN_MINUTE: int = 10
+
     # Daily DB backup (sqlite backup API), kept for BACKUP_KEEP_DAYS
     BACKUP_DIR: str = os.getenv("BACKUP_DIR", "")       # default: <DATABASE_PATH dir>/backups
     BACKUP_KEEP_DAYS: int = 7
