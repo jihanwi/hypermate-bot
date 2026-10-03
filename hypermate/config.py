@@ -43,6 +43,11 @@ class Config:
     LIGHTER_REQ_BUDGET: int = int(os.getenv("LIGHTER_REQ_BUDGET", "50"))
     LIGHTER_WS_ENABLED: bool = os.getenv("LIGHTER_WS_ENABLED", "true").lower() == "true"
     LIGHTER_POLL_MIN_SEC: int = 40                   # REST polling floor; raised with the account count
+    # RISEx (spec 6.3): public REST 500 req / 10 s / IP, WS 10 req/s
+    RISEX_API_URL: str = os.getenv("RISEX_API_URL", "https://api.rise.trade")
+    RISEX_WS_URL: str = os.getenv("RISEX_WS_URL", "wss://api.rise.trade/ws/")
+    RISEX_REQ_BUDGET: int = int(os.getenv("RISEX_REQ_BUDGET", "2400"))   # per minute, 80% of 3000
+    RISEX_WS_ENABLED: bool = os.getenv("RISEX_WS_ENABLED", "true").lower() == "true"
     VENUE_RESCAN_HOUR_KST: int = 4                   # daily rescan of inactive venues at 04:10 KST
     VENUE_RESCAN_MINUTE: int = 10
 

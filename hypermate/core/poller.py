@@ -199,10 +199,17 @@ async def venue_poll_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             continue
         state.venue_last_cycle_ms[venue] = now
         stream = getattr(adapter_obj, 'stream', None)
+        if stream is not None and venue == venues.RISEX and not stream.market_ids:
+            try:
+                stream.set_markets((await adapter_obj.client.markets()).keys())
+            except Exception as e:
+                logger.error(f"RISEx markets unavailable: {e}")
         for row in accounts:
             account = VenueAccount(venue, row['account_ref'], row['address'], row['key'])
-            if stream is not None and int(row['account_ref']) not in stream.indexes:
+            if stream is not None and venue == venues.LIGHTER and int(row['account_ref']) not in stream.indexes:
                 await stream.subscribe(int(row['account_ref']))
+            if stream is not None and venue == venues.RISEX:
+                await stream.track(row['address'])
             try:
                 await pipeline.poll_venue_account(context.bot, repo, adapter_obj, account)
             except Exception as e:
