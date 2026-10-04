@@ -73,14 +73,19 @@ async def _maintenance_steps(repo: Repo, now_ms: int, status: dict) -> None:
         seen, changed = await repo.slim_payloads()
         status['slimmed'] = f"{changed}/{seen}"
         status['cleaned'] = await repo.delete_suppressed_rows()     # fix/multi-algo-summary: old suppressed fill rows
+        if status['pruned'] or status['cleaned'] or not status['slimmed'].startswith('0/'):
+            # space of the deleted or rewritten rows is only reclaimed by VACUUM (deploy 2026-10-05: 191 MB
+            # file for 411 rows); it runs here, before the poller starts, with the volume's 2x headroom
+            status['vacuum'] = f"{await repo.vacuum() // 1_048_576} MB freed"
     # the checkpoint is cheap and runs on every attempt (a retry after a failed checkpoint still does it)
     busy, _, pages = await repo.checkpoint()
     status['checkpoint'] = 'busy' if busy else f"{pages} pages"
 
 
 async def startup_maintenance(repo: Repo, now_ms: int, status: Optional[dict] = None) -> dict:
-    """Background task after post_init: prune to the retention window first (fewer rows), then the
-    batched payload slimming, the suppressed-row cleanup and a WAL checkpoint. Never blocks startup.
+    """Runs in post_init before the polling jobs start: prune to the retention window first (fewer
+    rows), then the batched payload slimming, the suppressed-row cleanup, VACUUM when rows went away,
+    and a WAL checkpoint. Memory stays flat (batches); the bot answers commands only after it is done.
     One retry after MAINTENANCE_RETRY_SEC on failure; the outcome is kept in `status` for /health."""
     status = status if status is not None else {}
     status.update({'state': 'running', 'started_ms': now_ms, 'attempts': 0, 'error': None})
