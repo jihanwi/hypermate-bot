@@ -5,6 +5,7 @@ import json
 from decimal import Decimal
 import logging
 import os
+import sqlite3
 from pathlib import Path
 from typing import Any, Optional
 
@@ -38,12 +39,25 @@ class Repo:
         self.path = path
         self.db: Optional[aiosqlite.Connection] = None
 
+    async def _rows(self, cur) -> list:
+        """fetchall then close: no read statement may stay open on the shared connection, or a later
+        DELETE / wal_checkpoint fails with "database table is locked" (deploy log 2026-10-04)."""
+        rows = await cur.fetchall()
+        await cur.close()
+        return rows
+
+    async def _row(self, cur):
+        row = await cur.fetchone()
+        await cur.close()
+        return row
+
     async def connect(self) -> None:
         directory = os.path.dirname(os.path.abspath(self.path))
         os.makedirs(directory, exist_ok=True)
         self.db = await aiosqlite.connect(self.path)
         await self.db.execute('PRAGMA journal_mode=WAL')
         await self.db.execute('PRAGMA foreign_keys=ON')
+        await self.db.execute('PRAGMA busy_timeout=30000')       # wait for other connections (backup copies)
         await self.db.executescript(SCHEMA_PATH.read_text())
         await self._migrate()
         await self.db.commit()
@@ -52,12 +66,12 @@ class Repo:
     async def _migrate(self) -> None:
         """Add columns introduced after the first deploy (idempotent)."""
         cur = await self.db.execute("PRAGMA table_info(venue_accounts)")
-        columns = {row[1] for row in await cur.fetchall()}
+        columns = {row[1] for row in await self._rows(cur)}
         if 'dexs_json' not in columns:
             await self.db.execute("ALTER TABLE venue_accounts ADD COLUMN dexs_json TEXT NOT NULL DEFAULT '[]'")
             logger.info("Migrated venue_accounts: added dexs_json")
         cur = await self.db.execute("PRAGMA table_info(snapshots)")
-        columns = {row[1] for row in await cur.fetchall()}
+        columns = {row[1] for row in await self._rows(cur)}
         if 'spot_json' not in columns:
             await self.db.execute("ALTER TABLE snapshots ADD COLUMN spot_json TEXT")
             logger.info("Migrated snapshots: added spot_json")
@@ -67,7 +81,7 @@ class Repo:
     async def cache_get(self, cache_key: str, now_ms: int) -> Optional[Any]:
         cur = await self.db.execute(
             "SELECT value_json, expires_at FROM api_cache WHERE cache_key = ?", (cache_key,))
-        row = await cur.fetchone()
+        row = await cur.fetchone(); await cur.close()
         if not row or (row[1] is not None and row[1] <= now_ms):
             return None
         return json.loads(row[0])
@@ -82,7 +96,7 @@ class Repo:
 
     async def wallet_id(self, address: str) -> Optional[int]:
         cur = await self.db.execute("SELECT wallet_id FROM wallets WHERE evm_address = ?", (address.lower(),))
-        row = await cur.fetchone()
+        row = await cur.fetchone(); await cur.close()
         return row[0] if row else None
 
     async def replace_links(self, wallet_id: int, links: list[dict], now_ms: int) -> None:
@@ -105,12 +119,12 @@ class Repo:
             "link_type, related_address", (wallet_id,))
         return [{'row_id': r[0], 'related_address': r[1], 'related_venue': r[2], 'link_type': r[3],
                  'confidence': r[4], 'evidence': json.loads(r[5]), 'discovered_at': r[6]}
-                for r in await cur.fetchall()]
+                for r in await self._rows(cur)]
 
     async def link_by_row(self, row_id: int) -> Optional[dict]:
         cur = await self.db.execute(
             "SELECT wallet_id, related_address, link_type FROM wallet_links WHERE rowid = ?", (row_id,))
-        row = await cur.fetchone()
+        row = await cur.fetchone(); await cur.close()
         return {'wallet_id': row[0], 'related_address': row[1], 'link_type': row[2]} if row else None
 
     async def links_discovered_at(self, wallet_id: int) -> Optional[int]:
@@ -118,7 +132,7 @@ class Repo:
         cur = await self.db.execute(
             "SELECT MAX(discovered_at) FROM wallet_links WHERE wallet_id = ? "
             "AND json_extract(evidence_json, '$.discovery') = 1", (wallet_id,))
-        row = await cur.fetchone()
+        row = await cur.fetchone(); await cur.close()
         return row[0] if row and row[0] is not None else None
 
     async def add_weak_counterparty(self, wallet_id: int, address: str, direction: str, usd: str,
@@ -129,7 +143,7 @@ class Repo:
         cur = await self.db.execute(
             "SELECT confidence, evidence_json FROM wallet_links WHERE wallet_id = ? AND related_address = ? "
             "AND link_type = 'transfer_counterparty'", (wallet_id, address))
-        row = await cur.fetchone()
+        row = await cur.fetchone(); await cur.close()
         evidence = json.loads(row[1]) if row else {'in': 0, 'out': 0, 'usd': '0', 'last_ms': 0}
         evidence[direction] = int(evidence.get(direction, 0)) + 1
         evidence['usd'] = str(Decimal(str(evidence.get('usd', '0'))) + Decimal(str(usd or '0')))
@@ -148,7 +162,7 @@ class Repo:
 
     async def user_version(self) -> int:
         cur = await self.db.execute("PRAGMA user_version")
-        (version,) = await cur.fetchone()
+        (version,) = await cur.fetchone(); await cur.close()
         return version
 
     async def suppressed_rows_need_cleanup(self) -> bool:
@@ -164,7 +178,7 @@ class Repo:
             cur = await self.db.execute(
                 "SELECT event_id FROM events WHERE delivery IN ('suppressed_algo', 'suppressed_twap') "
                 "ORDER BY event_id LIMIT ?", (batch,))
-            ids = [r[0] for r in await cur.fetchall()]
+            ids = [r[0] for r in await self._rows(cur)]
             if not ids:
                 break
             await self.db.execute(
@@ -184,7 +198,7 @@ class Repo:
 
     async def payloads_need_slimming(self) -> bool:
         cur = await self.db.execute("PRAGMA user_version")
-        (version,) = await cur.fetchone()
+        (version,) = await cur.fetchone(); await cur.close()
         return version < self.PAYLOAD_VERSION
 
     async def slim_payloads(self, batch: int = SLIM_BATCH) -> tuple[int, int]:
@@ -198,11 +212,15 @@ class Repo:
             return 0, 0
         seen = changed = batches = 0
         last_id = 0
+        # rows written after this point are already slim; bounding the walk keeps a busy poller from
+        # extending it forever
+        cur = await self.db.execute("SELECT COALESCE(MAX(event_id), 0) FROM events")
+        (max_id,) = await self._row(cur)
         while True:
             cur = await self.db.execute(
-                "SELECT event_id, payload_json FROM events WHERE event_id > ? ORDER BY event_id LIMIT ?",
-                (last_id, batch))
-            rows = await cur.fetchall()
+                "SELECT event_id, payload_json FROM events WHERE event_id > ? AND event_id <= ? "
+                "ORDER BY event_id LIMIT ?", (last_id, max_id, batch))
+            rows = await cur.fetchall(); await cur.close()
             if not rows:
                 break
             updates = []
@@ -236,20 +254,48 @@ class Repo:
         await self.db.commit()
         return cur.rowcount, messages
 
-    async def checkpoint(self) -> None:
-        """Fold the WAL into the main file and truncate it."""
-        await self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    async def checkpoint(self) -> tuple[int, int, int]:
+        """Fold the WAL into the main file and truncate it. Returns (busy, log pages, checkpointed pages).
+
+        A TRUNCATE checkpoint needs no reader on the WAL. An open reader shows as busy = 1 or, from the
+        same connection, as "database table is locked"; both are retried a few times after a short wait
+        with a PASSIVE checkpoint in between so progress is not lost. The 30 s busy_timeout is lowered
+        to 1 s for the duration so a retry never blocks the bot for long.
+        """
+        log_pages = done = 0
+        await self.db.execute("PRAGMA busy_timeout=1000")
+        try:
+            for attempt in range(5):
+                busy = 1
+                try:
+                    cur = await self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    row = await cur.fetchone(); await cur.close()
+                    busy, log_pages, done = (int(row[0]), int(row[1]), int(row[2])) if row else (0, 0, 0)
+                except sqlite3.OperationalError as e:
+                    if 'locked' not in str(e) and 'busy' not in str(e):
+                        raise
+                if not busy:
+                    return busy, log_pages, done
+                try:
+                    await self.db.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                except sqlite3.OperationalError:
+                    pass
+                await asyncio.sleep(0.2 * (attempt + 1))
+        finally:
+            await self.db.execute("PRAGMA busy_timeout=30000")
+        logger.warning("WAL checkpoint stayed busy; the WAL will be truncated at the next checkpoint")
+        return 1, log_pages, done
 
     async def db_stats(self, now_ms: int) -> dict:
         """Row counts for /health: events total, events in the last 24 h by type, sent_messages."""
         cur = await self.db.execute("SELECT COUNT(*) FROM events")
-        (events_total,) = await cur.fetchone()
+        (events_total,) = await cur.fetchone(); await cur.close()
         cur = await self.db.execute(
             "SELECT type, COUNT(*) FROM events WHERE ts_ms >= ? GROUP BY type ORDER BY COUNT(*) DESC, type",
             (now_ms - 24 * 3600 * 1000,))
-        by_type = [(t, n) for t, n in await cur.fetchall()]
+        by_type = [(t, n) for t, n in await self._rows(cur)]
         cur = await self.db.execute("SELECT COUNT(*) FROM sent_messages")
-        (messages,) = await cur.fetchone()
+        (messages,) = await cur.fetchone(); await cur.close()
         return {'events_total': events_total, 'events_24h': by_type, 'sent_messages': messages}
 
     # multi-algo summary mode (spec 5.2) ----------------------------------------------
@@ -258,7 +304,7 @@ class Repo:
         cur = await self.db.execute(
             "SELECT entered_ms, event_id, message_ids_json, last_update_ms, below_since_ms "
             "FROM multi_algo_mode WHERE venue_account_id = ?", (venue_account_id,))
-        row = await cur.fetchone()
+        row = await cur.fetchone(); await cur.close()
         if not row:
             return None
         return {'entered_ms': row[0], 'event_id': row[1], 'message_ids': json.loads(row[2]),
@@ -266,7 +312,8 @@ class Repo:
 
     async def multi_algo_modes(self) -> dict[int, dict]:
         cur = await self.db.execute("SELECT venue_account_id, entered_ms, below_since_ms FROM multi_algo_mode")
-        return {r[0]: {'entered_ms': r[1], 'below_since_ms': r[2]} for r in await cur.fetchall()}
+        rows = await cur.fetchall(); await cur.close()
+        return {r[0]: {'entered_ms': r[1], 'below_since_ms': r[2]} for r in rows}
 
     async def enter_multi_algo_mode(self, venue_account_id: int, entered_ms: int, event_id: Optional[int],
                                     message_ids: dict) -> None:
@@ -300,7 +347,7 @@ class Repo:
             "FROM algo_active a JOIN venue_accounts va USING (venue_account_id) JOIN wallets w USING (wallet_id) "
             "ORDER BY w.evm_address, a.coin, a.sign")
         return [{'address': r[0], 'coin': r[1], 'sign': r[2], 'started_ms': r[3], 'last_fill_ms': r[4],
-                 'fills_count': r[5], 'total_ntl': r[6]} for r in await cur.fetchall()]
+                 'fills_count': r[5], 'total_ntl': r[6]} for r in await self._rows(cur)]
 
     async def close(self) -> None:
         if self.db is not None:
@@ -318,17 +365,17 @@ class Repo:
         db = self.db
         cur = await db.execute(
             "SELECT 1 FROM subscriptions WHERE user_id = ? AND alias = ? COLLATE NOCASE", (user_id, alias))
-        if await cur.fetchone():
+        if await self._row(cur):
             return ALIAS_EXISTS
 
         await db.execute("INSERT OR IGNORE INTO users (user_id, created_at) VALUES (?, ?)", (user_id, now_ms))
         await db.execute("INSERT OR IGNORE INTO wallets (evm_address) VALUES (?)", (address,))
         cur = await db.execute("SELECT wallet_id FROM wallets WHERE evm_address = ?", (address,))
-        (wallet_id,) = await cur.fetchone()
+        (wallet_id,) = await cur.fetchone(); await cur.close()
 
         cur = await db.execute(
             "SELECT 1 FROM subscriptions WHERE user_id = ? AND wallet_id = ?", (user_id, wallet_id))
-        if await cur.fetchone():
+        if await self._row(cur):
             await db.rollback()
             return ADDRESS_EXISTS
 
@@ -338,10 +385,10 @@ class Repo:
         cur = await db.execute(
             "SELECT venue_account_id FROM venue_accounts WHERE venue = ? AND account_ref = ?",
             (HYPERLIQUID, address))
-        (venue_account_id,) = await cur.fetchone()
+        (venue_account_id,) = await cur.fetchone(); await cur.close()
 
         cur = await db.execute("SELECT COUNT(*) FROM subscriptions WHERE wallet_id = ?", (wallet_id,))
-        (subscriber_count,) = await cur.fetchone()
+        (subscriber_count,) = await cur.fetchone(); await cur.close()
         if subscriber_count == 0:
             await db.execute("DELETE FROM snapshots WHERE venue_account_id = ?", (venue_account_id,))
             for kind in CURSOR_KINDS:
@@ -366,14 +413,15 @@ class Repo:
         cur = await self.db.execute(
             "SELECT s.alias, w.evm_address FROM subscriptions s JOIN wallets w USING (wallet_id) "
             "WHERE s.user_id = ? ORDER BY s.alias COLLATE NOCASE", (user_id,))
-        return [(alias, address) for alias, address in await cur.fetchall()]
+        rows = await cur.fetchall(); await cur.close()
+        return [(alias, address) for alias, address in rows]
 
     async def find_subscription(self, user_id: int, alias: str) -> Optional[tuple[str, str]]:
         """(stored alias, address) for a case-insensitive alias match, or None."""
         cur = await self.db.execute(
             "SELECT s.alias, w.evm_address FROM subscriptions s JOIN wallets w USING (wallet_id) "
             "WHERE s.user_id = ? AND s.alias = ? COLLATE NOCASE", (user_id, alias))
-        row = await cur.fetchone()
+        row = await cur.fetchone(); await cur.close()
         return (row[0], row[1]) if row else None
 
     async def tracked_accounts(self) -> list[tuple[int, str]]:
@@ -388,7 +436,8 @@ class Repo:
             "WHERE va.venue = ? AND va.active = 1 "
             "AND EXISTS (SELECT 1 FROM subscriptions s WHERE s.wallet_id = va.wallet_id) "
             "ORDER BY va.venue_account_id", (HYPERLIQUID,))
-        return [(va_id, address, last) for va_id, address, last in await cur.fetchall()]
+        rows = await cur.fetchall(); await cur.close()
+        return [(va_id, address, last) for va_id, address, last in rows]
 
     # Multi-venue accounts (spec 6.1) ------------------------------------------------
 
@@ -403,7 +452,7 @@ class Repo:
         cur = await self.db.execute(
             "SELECT venue_account_id, active FROM venue_accounts WHERE venue = ? AND account_ref = ?",
             (venue, account_ref))
-        row = await cur.fetchone()
+        row = await cur.fetchone(); await cur.close()
         if row is None:
             cur = await self.db.execute(
                 "INSERT INTO venue_accounts (wallet_id, venue, account_ref, active, last_activity_ms, dexs_json) "
@@ -436,7 +485,7 @@ class Repo:
             "FROM venue_accounts va JOIN wallets w USING (wallet_id) WHERE w.evm_address = ? "
             "ORDER BY va.venue, va.account_ref", (address.lower(),))
         return [{'key': r[0], 'venue': r[1], 'account_ref': r[2], 'active': bool(r[3]), 'last_activity_ms': r[4],
-                 'dexs': json.loads(r[5] or '[]')} for r in await cur.fetchall()]
+                 'dexs': json.loads(r[5] or '[]')} for r in await self._rows(cur)]
 
     async def tracked_venue_accounts(self, venue: str) -> list[dict]:
         """Active accounts of one venue with at least one subscriber: {key, account_ref, address, last_activity_ms}."""
@@ -446,27 +495,28 @@ class Repo:
             "AND EXISTS (SELECT 1 FROM subscriptions s WHERE s.wallet_id = va.wallet_id) "
             "ORDER BY va.venue_account_id", (venue,))
         return [{'key': r[0], 'account_ref': r[1], 'address': r[2], 'last_activity_ms': r[3]}
-                for r in await cur.fetchall()]
+                for r in await self._rows(cur)]
 
     async def venue_of(self, venue_account_id: int) -> Optional[tuple[str, str, str]]:
         """(venue, account_ref, address) of a venue account."""
         cur = await self.db.execute(
             "SELECT va.venue, va.account_ref, w.evm_address FROM venue_accounts va JOIN wallets w USING (wallet_id) "
             "WHERE va.venue_account_id = ?", (venue_account_id,))
-        row = await cur.fetchone()
+        row = await cur.fetchone(); await cur.close()
         return (row[0], row[1], row[2]) if row else None
 
     async def subscribed_wallets(self) -> list[str]:
         cur = await self.db.execute(
             "SELECT DISTINCT w.evm_address FROM wallets w JOIN subscriptions s USING (wallet_id) ORDER BY w.evm_address")
-        return [r[0] for r in await cur.fetchall()]
+        rows = await cur.fetchall(); await cur.close()
+        return [r[0] for r in rows]
 
     async def account_value_sum(self, address: str) -> Optional[str]:
         """Sum of the stored snapshot account values over the wallet's active venue accounts, Decimal text."""
         cur = await self.db.execute(
             "SELECT s.account_value FROM snapshots s JOIN venue_accounts va USING (venue_account_id) "
             "JOIN wallets w USING (wallet_id) WHERE w.evm_address = ? AND va.active = 1", (address.lower(),))
-        values = [Decimal(r[0]) for r in await cur.fetchall() if r[0] is not None]
+        values = [Decimal(r[0]) for r in await self._rows(cur) if r[0] is not None]
         return str(sum(values, Decimal(0))) if values else None
 
     async def touch_activity(self, venue_account_id: int, now_ms: int) -> None:
@@ -479,7 +529,7 @@ class Repo:
         out = {}
         for name, table in (('twaps', 'twap_active'), ('algos', 'algo_active')):
             cur = await self.db.execute(f"SELECT COUNT(*) FROM {table}")
-            (out[name],) = await cur.fetchone()
+            (out[name],) = await cur.fetchone(); await cur.close()
         return out
 
     async def subscribers(self, venue_account_id: int) -> list[tuple[int, str]]:
@@ -488,7 +538,8 @@ class Repo:
             "SELECT s.user_id, s.alias FROM subscriptions s "
             "JOIN venue_accounts va ON va.wallet_id = s.wallet_id "
             "WHERE va.venue_account_id = ?", (venue_account_id,))
-        return [(user_id, alias) for user_id, alias in await cur.fetchall()]
+        rows = await cur.fetchall(); await cur.close()
+        return [(user_id, alias) for user_id, alias in rows]
 
     # Polling state (B6) -----------------------------------------------------
 
@@ -496,7 +547,7 @@ class Repo:
         """{dex: {coin: position}} (main dex key ""). Phase 0 rows ({coin: position}) are read as main dex."""
         cur = await self.db.execute(
             "SELECT positions_json FROM snapshots WHERE venue_account_id = ?", (venue_account_id,))
-        row = await cur.fetchone()
+        row = await cur.fetchone(); await cur.close()
         if not row:
             return None
         snapshot = json.loads(row[0])
@@ -520,7 +571,7 @@ class Repo:
     async def get_spot_snapshot(self, venue_account_id: int) -> Optional[dict]:
         cur = await self.db.execute(
             "SELECT spot_json FROM snapshots WHERE venue_account_id = ?", (venue_account_id,))
-        row = await cur.fetchone()
+        row = await cur.fetchone(); await cur.close()
         return json.loads(row[0]) if row and row[0] else None
 
     async def backup(self, target_path: str) -> None:
@@ -531,13 +582,13 @@ class Repo:
     async def hl_account_id(self, address: str) -> Optional[int]:
         cur = await self.db.execute(
             "SELECT venue_account_id FROM venue_accounts WHERE venue = ? AND account_ref = ?", (HYPERLIQUID, address))
-        row = await cur.fetchone()
+        row = await cur.fetchone(); await cur.close()
         return row[0] if row else None
 
     async def get_dexs(self, venue_account_id: int) -> list[str]:
         cur = await self.db.execute(
             "SELECT dexs_json FROM venue_accounts WHERE venue_account_id = ?", (venue_account_id,))
-        row = await cur.fetchone()
+        row = await cur.fetchone(); await cur.close()
         return json.loads(row[0]) if row and row[0] else []
 
     async def set_dexs(self, venue_account_id: int, dexs: list[str]) -> None:
@@ -551,13 +602,13 @@ class Repo:
             "SELECT s.account_value FROM snapshots s "
             "JOIN venue_accounts va USING (venue_account_id) "
             "WHERE va.venue = ? AND va.account_ref = ?", (HYPERLIQUID, address))
-        row = await cur.fetchone()
+        row = await cur.fetchone(); await cur.close()
         return row[0] if row else None
 
     async def get_cursor(self, venue_account_id: int, kind: str) -> Optional[str]:
         cur = await self.db.execute(
             "SELECT cursor FROM cursors WHERE venue_account_id = ? AND kind = ?", (venue_account_id, kind))
-        row = await cur.fetchone()
+        row = await cur.fetchone(); await cur.close()
         return row[0] if row else None
 
     async def set_cursor(self, venue_account_id: int, kind: str, value: str, now_ms: int) -> None:
@@ -587,7 +638,7 @@ class Repo:
             "SELECT event_id, dedupe_key, type, ts_ms, payload_json, delivery FROM events "
             "WHERE venue_account_id = ? ORDER BY ts_ms DESC, event_id DESC LIMIT ?", (venue_account_id, limit))
         return [{'event_id': r[0], 'dedupe_key': r[1], 'type': r[2], 'ts_ms': r[3],
-                 'payload': json.loads(r[4]), 'delivery': r[5]} for r in await cur.fetchall()]
+                 'payload': json.loads(r[4]), 'delivery': r[5]} for r in await self._rows(cur)]
 
     # Active TWAPs ------------------------------------------------------------
 
@@ -595,7 +646,8 @@ class Repo:
         """{twap_id: last known state} for the account."""
         cur = await self.db.execute(
             "SELECT twap_id, state_json FROM twap_active WHERE venue_account_id = ?", (venue_account_id,))
-        return {twap_id: json.loads(state) for twap_id, state in await cur.fetchall()}
+        rows = await cur.fetchall(); await cur.close()
+        return {twap_id: json.loads(state) for twap_id, state in rows}
 
     async def upsert_twap(self, venue_account_id: int, twap_id: str, state: dict, started_ms: int) -> None:
         await self.db.execute(
@@ -613,13 +665,13 @@ class Repo:
         cur = await self.db.execute(
             "SELECT event_id, dedupe_key, type, ts_ms, payload_json, delivery FROM events WHERE event_id = ?",
             (event_id,))
-        r = await cur.fetchone()
+        r = await cur.fetchone(); await cur.close()
         return ({'event_id': r[0], 'dedupe_key': r[1], 'type': r[2], 'ts_ms': r[3],
                  'payload': json.loads(r[4]), 'delivery': r[5]} if r else None)
 
     async def get_event_by_key(self, dedupe_key: str) -> Optional[dict]:
         cur = await self.db.execute("SELECT event_id FROM events WHERE dedupe_key = ?", (dedupe_key,))
-        row = await cur.fetchone()
+        row = await cur.fetchone(); await cur.close()
         return await self.get_event(row[0]) if row else None
 
     async def update_event_payload(self, event_id: int, payload: dict) -> None:
@@ -637,14 +689,14 @@ class Repo:
             params += types
         cur = await self.db.execute(sql + " ORDER BY ts_ms, event_id", params)
         return [{'event_id': r[0], 'dedupe_key': r[1], 'type': r[2], 'ts_ms': r[3],
-                 'payload': json.loads(r[4]), 'delivery': r[5]} for r in await cur.fetchall()]
+                 'payload': json.loads(r[4]), 'delivery': r[5]} for r in await self._rows(cur)]
 
     async def last_event_ts(self, venue_account_id: int, event_type: str, coin: str) -> Optional[int]:
         """ts_ms of the newest event of this type for the coin (e.g. last POSITION_OPEN, for 'held')."""
         cur = await self.db.execute(
             "SELECT MAX(ts_ms) FROM events WHERE venue_account_id = ? AND type = ? "
             "AND json_extract(payload_json, '$.coin') = ?", (venue_account_id, event_type, coin))
-        row = await cur.fetchone()
+        row = await cur.fetchone(); await cur.close()
         return row[0] if row else None
 
     # Sent messages (edits for debounce and algo progress) ---------------------
@@ -659,7 +711,8 @@ class Repo:
         """{user_id: (chat_id, message_id)} for the event."""
         cur = await self.db.execute(
             "SELECT user_id, chat_id, message_id FROM sent_messages WHERE event_id = ?", (event_id,))
-        return {u: (c, m) for u, c, m in await cur.fetchall()}
+        rows = await cur.fetchall(); await cur.close()
+        return {u: (c, m) for u, c, m in rows}
 
     # Synthetic TWAP (algo) state ----------------------------------------------
 
@@ -669,7 +722,7 @@ class Repo:
             "FROM algo_active WHERE venue_account_id = ?", (venue_account_id,))
         return {(coin, sign): {'coin': coin, 'sign': sign, 'started_ms': started, 'last_fill_ms': last,
                                'fills_count': count, 'total_sz': sz, 'total_ntl': ntl}
-                for coin, sign, started, last, count, sz, ntl in await cur.fetchall()}
+                for coin, sign, started, last, count, sz, ntl in await self._rows(cur)}
 
     async def upsert_algo(self, venue_account_id: int, state: dict) -> None:
         await self.db.execute(
