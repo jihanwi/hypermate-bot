@@ -61,8 +61,9 @@ async def post_init(application: Application) -> None:
     poller.get_state(application)
     await build_venues(application, client)
     # One-time payload slimming runs in the background so the bot answers right away (fix/migration-oom)
+    application.bot_data['maintenance'] = {}
     application.bot_data['maintenance_task'] = asyncio.create_task(
-        backup.startup_maintenance(repo, adapter.now_ms()))
+        backup.startup_maintenance(repo, adapter.now_ms(), application.bot_data['maintenance']))
     # "/" autocomplete menu in private chats (spec 9.1, commands implemented so far)
     await application.bot.set_my_commands(
         [BotCommand(command, description) for command, description in texts.MENU_COMMANDS],

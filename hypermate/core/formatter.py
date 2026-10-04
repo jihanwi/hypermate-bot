@@ -642,6 +642,17 @@ def format_health(report: dict, now_ms: int) -> str:
         by_type = ", ".join(f"{t} {n}" for t, n in stats.get('events_24h', [])[:5]) or "none"
         db_line += (f"\nEvents: {stats.get('events_total', 0)} rows · last 24h: {by_type} · "
                     f"sent_messages {stats.get('sent_messages', 0)}")
+    maintenance = report.get('maintenance') or {}
+    if maintenance.get('state'):
+        when = maintenance.get('finished_ms') or maintenance.get('started_ms') or now_ms
+        details = [f"{k} {maintenance[k]}" for k in ('pruned', 'slimmed', 'cleaned', 'checkpoint') if k in maintenance]
+        if maintenance.get('state') == 'failed':
+            details.append(f"error: {h(str(maintenance.get('error')))}")
+        maintenance_line = (f"Maintenance: {maintenance['state']} {humanize_ms(max(0, now_ms - int(when)))} ago"
+                            f" (attempt {maintenance.get('attempts', 1)}"
+                            + (", " + ", ".join(details) if details else "") + ")")
+    else:
+        maintenance_line = "Maintenance: not run"
     venue_lines = []
     for venue, info in sorted((report.get('venues') or {}).items()):
         last = info.get('last_poll_ms')
@@ -668,7 +679,8 @@ def format_health(report: dict, now_ms: int) -> str:
         f"HL weight (1h): {weight_line}\n"
         f"Active TWAPs: {report.get('twaps', 0)} · algos: {report.get('algos', 0)}\n"
         f"DB: {db_line}\n"
-        f"Uptime: {humanize_ms(int(report.get('uptime_ms', 0)))}"
+        f"Uptime: {humanize_ms(int(report.get('uptime_ms', 0)))}\n"
+        f"{maintenance_line}"
         + (("\nVenues:\n" + "\n".join(venue_lines)) if venue_lines else "")
         + (("\nalgo_active:\n" + "\n".join(algo_lines)) if algo_lines else "")
     )

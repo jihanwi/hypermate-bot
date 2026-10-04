@@ -1,8 +1,11 @@
 """Daily SQLite backup via the sqlite backup API, kept for BACKUP_KEEP_DAYS (spec 11)."""
 
+import asyncio
 import logging
 import os
 import re
+import time
+from typing import Optional
 from datetime import datetime, timedelta, timezone
 
 from telegram.ext import ContextTypes
@@ -57,19 +60,42 @@ async def retention(repo: Repo, now_ms: int, days: int = Config.EVENTS_RETENTION
     return events, messages
 
 
-async def startup_maintenance(repo: Repo, now_ms: int) -> None:
+MAINTENANCE_RETRY_SEC = 5
+
+
+async def _maintenance_steps(repo: Repo, now_ms: int, status: dict) -> None:
+    pending = await repo.payloads_need_slimming() or await repo.suppressed_rows_need_cleanup()
+    status['pending'] = pending
+    if pending:
+        events, messages = await repo.prune_events(now_ms - Config.EVENTS_RETENTION_DAYS * 24 * 3600 * 1000)
+        status['pruned'] = events
+        logger.info(f"Startup prune before slimming: removed {events} events, {messages} sent_messages")
+        seen, changed = await repo.slim_payloads()
+        status['slimmed'] = f"{changed}/{seen}"
+        status['cleaned'] = await repo.delete_suppressed_rows()     # fix/multi-algo-summary: old suppressed fill rows
+    # the checkpoint is cheap and runs on every attempt (a retry after a failed checkpoint still does it)
+    busy, _, pages = await repo.checkpoint()
+    status['checkpoint'] = 'busy' if busy else f"{pages} pages"
+
+
+async def startup_maintenance(repo: Repo, now_ms: int, status: Optional[dict] = None) -> dict:
     """Background task after post_init: prune to the retention window first (fewer rows), then the
-    batched payload slimming. Never blocks startup; errors are logged."""
-    try:
-        pending = await repo.payloads_need_slimming() or await repo.suppressed_rows_need_cleanup()
-        if pending:
-            events, messages = await repo.prune_events(now_ms - Config.EVENTS_RETENTION_DAYS * 24 * 3600 * 1000)
-            logger.info(f"Startup prune before slimming: removed {events} events, {messages} sent_messages")
-            await repo.slim_payloads()
-            await repo.delete_suppressed_rows()     # fix/multi-algo-summary: old suppressed fill rows
-            await repo.checkpoint()
-    except Exception as e:
-        logger.error(f"Startup maintenance failed: {e}")
+    batched payload slimming, the suppressed-row cleanup and a WAL checkpoint. Never blocks startup.
+    One retry after MAINTENANCE_RETRY_SEC on failure; the outcome is kept in `status` for /health."""
+    status = status if status is not None else {}
+    status.update({'state': 'running', 'started_ms': now_ms, 'attempts': 0, 'error': None})
+    for attempt in (1, 2):
+        status['attempts'] = attempt
+        try:
+            await _maintenance_steps(repo, now_ms, status)
+            status.update({'state': 'ok', 'finished_ms': int(time.time() * 1000), 'error': None})
+            return status
+        except Exception as e:
+            status.update({'state': 'failed', 'error': str(e), 'finished_ms': int(time.time() * 1000)})
+            logger.error(f"Startup maintenance attempt {attempt} failed: {e}")
+            if attempt == 1:
+                await asyncio.sleep(MAINTENANCE_RETRY_SEC)
+    return status
 
 
 async def backup_job(context: ContextTypes.DEFAULT_TYPE) -> None:
