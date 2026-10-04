@@ -167,13 +167,20 @@ class RisexAdapter:
         self.stream = stream
 
     async def resolve(self, evm_address: str) -> list[VenueAccount]:
-        """Active when /v1/positions has positions or trade-history has at least one trade."""
+        """Active when /v1/positions has positions or trade-history has at least one trade.
+
+        /v1/trade-history without market_id is answered as market_id=0 and returns nothing (PM live
+        check 2026-10-05), so the no-position case sweeps every market with limit=1 (38 requests,
+        once per /add or daily rescan, inside the 2400/min bucket).
+        """
         address = evm_address.lower()
         data = await self.client.positions(address, priority=scheduler.P_LEDGER)
         if data.get('positions'):
             return [VenueAccount(self.venue, address, address)]
-        trades = await self.client.trade_history(address, limit=1, priority=scheduler.P_LEDGER)
-        return [VenueAccount(self.venue, address, address)] if trades else []
+        for market_id in await self.client.markets(priority=scheduler.P_LEDGER):
+            if await self.client.trade_history(address, limit=1, market_id=market_id, priority=scheduler.P_LEDGER):
+                return [VenueAccount(self.venue, address, address)]
+        return []
 
     async def snapshot(self, account: VenueAccount) -> AccountSnapshot:
         address = account.account_ref
@@ -214,7 +221,15 @@ class RisexAdapter:
             raw = [f for f in (ws_trade_to_fill(u, address, ZERO, markets) for u in self.stream.drain_trades(address))
                    if f is not None]
         else:
-            trades = await self.client.trade_history(address, priority=scheduler.P_FILLS)
+            # REST fallback: trade-history is per market (no market_id means market 0), so the markets
+            # the account holds now or held in the last snapshot are queried; a fill on any other market
+            # also creates a position, which the next snapshot diff shows
+            market_ids = self._markets_of(positions_before or {}, markets)
+            current = await self.client.positions(address, priority=scheduler.P_FILLS)
+            market_ids |= {str(p.get('market_id')) for p in (current or {}).get('positions') or []}
+            trades = []
+            for market_id in sorted(market_ids):
+                trades += await self.client.trade_history(address, market_id=market_id, priority=scheduler.P_FILLS)
             raw = [rest_trade_to_fill(t, ZERO, markets) for t in trades]
         raw.sort(key=lambda f: (f['time'], str(f['tid'])))
         baseline = last_id is None and last_ms == 0
@@ -225,6 +240,11 @@ class RisexAdapter:
             # nothing seen yet: mark the baseline as taken so later trades count as new
             return fills, cursor if not baseline else encode_cursor('', 1)
         return fills, encode_cursor(str(newest['tid']), newest['time'])
+
+    @staticmethod
+    def _markets_of(positions: dict, markets: dict[str, dict]) -> set[str]:
+        coins = set(positions)
+        return {market_id for market_id, m in markets.items() if coin_of(m.get('name', '')) in coins}
 
     def explorer_url(self, account: VenueAccount) -> str:
         return EXPLORER_FALLBACK
