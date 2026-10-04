@@ -17,7 +17,7 @@ The v2 upgrade plan is in [docs/HYPERMATE_V2_SPEC.md](docs/HYPERMATE_V2_SPEC.md)
 - `/stats <alias>` - PnL and volume
 - `/rescan <alias>` - Look for Hyperliquid HIP-3 dex positions again
 - `/related <alias> [refresh]` - Linked wallets: subaccounts and master, API wallets, staking link, vault leader, transfer counterparties (likely or weak by the spec 7.2 rules), referrals, followed vaults. Each row has the address with a hypurrscan link, the evidence, the account value and a `Track as <alias>-N` button that adds it like `/add`. Results are cached 24 h; `refresh` forces a new discovery (about 300 HL weight, lowest priority)
-- `/health` - Admins only (`ADMIN_USER_IDS`): last poll time, active accounts, HL weight use and 429s over the last hour, active TWAPs and algos, DB and WAL size, event row counts (total and last 24 h by type), uptime, and the `algo_active` rows (coin, side, fills, time since the last fill). Not in the `/` menu
+- `/health` - Admins only (`ADMIN_USER_IDS`): last poll time, active accounts, HL weight use and 429s over the last hour, active TWAPs and algos, DB and WAL size, event row counts (total and last 24 h by type), uptime, the startup maintenance outcome (`Maintenance: ok 3m ago (attempt 1, pruned 0, slimmed 0/0, cleaned 0, checkpoint 12 pages)` or `failed … error: …`), and the `algo_active` rows (coin, side, fills, time since the last fill). Not in the `/` menu
 
 Aliases are matched case-insensitively. On startup the bot registers these commands as the Telegram `/` command menu for private chats.
 
@@ -120,7 +120,7 @@ Every `POLL_FAST_SEC` the bot reads each wallet's positions (`clearinghouseState
 
 ### DB backup
 
-The bot writes a backup every day at 04:00 KST to `<BACKUP_DIR>/hypermate-YYYYMMDD.db` with SQLite's online backup API and keeps the last 7 days. Right after a successful backup it deletes events older than 30 days (`EVENTS_RETENTION_DAYS`) with their `sent_messages` rows and runs `PRAGMA wal_checkpoint(TRUNCATE)`. Event payloads hold aggregates only (fill count, size, notional, VWAP, first and last tid), never the raw fills; an older database is slimmed once on startup. For a manual copy:
+The bot writes a backup every day at 04:00 KST to `<BACKUP_DIR>/hypermate-YYYYMMDD.db` with SQLite's online backup API and keeps the last 7 days. Right after a successful backup it deletes events older than 30 days (`EVENTS_RETENTION_DAYS`) with their `sent_messages` rows and runs `PRAGMA wal_checkpoint(TRUNCATE)`. Event payloads hold aggregates only (fill count, size, notional, VWAP, first and last tid), never the raw fills; an older database is slimmed once on startup. That startup maintenance (prune, slimming, cleanup of old suppressed rows, WAL checkpoint) runs in the background while the poller works on the same connection: the connection has a 30 s `busy_timeout`, every read closes its cursor so no statement stays open, the checkpoint retries briefly when a reader is active, and the whole run is retried once after 5 s. `/health` shows the outcome. For a manual copy:
 
 ```bash
 fly ssh console -C "sqlite3 /data/hypermate.db '.backup /data/backup.db'"
