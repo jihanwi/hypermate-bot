@@ -8,8 +8,8 @@ The v2 upgrade plan is in [docs/HYPERMATE_V2_SPEC.md](docs/HYPERMATE_V2_SPEC.md)
 
 - `/start` - Short welcome
 - `/help` - Commands and alert types
-- `/add <wallet_address> <alias>` - Track a wallet
-- `/list` - Your tracked wallets with account value
+- `/add <wallet_address> <alias>` - Track a wallet. `/add risex:<address> <alias>` pins the address to one venue (hl, lighter, risex, aster) when the automatic mapping does not find it there
+- `/list` - Your tracked wallets with account value (summed over venues) and the badges of the venues each is active on
 - `/remove <alias>` - Stop tracking a wallet
 - `/positions [alias]` - Positions and balances for one wallet (main dex and HIP-3 dexs), or a one-line summary per wallet without an alias
 - `/twap [alias]` - Active native TWAPs and detected bot (algo) executions
@@ -23,7 +23,7 @@ Aliases are matched case-insensitively. On startup the bot registers these comma
 
 ### Venues
 
-`/add` resolves the wallet on every venue in parallel and tracks the ones with activity: Hyperliquid (positions, account value or spot balance), Lighter (sub-accounts of the L1 address) and RISEx (open positions or any trade history). The reply says which: `✅ Wallet added as cl · HL ✅ (xyz) · Lighter ✅ (2 sub-accounts)`. `/rescan` repeats it, and a daily job at 04:10 KST re-checks the venues a wallet is not active on. Alerts carry a venue badge (`[HL]`, `[LTR]`, `[RISE]`) and Lighter sub-accounts show as `alias#index`. RISEx uses one WebSocket for all tracked wallets (positions and trades channels) with REST as the fallback. `/positions` has one section per venue account and `/list` sums the account values over venues. Lighter polls use the WebSocket stream when it connects and REST otherwise (interval raised with the account count so the public 60 req/min limit holds); `/health` shows the mode.
+`/add` resolves the wallet on every venue in parallel and tracks the ones with activity: Hyperliquid (positions, account value or spot balance), Lighter (sub-accounts of the L1 address) and RISEx (open positions or any trade history). The reply says which: `✅ Wallet added as cl · HL ✅ · dex: xyz · Lighter ✅ (2 sub-accounts)` (`dex:` lists HIP-3 dexs with activity). Re-adding a wallet ends silently any algo of it that has been idle for 2 hours; after an algo ends, fills on that coin wait 10 minutes for re-detection and go out as one summed alert if none happens. `/rescan` repeats it, and a daily job at 04:10 KST re-checks the venues a wallet is not active on. Alerts carry a venue badge (`[HL]`, `[LTR]`, `[RISE]`) and Lighter sub-accounts show as `alias#index`. RISEx uses one WebSocket for all tracked wallets (positions and trades channels) with REST as the fallback. `/positions` has one section per venue account and `/list` sums the account values over venues. Lighter polls use the WebSocket stream when it connects and REST otherwise (interval raised with the account count so the public 60 req/min limit holds); `/health` shows the mode.
 
 ### Alerts
 
@@ -54,6 +54,7 @@ python -m hypermate.main
 | `LOG_LEVEL` | no | `INFO` | Python log level |
 | `HYPERLIQUID_API_URL` | no | `https://api.hyperliquid.xyz` | Hyperliquid API base URL |
 | `ADMIN_USER_IDS` | no | | Telegram user ids allowed to run `/health`, comma or space separated |
+| `MIN_NOTIONAL_USD` | no | `1000` | Position and spot alerts under this notional are recorded but not sent (liquidations always go out) |
 | `HL_WEIGHT_BUDGET` | no | `1020` | Hyperliquid info API weight per minute the bot allows itself (HL limit 1200) |
 | `POLL_FAST_SEC` | no | `20` | Floor for the position poll interval. Raised automatically when polling would need over 40% of the budget |
 | `POLL_LEDGER_SEC` | no | `180` | Ledger (deposits, withdrawals, transfers) poll interval, stretched up to 600 s when the budget is short |
@@ -120,7 +121,7 @@ Every `POLL_FAST_SEC` the bot reads each wallet's positions (`clearinghouseState
 
 ### DB backup
 
-The bot writes a backup every day at 04:00 KST to `<BACKUP_DIR>/hypermate-YYYYMMDD.db` with SQLite's online backup API and keeps the last 7 days. Right after a successful backup it deletes events older than 30 days (`EVENTS_RETENTION_DAYS`) with their `sent_messages` rows and runs `PRAGMA wal_checkpoint(TRUNCATE)`. Event payloads hold aggregates only (fill count, size, notional, VWAP, first and last tid), never the raw fills; an older database is slimmed once on startup. That startup maintenance (prune, slimming, cleanup of old suppressed rows, WAL checkpoint) runs in the background while the poller works on the same connection: the connection has a 30 s `busy_timeout`, every read closes its cursor so no statement stays open, the checkpoint retries briefly when a reader is active, and the whole run is retried once after 5 s. `/health` shows the outcome. For a manual copy:
+The bot writes a backup every day at 04:00 KST to `<BACKUP_DIR>/hypermate-YYYYMMDD.db` with SQLite's online backup API and keeps the last 7 days. Right after a successful backup it deletes events older than 30 days (`EVENTS_RETENTION_DAYS`) with their `sent_messages` rows and runs `PRAGMA wal_checkpoint(TRUNCATE)`. Event payloads hold aggregates only (fill count, size, notional, VWAP, first and last tid), never the raw fills; an older database is slimmed once on startup. That startup maintenance (prune, slimming, cleanup of old suppressed rows, VACUUM when rows went away, WAL checkpoint) runs in `post_init` before the polling jobs start, so VACUUM never competes with the poller; it is a no-op on a migrated database. The connection has a 30 s `busy_timeout`, every read closes its cursor so no statement stays open, the checkpoint retries briefly when a reader is active, and the whole run is retried once after 5 s. `/health` shows the outcome (`Maintenance: ok … vacuum 160 MB freed`). For a manual copy:
 
 ```bash
 fly ssh console -C "sqlite3 /data/hypermate.db '.backup /data/backup.db'"
