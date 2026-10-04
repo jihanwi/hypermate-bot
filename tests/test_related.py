@@ -211,7 +211,7 @@ async def test_related_command_searching_then_edit_then_cache(repo, clock, monke
     assert '<b>Confirmed</b>' in text and 'subaccount "Liminal"' in text and 'API wallet' in text
     assert '<b>Likely</b>' in text and '34 transfers both ways' in text
     assert '<b>Weak</b>' in text and 'referral' in text
-    assert 'hypurrscan.io/address/' + SUB in text and '$1.23k' in text
+    assert 'hypurrscan.io/address/' + SUB in text and 'acct $1.23k' in text and 'vol $' in text
     assert 'discovery weight' in text
     labels = [b.text for row in result['markup'].inline_keyboard for b in row]
     assert labels[0] == 'Track as master-1' and len(labels) == min(related.MAX_ROWS, len(labels))

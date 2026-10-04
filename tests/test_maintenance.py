@@ -74,6 +74,7 @@ async def test_maintenance_runs_while_the_poller_reads_and_writes(tmp_path, capl
     # slimming walks the 6000 seeded rows (plus what the writer added before it started), then the
     # cleanup removes the 2000 suppressed ones, then the checkpoint truncates the WAL
     assert status['cleaned'] == 2000 and status['slimmed'].startswith('6000/') and status['checkpoint'] != 'busy'
+    assert status['vacuum'].endswith('MB freed')
     assert 'table is locked' not in caplog.text and 'failed' not in caplog.text
     assert len(written) >= 5, len(written)                  # the writer kept going between batches
     cur = await repo.db.execute("SELECT COUNT(*) FROM events WHERE dedupe_key LIKE 'new%'")

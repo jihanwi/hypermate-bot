@@ -134,7 +134,7 @@ class FakeRisexClient:
         return self.balances.get(account.lower())
 
     async def trade_history(self, account, limit=100, market_id=None, priority=2):
-        self.calls.append(('trade-history', account, limit))
+        self.calls.append(('trade-history', account, limit, market_id))
         return sorted(self.trades_by.get(account.lower(), []), key=lambda t: -int(t['time']))[:limit]
 
     async def markets(self, priority=1):
@@ -155,6 +155,7 @@ def wei(value: str) -> str:
 async def test_fetch_events_rest_baseline_then_incremental():
     client = FakeRisexClient()
     client.trades_by[ADDR] = [rest_trade('t1', T0 - 60_000, 'SELL', '0.020892')]
+    client.positions_by[ADDR] = load_fixture('risex_positions.json')['data']['positions']   # market 1 held
     ad = risex.RisexAdapter(client)
     account = VenueAccount(base.RISEX, ADDR, ADDR, 1)
     fills, cursor = await ad.fetch_events(account, None, {})
@@ -179,7 +180,7 @@ async def test_resolve_rules():
     client.positions_by[ADDR] = load_fixture('risex_positions.json')['data']['positions']
     client.calls.clear()
     assert [a.account_ref for a in await ad.resolve(ADDR.upper())] == [ADDR]  # positions, lowercased
-    assert ('trade-history', ADDR, 1) not in client.calls
+    assert not any(c[0] == 'trade-history' for c in client.calls)
 
 
 class FakeWS:
@@ -247,7 +248,7 @@ async def test_stream_snapshot_and_trades_then_rest_fallback(monkeypatch):
     stream._trades[ADDR] = [ws_trades[1]]
     fills, cursor = await ad.fetch_events(account, json.dumps({'id': '', 'ms': 1}), snap.positions)
     assert len(fills) == 1 and fills[0]['side'] == 'A' and fills[0]['dir'] == 'Open Short'
-    assert ('trade-history', ADDR, 100) not in client.calls
+    assert not any(c[0] == 'trade-history' for c in client.calls)          # every fill came over the WS
 
     # the first socket ends -> degraded (REST), then the second connects and resubscribes
     for _ in range(60):
