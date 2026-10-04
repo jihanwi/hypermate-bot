@@ -267,10 +267,11 @@ def account_value(perp_state: dict) -> Optional[Decimal]:
     return to_decimal(perp_state.get('marginSummary', {}).get('accountValue'))
 
 
-def format_list_line(alias: str, address: str, value: Optional[Decimal]) -> str:
-    """/list row. value None means unknown (not polled yet and the API call failed)."""
+def format_list_line(alias: str, address: str, value: Optional[Decimal], venues_active: Optional[list] = None) -> str:
+    """/list row with the badges of the venues the wallet is active on. value None means unknown."""
     value_str = usd(value) if value is not None else "n/a"
-    return f"• {alias_link(address, alias)}: {h(address)} · {value_str}"
+    badges = " ".join(badge(v) for v in venues_active or [])
+    return f"• {alias_link(address, alias)}: {h(address)} · {value_str}" + (f" · {badges}" if badges else "")
 
 
 def format_positions_summary_line(alias: str, address: str, perp_state: Optional[dict]) -> str:
@@ -557,7 +558,7 @@ def format_algo_end(wallet_address: str, alias: str, state: dict, verb: str, sid
 
 _DELIVERY_NOTES = {
     'summarized': 'summary mode', 'filtered_settings': 'off in settings',
-    'filtered_threshold': 'below threshold', 'muted': 'muted',
+    'filtered_threshold': 'below threshold', 'muted': 'muted', 'rearm_buffer': 'waiting for algo re-detection',
 }
 
 
@@ -712,7 +713,7 @@ def _evidence_text(link: dict, now_ms: int) -> str:
         parts.append('both ways' if both else ('in' if int(e.get('in', 0)) else 'out'))
         usd = to_decimal(e.get('usd'))
         if usd:
-            parts.append(compact_usd(usd))
+            parts.append(f"vol {compact_usd(usd)}")
         if e.get('last_ms'):
             parts.append(f"last {kst_time(int(e['last_ms']), now_ms)}")
         if e.get('background') and not e.get('discovery'):
@@ -763,7 +764,7 @@ def format_related(alias: str, address: str, links: list[dict], now_ms: int, wei
         evidence = "; ".join(_evidence_text(r, now_ms) for r in rows)
         value = next((to_decimal((r.get('evidence') or {}).get('account_value')) for r in rows
                       if (r.get('evidence') or {}).get('account_value') is not None), None)
-        value_text = f" · {compact_usd(value)}" if value is not None else ""
+        value_text = f" · acct {compact_usd(value)}" if value is not None else ""
         sections.setdefault(best, []).append(
             f"{n}. <a href=\"{h(hl_address_url(other))}\">{h(short_address(other))}</a> · {evidence}{value_text}")
         buttons.append((f"{alias}-{n}", rows[0]['row_id']))

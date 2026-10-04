@@ -254,6 +254,17 @@ class Repo:
         await self.db.commit()
         return cur.rowcount, messages
 
+    async def vacuum(self) -> int:
+        """Rebuild the file to reclaim the space of deleted rows. Needs no open transaction and a volume
+        with room for a second copy; run before the poller starts. Returns the bytes freed."""
+        await self.db.commit()
+        before = os.path.getsize(self.path)
+        await self.db.execute("VACUUM")
+        await self.db.commit()
+        after = os.path.getsize(self.path)
+        logger.info(f"VACUUM: {before // 1_048_576} MB -> {after // 1_048_576} MB")
+        return max(0, before - after)
+
     async def checkpoint(self) -> tuple[int, int, int]:
         """Fold the WAL into the main file and truncate it. Returns (busy, log pages, checkpointed pages).
 
@@ -673,6 +684,10 @@ class Repo:
         cur = await self.db.execute("SELECT event_id FROM events WHERE dedupe_key = ?", (dedupe_key,))
         row = await cur.fetchone(); await cur.close()
         return await self.get_event(row[0]) if row else None
+
+    async def update_event_delivery(self, event_id: int, delivery: str) -> None:
+        await self.db.execute("UPDATE events SET delivery = ? WHERE event_id = ?", (delivery, event_id))
+        await self.db.commit()
 
     async def update_event_payload(self, event_id: int, payload: dict) -> None:
         await self.db.execute("UPDATE events SET payload_json = ? WHERE event_id = ?",
