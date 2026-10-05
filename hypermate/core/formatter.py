@@ -14,6 +14,7 @@ from hypermate.core.events import is_system_address  # noqa: F401  (re-exported)
 from hypermate.core.links import address_url, hl_address_url
 from hypermate.venues.base import BADGES, HYPERLIQUID
 from hypermate.core.numbers import to_decimal
+from hypermate.db.backup import maintenance_summary
 
 logger = logging.getLogger(__name__)
 
@@ -655,12 +656,11 @@ def format_health(report: dict, now_ms: int) -> str:
     maintenance = report.get('maintenance') or {}
     if maintenance.get('state'):
         when = maintenance.get('finished_ms') or maintenance.get('started_ms') or now_ms
-        details = [f"{k} {maintenance[k]}" for k in ('pruned', 'slimmed', 'cleaned', 'checkpoint') if k in maintenance]
+        details = maintenance_summary(maintenance)
         if maintenance.get('state') == 'failed':
-            details.append(f"error: {h(str(maintenance.get('error')))}")
+            details += f"{', ' if details else ''}error: {h(str(maintenance.get('error')))}"
         maintenance_line = (f"Maintenance: {maintenance['state']} {humanize_ms(max(0, now_ms - int(when)))} ago"
-                            f" (attempt {maintenance.get('attempts', 1)}"
-                            + (", " + ", ".join(details) if details else "") + ")")
+                            f" (attempt {maintenance.get('attempts', 1)}" + (", " + details if details else "") + ")")
     else:
         maintenance_line = "Maintenance: not run"
     venue_lines = []
