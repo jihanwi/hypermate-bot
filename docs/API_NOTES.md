@@ -132,6 +132,7 @@ Shapes from the PM fixtures (master wallet 0x6aca…, 2026-10-03):
 - `aster_userFills [address, symbol|null, from, to, "latest"]` → `result {accountPrivacy, startTime, endTime, fills[] {symbol, side, price, qty, time (ms)}}`, at most 1000, `from`/`to` window up to 7 days, `from` must be at or after `1772678119418`. No fill or order ids and no PnL: the bot groups fills by (ms, symbol, side) as one order and leaves `realized_pnl` empty.
 - `aster_openOrders [address, symbol|"", "latest"]` exists (`openOrders[] {orderId, symbol, side, type, origQty, price}`); not used in 2C. **[?]** whether `type` ever shows a TWAP for other users was not checked (no active address).
 - Privacy: `accountPrivacy: "enabled"` hides assets and positions (the docs say the whole balance response is omitted). The bot sends PRIVACY_ON once, deactivates the venue account and lets the daily rescan re-resolve it.
+- `aster_getBalance` for an address with no Aster account answers a JSON-RPC error `-32603` whose message wraps `BinanceApiError[code=-40000005, msg=The account does not exist …]` (loracle /add log, 2026-10-05; fixture `aster_getBalance_notfound.json`). The client raises `AsterNotFound` for `-32603` with `code=-40000005` or `The account does not exist` in the message and resolve answers ✗; any other `-32603` stays an error (`?`). Same pattern as Lighter 400 / 21100.
 - Explorer: Aster Chain explorer address URL format [?]; alerts link to `https://www.asterdex.com/`.
 
 ## Telegram

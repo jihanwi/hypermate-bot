@@ -236,3 +236,32 @@ async def test_add_summary_positions_poll_and_privacy_transition(repo, clock):
     assert resolve_summary(results) == 'Aster ✅ (privacy: off)'
     assert poller.venue_interval_sec(base.ASTER, ad, 1) == 30
     assert (await ad.health())['detail'] == 'REST polling'
+
+
+async def test_missing_account_resolves_as_not_found_and_other_internal_errors_stay_errors(monkeypatch):
+    """post-deploy 1005b (8): loracle /add showed 'Aster ? (error)' on JSON-RPC -32603 wrapping BinanceApiError
+    -40000005 'The account does not exist'. That is ✗ (no account), like Lighter 400/21100; other -32603 stay ?."""
+    from hypermate.core.venues import resolve_summary
+    from hypermate.venues import base
+    from hypermate.venues.aster.adapter import AsterAdapter
+    from hypermate.venues.aster.client import AsterNotFound
+    client = AsterClient('http://unused', None)
+    notfound = load_fixture('aster_getBalance_notfound.json')
+    responses = [(200, notfound), (200, {'jsonrpc': '2.0', 'id': 2, 'error': {'code': -32603, 'message': 'Internal error: upstream timeout'}}),
+                 (200, notfound), (200, {'jsonrpc': '2.0', 'id': 4, 'error': {'code': -32603, 'message': 'Internal error: upstream timeout'}})]
+
+    async def fake_post(payload):
+        return responses.pop(0)
+
+    monkeypatch.setattr(client, '_post', fake_post)
+    with pytest.raises(AsterNotFound):
+        await client.get_balance(INACTIVE)
+    with pytest.raises(AsterAPIError) as info:                          # another -32603 is still an error
+        await client.get_balance(INACTIVE)
+    assert not isinstance(info.value, AsterNotFound)
+    adapter_obj = AsterAdapter(client)
+    assert await adapter_obj.resolve(INACTIVE) == []
+    assert resolve_summary({base.ASTER: []}) == 'Aster ✗'
+    with pytest.raises(AsterAPIError):
+        await adapter_obj.resolve(INACTIVE)
+    assert resolve_summary({base.ASTER: None}) == 'Aster ? (error)'
