@@ -8,7 +8,7 @@ The v2 upgrade plan is in [docs/HYPERMATE_V2_SPEC.md](docs/HYPERMATE_V2_SPEC.md)
 
 - `/start` - Short welcome
 - `/help` - Commands and alert types
-- `/add <wallet_address> <alias>` - Track a wallet. `/add risex:<address> <alias>` pins the address to one venue (hl, lighter, risex, aster) when the automatic mapping does not find it there
+- `/add <wallet_address> <alias>` - Track a wallet. `/add risex:<address> <alias>` pins the address to that venue only (hl, lighter, risex, aster): no Hyperliquid row, no dex scan, used when the automatic mapping does not find the address there
 - `/list` - Your tracked wallets with account value (summed over venues) and the badges of the venues each is active on
 - `/remove <alias>` - Stop tracking a wallet
 - `/positions [alias]` - Positions and balances for one wallet (main dex and HIP-3 dexs), or a one-line summary per wallet without an alias
@@ -54,7 +54,7 @@ python -m hypermate.main
 | `LOG_LEVEL` | no | `INFO` | Python log level |
 | `HYPERLIQUID_API_URL` | no | `https://api.hyperliquid.xyz` | Hyperliquid API base URL |
 | `ADMIN_USER_IDS` | no | | Telegram user ids allowed to run `/health`, comma or space separated |
-| `MIN_NOTIONAL_USD` | no | `1000` | Position and spot alerts under this notional are recorded but not sent (liquidations always go out) |
+| `MIN_NOTIONAL_USD` | no | `1000` | Position and spot alerts under this notional are recorded but not sent (full closes and liquidations always go out) |
 | `HL_WEIGHT_BUDGET` | no | `1020` | Hyperliquid info API weight per minute the bot allows itself (HL limit 1200) |
 | `POLL_FAST_SEC` | no | `20` | Floor for the position poll interval. Raised automatically when polling would need over 40% of the budget |
 | `POLL_LEDGER_SEC` | no | `180` | Ledger (deposits, withdrawals, transfers) poll interval, stretched up to 600 s when the budget is short |

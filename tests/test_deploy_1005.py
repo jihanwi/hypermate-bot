@@ -164,6 +164,55 @@ async def test_min_notional_floor_filters_small_fills_but_not_liquidations(repo,
     assert eth['delivery'] == 'filtered_threshold'
 
 
+async def test_full_close_is_never_filtered_by_the_notional_floor(repo, clock, monkeypatch):
+    monkeypatch.setattr(Config, 'MIN_NOTIONAL_USD', 1000)
+    await repo.add_subscription(7, W, 'w', T0)
+    hl, bot = FakeHLClient(), FakeBot()
+    hl.fills[W] = [fill('ETH', 'Close Long', '0.1', '3000', T0 + 1000, '0.5', oid=1, closed_pnl='2'),   # $300 partial
+                   fill('ETH', 'Close Long', '0.4', '3000', T0 + 2000, '0.4', oid=2, closed_pnl='8')]   # $1,200? no: $1,200 > floor
+    hl.fills[W][1]['sz'] = '0.2'                                                                        # $600 full close
+    hl.fills[W][1]['startPosition'] = '0.2'
+    await run_cycles(repo, hl, bot, clock, T0 + CYCLE_MS)
+    texts = [m['text'] for m in bot.sent]
+    assert len(texts) == 1 and 'closed LONG $ETH' in texts[0]
+    (va, _), = await repo.tracked_accounts()
+    rows = {e['type']: e['delivery'] for e in await repo.events_since(va, 0)}
+    assert rows == {'position_decrease': 'filtered_threshold', 'position_close': 'sent'}
+
+
+def test_risex_positions_use_mark_price_for_notional_and_unrealized_pnl():
+    """D-3: notional = |size| x mark, uPnL = size x (mark - entry), entry rounded to step_price,
+    leverage and unsettled funding carried. ZEC numbers chosen so that uPnL = +3,248 at mark 1333.145
+    (the dipper3 recording is not in the repo yet; see the PR)."""
+    markets = {'8': {'name': 'ZEC/USDC', 'mark_price': '1333.145', 'step_price': '0.01', 'step_size': '0.001'}}
+    rows = [{'account': W, 'market_id': '8', 'size': '100', 'side': 'BUY', 'avg_entry_price': '1300.66512345',
+             'leverage': '10', 'quote_amount': '-130066.5', 'isolated_usdc_balance': '0', 'unsettled_funding': '-12.5'}]
+    positions = risex.parse_ws_positions(rows, markets)
+    zec = positions['ZEC']
+    assert Decimal(zec['position_value']) == Decimal('133314.5')
+    assert abs(Decimal(zec['unrealized_pnl']) - Decimal('3248')) < 1              # 100 x (1333.145 - 1300.66512345)
+    assert zec['entry_px'] == '1300.67' and zec['leverage'] == '10' and zec['unsettled_funding'] == '-12.5'
+    # a short: PnL sign follows the signed size
+    short = risex.parse_ws_positions([{**rows[0], 'size': '-100', 'side': 'SELL'}], markets)['ZEC']
+    assert abs(Decimal(short['unrealized_pnl']) + Decimal('3248')) < 1
+    # the same through the 18-dec REST path
+    rest = risex.parse_rest_positions({'positions': [{**rows[0], 'size': str(100 * 10**18),
+                                                      'avg_entry_price': str(int(Decimal('1300.66512345') * 10**18)),
+                                                      'leverage': str(10 * 10**18), 'unsettled_funding': str(-125 * 10**17)}]},
+                                      markets)['ZEC']
+    assert rest['unrealized_pnl'] == zec['unrealized_pnl'] and rest['leverage'] == '10'
+    # rendering: leverage and funding on the line
+    from hypermate.core.formatter import format_positions
+    from hypermate.venues.base import AccountSnapshot, as_clearinghouse_state
+    state = as_clearinghouse_state(AccountSnapshot(positions, Decimal(5000)))
+    text = format_positions('w', W, None, {}, Decimal(10), [('RISEx', state)])
+    check_telegram_html(text)
+    assert 'Entry: $1,300.67' in text and '🟢 $3,247.99' in text and '· 10x' in text and 'unsettled funding -$12.5' in text
+    # no mark price: the quote amount stands in and PnL is unknown
+    nomark = risex.parse_ws_positions(rows, {'8': {'name': 'ZEC/USDC'}})['ZEC']
+    assert Decimal(nomark['position_value']) == Decimal('130066.5') and nomark['unrealized_pnl'] == 'N/A'
+
+
 async def test_fills_after_an_algo_end_wait_for_re_detection(repo, clock):
     """After ALGO_END, fills on that coin within ALGO_REARM_SEC go to the buffer: one summed message
     when nothing re-detects, nothing when an algo starts again."""
@@ -239,11 +288,13 @@ async def test_add_with_venue_prefix_pins_one_venue_and_list_shows_badges(repo, 
     check_telegram_html(text)
     assert text == '✅ Wallet added as <b>rise</b> · RISEx ✅ (added as given, no activity seen)'
     rows = {r['venue']: r['active'] for r in await repo.venue_accounts_of(RISEX_ADDR)}
-    assert rows == {base.HYPERLIQUID: True, base.RISEX: True}          # HL row from add_subscription stays
-    assert ('positions', RISEX_ADDR) in rclient.calls and not any(c[0] == 'clearinghouseState' for c in hl.calls)
+    assert rows == {base.RISEX: True}                                   # exclusive: no HL row, no dex scan
+    assert ('positions', RISEX_ADDR) in rclient.calls and not any(c[0] in ('clearinghouseState', 'perpDexs')
+                                                                   for c in hl.calls)
+    assert RISEX_ADDR not in {a for _, a in await repo.tracked_accounts()}
     update = make_update(5)
     await commands.list_wallets(update, make_context(bot_data))
-    assert '[HL] [RISE]' in update.message.replies[0]['text']
+    assert '· [RISE]' in update.message.replies[0]['text'] and '[HL]' not in update.message.replies[0]['text']
     update = make_update(5)
     await commands.add_wallet(update, make_context(bot_data, args=['bogus:0x12', 'x']))
     assert 'Usage: /add' in update.message.replies[0]['text'] and 'risex:' in update.message.replies[0]['text']
