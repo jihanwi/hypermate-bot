@@ -1,0 +1,98 @@
+{
+  "data": {
+    "markets": [
+      {
+        "market_id": "8",
+        "config": {
+          "name": "ZEC/USDC",
+          "quote": "0xe436820ba0c69702c1d3e601d421c0ef38262739",
+          "step_size": "0.001",
+          "step_price": "0.01",
+          "maintenance_margin_factor": "15",
+          "max_leverage": "10",
+          "min_order_size": "0.015",
+          "unlocked": true,
+          "open_interest_limit": "4500"
+        },
+        "base_asset_symbol": "ZEC/USDC",
+        "quote_asset_symbol": "USDC",
+        "underlying": "ZEC/USDC",
+        "display_name": "ZEC/USDC",
+        "quote_volume_24h": "716442.44233",
+        "change_24h": "31.83",
+        "high_24h": "1366.25",
+        "low_24h": "1305.81",
+        "last_price": "1340.3",
+        "mark_price": "1340.258925173239075868",
+        "index_price": "1340.14302242455",
+        "max_position_size": "100000000",
+        "open_interest": "1106.07",
+        "funding_interval": "3600000000000",
+        "next_funding_time": "1791172800000000000",
+        "post_only": false,
+        "last_cumulative_funding": "0",
+        "predicted_funding_rate": "0",
+        "display_base_asset_symbol": "ZEC/USDC",
+        "accumulated_funding": "33.999559614951982442",
+        "current_funding_rate": "0.000018104186882201",
+        "funding_rate_8h": "0.000144833495057608",
+        "active": true,
+        "category": "crypto",
+        "search_tags": [
+          "crypto"
+        ],
+        "is_new": false,
+        "reduce_only": false,
+        "display_at": "0"
+      },
+      {
+        "market_id": "23",
+        "config": {
+          "name": "PUMP/USDC",
+          "quote": "0xe436820ba0c69702c1d3e601d421c0ef38262739",
+          "step_size": "1",
+          "step_price": "0.000001",
+          "maintenance_margin_factor": "15",
+          "max_leverage": "10",
+          "min_order_size": "2000",
+          "unlocked": true,
+          "open_interest_limit": "1000000000"
+        },
+        "base_asset_symbol": "PUMP/USDC",
+        "quote_asset_symbol": "USDC",
+        "underlying": "PUMP/USDC",
+        "display_name": "PUMP/USDC",
+        "quote_volume_24h": "1080137.595209",
+        "change_24h": "0.000035",
+        "high_24h": "0.006795",
+        "low_24h": "0.00623",
+        "last_price": "0.006383",
+        "mark_price": "0.006372",
+        "index_price": "0.00636973161",
+        "max_position_size": "100000000",
+        "open_interest": "139142120",
+        "funding_interval": "3600000000000",
+        "next_funding_time": "1791172800000000000",
+        "post_only": false,
+        "last_cumulative_funding": "0",
+        "predicted_funding_rate": "0",
+        "display_base_asset_symbol": "PUMP/USDC",
+        "accumulated_funding": "0.000213028400726937",
+        "current_funding_rate": "0.000034399067805648",
+        "funding_rate_8h": "0.000275192542445184",
+        "active": true,
+        "category": "crypto",
+        "search_tags": [
+          "crypto",
+          "meme",
+          "pump"
+        ],
+        "is_new": false,
+        "reduce_only": false,
+        "display_at": "0"
+      }
+    ]
+  },
+  "captured_at": "2026-10-05T03:20Z",
+  "note": "markets 8 (ZEC) and 23 (PUMP) only, for dipper3 positions fixture"
+}
