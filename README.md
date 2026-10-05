@@ -109,6 +109,8 @@ fly deploy --ha=false
 fly logs
 ```
 
+Pushes to `main` deploy automatically: `.github/workflows/fly-deploy.yml` runs `flyctl deploy --remote-only --depot=false --ha=false` with the `FLY_API_TOKEN` repository secret (`fly tokens create deploy -x 999999h`, then Settings > Secrets and variables > Actions).
+
 - **Fly trial accounts stop the machine every 5 minutes** ("Trial machine stopping. To run for longer than 5m0s, add a credit card"). Add a payment method to the Fly organization to run the bot continuously.
 - After `fly deploy` (or `fly secrets set`), check `fly status` that the machine is `started`; if it is `stopped`, run `fly machine start <machine-id>`.
 - **Keep exactly one machine: `fly scale count 1`.** A volume attaches to one machine only, and SQLite cannot be shared between machines. Check with `fly status` after deploys and scale back to 1 if Fly created more.
@@ -123,7 +125,7 @@ Every `POLL_FAST_SEC` the bot reads each wallet's positions (`clearinghouseState
 
 ### DB backup
 
-The bot writes a backup every day at 04:00 KST to `<BACKUP_DIR>/hypermate-YYYYMMDD.db` with SQLite's online backup API and keeps the last 7 days. Right after a successful backup it deletes events older than 30 days (`EVENTS_RETENTION_DAYS`) with their `sent_messages` rows and runs `PRAGMA wal_checkpoint(TRUNCATE)`. Event payloads hold aggregates only (fill count, size, notional, VWAP, first and last tid), never the raw fills; an older database is slimmed once on startup. That startup maintenance (prune, slimming, cleanup of old suppressed rows, VACUUM when rows went away, WAL checkpoint) runs in `post_init` before the polling jobs start, so VACUUM never competes with the poller; it is a no-op on a migrated database. The connection has a 30 s `busy_timeout`, every read closes its cursor so no statement stays open, the checkpoint retries briefly when a reader is active, and the whole run is retried once after 5 s. `/health` shows the outcome (`Maintenance: ok … vacuum 160 MB freed`). For a manual copy:
+The bot writes a backup every day at 04:00 KST to `<BACKUP_DIR>/hypermate-YYYYMMDD.db` with SQLite's online backup API and keeps the last 7 days. Right after a successful backup it deletes events older than 30 days (`EVENTS_RETENTION_DAYS`) with their `sent_messages` rows and runs `PRAGMA wal_checkpoint(TRUNCATE)`. Event payloads hold aggregates only (fill count, size, notional, VWAP, first and last tid), never the raw fills; an older database is slimmed once on startup. That startup maintenance (prune, slimming, cleanup of old suppressed rows, VACUUM when free pages exceed 30% of the file or 10 MB, WAL checkpoint) runs in `post_init` before the polling jobs start, so VACUUM never competes with the poller; it is a no-op on a migrated database. The connection has a 30 s `busy_timeout`, every read closes its cursor so no statement stays open, the checkpoint retries briefly when a reader is active, and the whole run is retried once after 5 s. One `Maintenance: …` INFO line is logged on every boot and `/health` shows the same (`Maintenance: ok … freelist 190 MB (95% of 200 MB), vacuum done (189 MB freed), checkpoint 3 pages`). For a manual copy:
 
 ```bash
 fly ssh console -C "sqlite3 /data/hypermate.db '.backup /data/backup.db'"

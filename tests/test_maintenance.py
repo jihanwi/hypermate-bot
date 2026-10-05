@@ -69,12 +69,15 @@ async def test_maintenance_runs_while_the_poller_reads_and_writes(tmp_path, capl
     finally:
         stop.set()
         await task
+        if not status.get('state') == 'ok':
+            await repo.close()           # a failed run must not leave the connection thread alive (pytest hangs)
 
     assert status['state'] == 'ok' and status['attempts'] == 1, status
     # slimming walks the 6000 seeded rows (plus what the writer added before it started), then the
     # cleanup removes the 2000 suppressed ones, then the checkpoint truncates the WAL
     assert status['cleaned'] == 2000 and status['slimmed'].startswith('6000/') and status['checkpoint'] != 'busy'
-    assert status['vacuum'].endswith('MB freed')
+    # 2000 small rows gone leaves a freelist far under 30% / 10 MB: no VACUUM, but the decision is logged
+    assert status['vacuum'] == 'skipped' and status['freelist'].startswith('0 MB (')
     assert 'table is locked' not in caplog.text and 'failed' not in caplog.text
     assert len(written) >= 5, len(written)                  # the writer kept going between batches
     cur = await repo.db.execute("SELECT COUNT(*) FROM events WHERE dedupe_key LIKE 'new%'")
@@ -153,3 +156,48 @@ async def test_maintenance_retries_once_and_health_shows_the_outcome(repo, monke
     await commands.health_command(update, make_context({'repo': repo, 'hl': FakeHLClient(), 'maintenance': status}))
     assert 'Maintenance: failed' in update.message.replies[0]['text'] and 'error: database table is locked' in \
         update.message.replies[0]['text']
+
+
+async def test_vacuum_follows_the_freelist_and_every_boot_logs_one_line(repo, caplog, monkeypatch):
+    """fix/vacuum-freelist: v12 skipped VACUUM on a 200 MB file because nothing was pending in that run.
+    The decision now reads PRAGMA freelist_count on every boot (>30% or >10 MB) and one Maintenance line
+    is logged whatever happened."""
+    import logging
+    caplog.set_level(logging.INFO)
+    await repo.add_subscription(7, A, 'w', T0)
+    (va, _), = await repo.tracked_accounts()
+    # nothing pending, nothing free: skipped, still logged
+    status = {}
+    await backup.startup_maintenance(repo, T0, status)
+    assert status['vacuum'] == 'skipped' and status['freelist'].startswith('0 MB (0%')
+    assert sum('Maintenance: ok (attempt 1, ' in m and 'vacuum skipped' in m for m in caplog.messages) == 1
+    # rows deleted before the restart (already migrated, so no prune/slim this run): the freelist says VACUUM
+    big = {'coin': 'BTC', 'blob': 'x' * 4000}
+    for i in range(3000):
+        await repo.record_event(f'e{i}', va, 'position_open', T0 - i, big, 'sent', T0)
+    await repo.db.execute("DELETE FROM events WHERE dedupe_key != 'e0'")
+    await repo.db.commit()
+    free_bytes, file_bytes, pct = await repo.free_space()
+    assert pct > 30 and free_bytes > 10 * 1_048_576
+    caplog.clear()
+    status = {}
+    await backup.startup_maintenance(repo, T0, status)
+    assert status['vacuum'].startswith('done (') and status['vacuum'] != 'done (0 MB freed)'
+    assert (await repo.free_space())[2] == 0
+    assert sum('Maintenance: ok' in m and 'vacuum' in m and 'MB freed' in m for m in caplog.messages) == 1
+    # 10 MB absolute threshold on a file whose free share is under 30%
+    monkeypatch.setattr(backup, 'VACUUM_FREE_BYTES', 0)
+    for i in range(20):
+        await repo.record_event(f'f{i}', va, 'position_open', T0 - i, big, 'sent', T0)
+    await repo.db.execute("DELETE FROM events WHERE dedupe_key = 'f0'")
+    await repo.db.commit()
+    status = {}
+    await backup.startup_maintenance(repo, T0, status)
+    assert status['vacuum'].startswith('done (')
+    # /health shows the freelist and the vacuum outcome
+    monkeypatch.setattr(Config, 'ADMIN_USER_IDS', frozenset({1}))
+    update = make_update(1)
+    await commands.health_command(update, make_context({'repo': repo, 'hl': FakeHLClient(), 'maintenance': status}))
+    text = update.message.replies[0]['text']
+    check_telegram_html(text)
+    assert 'freelist' in text and 'vacuum done (0 MB freed)' in text

@@ -182,35 +182,45 @@ async def test_full_close_is_never_filtered_by_the_notional_floor(repo, clock, m
 
 def test_risex_positions_use_mark_price_for_notional_and_unrealized_pnl():
     """D-3: notional = |size| x mark, uPnL = size x (mark - entry), entry rounded to step_price,
-    leverage and unsettled funding carried. ZEC numbers chosen so that uPnL = +3,248 at mark 1333.145
-    (the dipper3 recording is not in the repo yet; see the PR)."""
-    markets = {'8': {'name': 'ZEC/USDC', 'mark_price': '1333.145', 'step_price': '0.01', 'step_size': '0.001'}}
-    rows = [{'account': W, 'market_id': '8', 'size': '100', 'side': 'BUY', 'avg_entry_price': '1300.66512345',
-             'leverage': '10', 'quote_amount': '-130066.5', 'isolated_usdc_balance': '0', 'unsettled_funding': '-12.5'}]
-    positions = risex.parse_ws_positions(rows, markets)
+    leverage and unsettled funding carried. Real dipper3 recording (2026-10-05 03:20Z): 150 ZEC long
+    at 1311.4946 and 5M PUMP long at 0.006268; mark uses the markets fixture value (ZEC 1340.258925),
+    so ZEC uPnL = +$4,315."""
+    data = load_fixture('risex_markets_dipper3.json')['data']['markets']
+    markets = {str(m['market_id']): {'name': m['config']['name'], 'mark_price': m['mark_price'],
+                                     'step_price': m['config']['step_price'], 'step_size': m['config']['step_size']}
+               for m in data}
+    rest_rows = load_fixture('risex_positions_dipper3.json')['data']['positions']
+    positions = risex.parse_rest_positions({'positions': rest_rows}, markets)
+    assert set(positions) == {'ZEC', 'PUMP'}
     zec = positions['ZEC']
-    assert Decimal(zec['position_value']) == Decimal('133314.5')
-    assert abs(Decimal(zec['unrealized_pnl']) - Decimal('3248')) < 1              # 100 x (1333.145 - 1300.66512345)
-    assert zec['entry_px'] == '1300.67' and zec['leverage'] == '10' and zec['unsettled_funding'] == '-12.5'
+    assert Decimal(zec['szi']) == 150
+    assert Decimal(zec['position_value']) == Decimal(150) * Decimal('1340.258925173239075868')     # 201,038.84
+    assert abs(Decimal(zec['unrealized_pnl']) - Decimal('4315')) < 1      # 150 x (1340.258925 - 1311.494614)
+    assert zec['entry_px'] == '1311.49' and zec['leverage'] == '10'
+    assert Decimal(zec['unsettled_funding']) == Decimal('87.79075841250791025')
+    assert Decimal(zec['funding_pnl']) == Decimal('-87.79075841250791025')      # a long pays funding
+    pump = positions['PUMP']
+    assert Decimal(pump['szi']) == 5_000_000 and pump['entry_px'] == '0.006268'
+    assert abs(Decimal(pump['unrealized_pnl']) - Decimal('520')) < 1       # 5M x (0.006372 - 0.006268)
     # a short: PnL sign follows the signed size
-    short = risex.parse_ws_positions([{**rows[0], 'size': '-100', 'side': 'SELL'}], markets)['ZEC']
-    assert abs(Decimal(short['unrealized_pnl']) + Decimal('3248')) < 1
-    # the same through the 18-dec REST path
-    rest = risex.parse_rest_positions({'positions': [{**rows[0], 'size': str(100 * 10**18),
-                                                      'avg_entry_price': str(int(Decimal('1300.66512345') * 10**18)),
-                                                      'leverage': str(10 * 10**18), 'unsettled_funding': str(-125 * 10**17)}]},
-                                      markets)['ZEC']
-    assert rest['unrealized_pnl'] == zec['unrealized_pnl'] and rest['leverage'] == '10'
+    short = risex.parse_rest_positions({'positions': [{**rest_rows[0], 'size': '-' + rest_rows[0]['size'], 'side': 'SELL'}]},
+                                       markets)['ZEC']
+    assert abs(Decimal(short['unrealized_pnl']) + Decimal('4315')) < 1
+    assert Decimal(short['funding_pnl']) == Decimal('87.79075841250791025')     # a short receives it [?]
+    # the same numbers through the human-unit WS path
+    ws = risex.parse_ws_positions([{**rest_rows[0], 'size': '150', 'avg_entry_price': '1311.494614892857142853',
+                                    'leverage': '10', 'unsettled_funding': '87.79075841250791025'}], markets)['ZEC']
+    assert ws['unrealized_pnl'] == zec['unrealized_pnl'] and ws['position_value'] == zec['position_value']
     # rendering: leverage and funding on the line
     from hypermate.core.formatter import format_positions
     from hypermate.venues.base import AccountSnapshot, as_clearinghouse_state
-    state = as_clearinghouse_state(AccountSnapshot(positions, Decimal(5000)))
+    state = as_clearinghouse_state(AccountSnapshot(positions, Decimal(50000)))
     text = format_positions('w', W, None, {}, Decimal(10), [('RISEx', state)])
     check_telegram_html(text)
-    assert 'Entry: $1,300.67' in text and '🟢 $3,247.99' in text and '· 10x' in text and 'unsettled funding -$12.5' in text
+    assert 'Entry: $1,311.49' in text and 'Size: $201,039' in text and '🟢 $4,314.65' in text and '· 10x' in text and '· funding -$87.79' in text
     # no mark price: the quote amount stands in and PnL is unknown
-    nomark = risex.parse_ws_positions(rows, {'8': {'name': 'ZEC/USDC'}})['ZEC']
-    assert Decimal(nomark['position_value']) == Decimal('130066.5') and nomark['unrealized_pnl'] == 'N/A'
+    nomark = risex.parse_rest_positions({'positions': rest_rows[:1]}, {'8': {'name': 'ZEC/USDC'}})['ZEC']
+    assert Decimal(nomark['position_value']) == Decimal('195730.439897416756007236') and nomark['unrealized_pnl'] == 'N/A'
 
 
 async def test_fills_after_an_algo_end_wait_for_re_detection(repo, clock):

@@ -80,7 +80,11 @@ def _positions(rows, markets):
         positions[coin] = position_entry(coin, size, shown_entry, value, upnl)
         positions[coin]['leverage'] = str(convert(row.get('leverage')) or '')
         positions[coin]['isolated_balance'] = str(convert(row.get('isolated_usdc_balance')) or ZERO)
-        positions[coin]['unsettled_funding'] = str(convert(row.get('unsettled_funding')) or ZERO)
+        unsettled = abs(convert(row.get('unsettled_funding')) or ZERO)
+        positions[coin]['unsettled_funding'] = str(unsettled)
+        # RISEx reports |size| x (funding index delta) with no direction: a long pays it, a short receives
+        # it (short side unverified, see API_NOTES [?])
+        positions[coin]['funding_pnl'] = str(-unsettled if size > 0 else unsettled)
     return positions
 
 

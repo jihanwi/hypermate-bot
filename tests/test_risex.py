@@ -384,3 +384,19 @@ async def test_cached_position_missing_from_rest_is_treated_as_closed():
     clock['now'] += 301
     snap = await ad.snapshot(account)                      # reconciled again: ETH closed
     assert set(snap.positions) == {'BTC'}
+
+
+def test_ws_size_zero_rows_leave_the_positions_cache():
+    """fix/vacuum-freelist (2): a size-0 row (a close) in the snapshot or an update must not stay cached,
+    otherwise the REST reconcile later reports it as '17 cached positions gone'."""
+    stream = RisexStream('wss://unused', connect=None)
+    stream.addresses = {ADDR}
+    stream.connected = True
+    snapshot = load_fixture('risex_ws_positions.json')[0]
+    row = snapshot['data'][0]
+    closed = {**row, 'market_id': '5', 'size': '0', 'quote_amount': '0'}
+    stream.handle({**snapshot, 'data': [row, closed]})
+    assert [r['market_id'] for r in stream.positions_for(ADDR)] == ['1']
+    stream.handle({'channel': 'positions', 'type': 'update', 'data': [{**row, 'size': '0'}]})
+    assert stream.positions_for(ADDR) == []
+    assert stream.reconcile(ADDR, set()) == []

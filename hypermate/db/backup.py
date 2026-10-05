@@ -61,6 +61,14 @@ async def retention(repo: Repo, now_ms: int, days: int = Config.EVENTS_RETENTION
 
 
 MAINTENANCE_RETRY_SEC = 5
+VACUUM_FREE_PERCENT = 30            # VACUUM when free pages exceed this share of the file ...
+VACUUM_FREE_BYTES = 10 * 1_048_576  # ... or this many bytes, whichever comes first
+MAINTENANCE_KEYS = ('pruned', 'slimmed', 'cleaned', 'freelist', 'vacuum', 'checkpoint')
+
+
+def maintenance_summary(status: dict) -> str:
+    """'pruned 0, freelist 1 MB (2% of 50 MB), vacuum skipped, checkpoint 12 pages' for the log and /health."""
+    return ", ".join(f"{k} {status[k]}" for k in MAINTENANCE_KEYS if k in status)
 
 
 async def _maintenance_steps(repo: Repo, now_ms: int, status: dict) -> None:
@@ -73,10 +81,15 @@ async def _maintenance_steps(repo: Repo, now_ms: int, status: dict) -> None:
         seen, changed = await repo.slim_payloads()
         status['slimmed'] = f"{changed}/{seen}"
         status['cleaned'] = await repo.delete_suppressed_rows()     # fix/multi-algo-summary: old suppressed fill rows
-        if status['pruned'] or status['cleaned'] or not status['slimmed'].startswith('0/'):
-            # space of the deleted or rewritten rows is only reclaimed by VACUUM (deploy 2026-10-05: 191 MB
-            # file for 411 rows); it runs here, before the poller starts, with the volume's 2x headroom
-            status['vacuum'] = f"{await repo.vacuum() // 1_048_576} MB freed"
+    # Free pages are only reclaimed by VACUUM. The decision looks at the freelist on every boot, not at
+    # what this run deleted: v12 skipped it on a 200 MB file whose rows were gone before the restart.
+    free_bytes, file_bytes, free_pct = await repo.free_space()
+    status['freelist'] = f"{free_bytes // 1_048_576} MB ({free_pct}% of {file_bytes // 1_048_576} MB)"
+    if free_pct > VACUUM_FREE_PERCENT or free_bytes > VACUUM_FREE_BYTES:
+        # runs before the poller starts, with the volume's 2x headroom
+        status['vacuum'] = f"done ({await repo.vacuum() // 1_048_576} MB freed)"
+    else:
+        status['vacuum'] = 'skipped'
     # the checkpoint is cheap and runs on every attempt (a retry after a failed checkpoint still does it)
     busy, _, pages = await repo.checkpoint()
     status['checkpoint'] = 'busy' if busy else f"{pages} pages"
@@ -94,12 +107,15 @@ async def startup_maintenance(repo: Repo, now_ms: int, status: Optional[dict] = 
         try:
             await _maintenance_steps(repo, now_ms, status)
             status.update({'state': 'ok', 'finished_ms': int(time.time() * 1000), 'error': None})
-            return status
+            break
         except Exception as e:
             status.update({'state': 'failed', 'error': str(e), 'finished_ms': int(time.time() * 1000)})
             logger.error(f"Startup maintenance attempt {attempt} failed: {e}")
             if attempt == 1:
                 await asyncio.sleep(MAINTENANCE_RETRY_SEC)
+    # one line on every boot, whatever happened (v12 left no trace of a skipped VACUUM)
+    logger.info(f"Maintenance: {status['state']} (attempt {status['attempts']}, {maintenance_summary(status)}"
+                + (f", error: {status['error']}" if status.get('error') else "") + ")")
     return status
 
 

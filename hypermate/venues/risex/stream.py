@@ -12,7 +12,10 @@ PM live check 2026-10-04: connect, subscribe and snapshot receipt worked (fixtur
 from decimal import Decimal
 from typing import Optional
 
+from hypermate.core.numbers import to_decimal
 from hypermate.venues.stream import ReconnectingStream
+
+ZERO = Decimal(0)
 
 
 class RisexStream(ReconnectingStream):
@@ -123,7 +126,12 @@ class RisexStream(ReconnectingStream):
                     address = str(row.get('account', '')).lower()
                     if address not in self.addresses:
                         continue
-                    self._positions.setdefault(address, {})[str(row.get('market_id'))] = row
+                    cached = self._positions.setdefault(address, {})
+                    market_id = str(row.get('market_id'))
+                    if (to_decimal(row.get('size')) or ZERO) == 0:
+                        cached.pop(market_id, None)        # a close: never cached, so reconcile has nothing to drop
+                    else:
+                        cached[market_id] = row
                     self._snapshot_seen.add(address)
                 return
             if kind == 'subscribed':

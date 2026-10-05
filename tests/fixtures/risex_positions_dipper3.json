@@ -1,0 +1,43 @@
+{
+    "data": {
+        "positions": [
+            {
+                "account": "0x090Aa391A1D9c9Dfa72B175FEb8B7DB52c2d6c57",
+                "market_id": "8",
+                "block_number": "0",
+                "log_index": "0",
+                "worker_timestamp": "0",
+                "size": "150000000000000000000",
+                "quote_amount": "-195730439897416756007236",
+                "margin_mode": 0,
+                "side": "BUY",
+                "isolated_usdc_balance": "0",
+                "last_funding_payment": "33414287892201929707",
+                "leverage": "10000000000000000000",
+                "avg_entry_price": "1311494614892857142853",
+                "unsettled_funding": "87790758412507910250"
+            },
+            {
+                "account": "0x090Aa391A1D9c9Dfa72B175FEb8B7DB52c2d6c57",
+                "market_id": "23",
+                "block_number": "0",
+                "log_index": "0",
+                "worker_timestamp": "0",
+                "size": "5000000000000000000000000",
+                "quote_amount": "-31347835000000000000000",
+                "margin_mode": 0,
+                "side": "BUY",
+                "isolated_usdc_balance": "0",
+                "last_funding_payment": "211672474517176",
+                "leverage": "10000000000000000000",
+                "avg_entry_price": "6268000000000000",
+                "unsettled_funding": "6779631048805000000"
+            }
+        ],
+        "total_count": 2,
+        "page": 1,
+        "page_size": 100,
+        "has_next_page": false
+    },
+    "request_id": "e77405f8-6dbc-4c0a-8d84-419c6703ea35"
+}
