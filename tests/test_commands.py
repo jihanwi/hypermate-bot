@@ -103,7 +103,7 @@ async def test_add_scans_hip3_dexs_and_positions_show_them(repo):
                                                  account_value='1500')
     hl.clearinghouse[A] = clearinghouse(position('BTC', '1', position_value='61000'), account_value='2000')
     out = await call(commands.add_wallet, repo, hl, 5, A, 'w')
-    assert out[0] == '✅ Wallet added as <b>w</b> · HL ✅ (xyz)'
+    assert out[0] == '✅ Wallet added as <b>w</b> · HL ✅ · dex: xyz'
     va = await repo.hl_account_id(A)
     assert await repo.get_dexs(va) == ['xyz'] and await repo.get_cursor(va, 'dex_scan') is not None
     view = (await call(commands.positions_command, repo, hl, 5, 'w'))[0]

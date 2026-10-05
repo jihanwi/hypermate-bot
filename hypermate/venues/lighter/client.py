@@ -29,6 +29,13 @@ class LighterRateLimited(LighterAPIError):
     """HTTP 429."""
 
 
+class LighterNotFound(LighterAPIError):
+    """HTTP 400 with body code 21100 "account not found" (PM live check 2026-10-05): no account, not an error."""
+
+
+NOT_FOUND_CODE = 21100
+
+
 class LighterClient:
     def __init__(self, base_url: str, budget: Optional[WeightBudget] = None, order_books_ttl_sec: int = 3600) -> None:
         self.base_url = base_url.rstrip('/')
@@ -67,7 +74,10 @@ class LighterClient:
             status, body = await self._fetch(path, params)
         except aiohttp.ClientError as e:
             raise LighterAPIError(f"GET {path} failed: {e}") from e
-        # Lighter's 429 carries a non-JSON body and no headers; any non-200 or unparsable answer is
+        # An unknown address answers HTTP 400 with {"code": 21100, "message": "account not found"}
+        if isinstance(body, dict) and body.get('code') == NOT_FOUND_CODE:
+            raise LighterNotFound(f"GET {path}: {body.get('message', 'account not found')}")
+        # Lighter's 429 carries a non-JSON body and no headers; any other non-200 or unparsable answer is
         # treated as rate limiting (owner decision 2026-10-04) and pauses the venue bucket.
         if status != 200 or body is None:
             if self.budget is not None:
@@ -81,12 +91,9 @@ class LighterClient:
         """sub_accounts of an L1 address ([] when the address has no Lighter account)."""
         try:
             body = await self._get('/accountsByL1Address', {'l1_address': l1_address}, priority)
-        except LighterAPIError as e:
-            # the API answers an error code for unknown addresses; that is "no account", not a failure
-            if 'code' in str(e):
-                logger.info(f"Lighter: no account for {l1_address}: {e}")
-                return []
-            raise
+        except LighterNotFound as e:
+            logger.info(f"Lighter: no account for {l1_address}: {e}")
+            return []                      # "✗" in the /add summary; any other failure stays an error ("?")
         return list((body or {}).get('sub_accounts') or [])
 
     async def account(self, index: int, priority: int = 0) -> Optional[dict]:

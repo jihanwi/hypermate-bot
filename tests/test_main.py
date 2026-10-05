@@ -39,8 +39,7 @@ async def test_post_init_registers_menu_and_creates_db(tmp_path, monkeypatch):
         assert all(len(c.description) <= 256 for c in commands_arg)
         assert isinstance(set_my_commands.await_args.kwargs['scope'], BotCommandScopeAllPrivateChats)
         assert (tmp_path / 'new_dir' / 'hypermate.db').exists()
-        task = app.bot_data['maintenance_task']
-        await task                                   # background slimming finished without error
+        assert app.bot_data['maintenance']['state'] == 'ok'      # ran before the jobs, nothing pending
         assert not await app.bot_data['repo'].payloads_need_slimming()
     finally:
         await hm_main.post_shutdown(app)

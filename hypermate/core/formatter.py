@@ -103,12 +103,21 @@ def format_transfer_message(transfer: dict, wallet_address: str, alias: str) -> 
 
 
 def _funding_text(position: dict) -> str:
-    """HL cumFunding.sinceOpen is positive when the position paid funding."""
+    """HL cumFunding.sinceOpen is positive when the position paid funding. Other venues (RISEx) carry
+    unsettledFunding as given by the venue (sign as reported [?])."""
     funding = to_decimal((position.get('cumFunding') or {}).get('sinceOpen'))
-    if not funding:
-        return ""
-    received = -funding
-    return f" · funding {'+' if received >= 0 else '-'}{compact_usd(abs(received))}"
+    if funding:
+        received = -funding
+        return f" · funding {'+' if received >= 0 else '-'}{compact_usd(abs(received))}"
+    unsettled = to_decimal(position.get('unsettledFunding'))
+    if unsettled:
+        return f" · unsettled funding {'+' if unsettled >= 0 else '-'}{compact_usd(abs(unsettled))}"
+    return ""
+
+
+def _leverage_text(position: dict) -> str:
+    value = to_decimal((position.get('leverage') or {}).get('value'))
+    return f" · {_sig(value, 3)}x" if value else ""
 
 
 def _futures_lines(perp_state: dict, dust_usd: Decimal = ZERO) -> list[str]:
@@ -135,7 +144,7 @@ def _futures_lines(perp_state: dict, dust_usd: Decimal = ZERO) -> list[str]:
         pnl_str = f"{'🟢' if upnl >= 0 else '🔴'} {usd(upnl)}" if upnl is not None else "N/A"
         lines.append(
             f"- {side_emoji} <b>{side}</b> ${h(base_coin(position.get('coin', 'Unknown')))} — Size: {size_str} "
-            f"— Entry: {entry_str} — PnL: {pnl_str}{_funding_text(position)}\n")
+            f"— Entry: {entry_str} — PnL: {pnl_str}{_leverage_text(position)}{_funding_text(position)}\n")
     if dust:
         lines.append(f"- + {dust} dust position{'s' if dust > 1 else ''} (under {usd(dust_usd, 0)})\n")
     return lines
@@ -267,10 +276,11 @@ def account_value(perp_state: dict) -> Optional[Decimal]:
     return to_decimal(perp_state.get('marginSummary', {}).get('accountValue'))
 
 
-def format_list_line(alias: str, address: str, value: Optional[Decimal]) -> str:
-    """/list row. value None means unknown (not polled yet and the API call failed)."""
+def format_list_line(alias: str, address: str, value: Optional[Decimal], venues_active: Optional[list] = None) -> str:
+    """/list row with the badges of the venues the wallet is active on. value None means unknown."""
     value_str = usd(value) if value is not None else "n/a"
-    return f"• {alias_link(address, alias)}: {h(address)} · {value_str}"
+    badges = " ".join(badge(v) for v in venues_active or [])
+    return f"• {alias_link(address, alias)}: {h(address)} · {value_str}" + (f" · {badges}" if badges else "")
 
 
 def format_positions_summary_line(alias: str, address: str, perp_state: Optional[dict]) -> str:
@@ -557,7 +567,7 @@ def format_algo_end(wallet_address: str, alias: str, state: dict, verb: str, sid
 
 _DELIVERY_NOTES = {
     'summarized': 'summary mode', 'filtered_settings': 'off in settings',
-    'filtered_threshold': 'below threshold', 'muted': 'muted',
+    'filtered_threshold': 'below threshold', 'muted': 'muted', 'rearm_buffer': 'waiting for algo re-detection',
 }
 
 
@@ -642,6 +652,17 @@ def format_health(report: dict, now_ms: int) -> str:
         by_type = ", ".join(f"{t} {n}" for t, n in stats.get('events_24h', [])[:5]) or "none"
         db_line += (f"\nEvents: {stats.get('events_total', 0)} rows · last 24h: {by_type} · "
                     f"sent_messages {stats.get('sent_messages', 0)}")
+    maintenance = report.get('maintenance') or {}
+    if maintenance.get('state'):
+        when = maintenance.get('finished_ms') or maintenance.get('started_ms') or now_ms
+        details = [f"{k} {maintenance[k]}" for k in ('pruned', 'slimmed', 'cleaned', 'checkpoint') if k in maintenance]
+        if maintenance.get('state') == 'failed':
+            details.append(f"error: {h(str(maintenance.get('error')))}")
+        maintenance_line = (f"Maintenance: {maintenance['state']} {humanize_ms(max(0, now_ms - int(when)))} ago"
+                            f" (attempt {maintenance.get('attempts', 1)}"
+                            + (", " + ", ".join(details) if details else "") + ")")
+    else:
+        maintenance_line = "Maintenance: not run"
     venue_lines = []
     for venue, info in sorted((report.get('venues') or {}).items()):
         last = info.get('last_poll_ms')
@@ -668,7 +689,8 @@ def format_health(report: dict, now_ms: int) -> str:
         f"HL weight (1h): {weight_line}\n"
         f"Active TWAPs: {report.get('twaps', 0)} · algos: {report.get('algos', 0)}\n"
         f"DB: {db_line}\n"
-        f"Uptime: {humanize_ms(int(report.get('uptime_ms', 0)))}"
+        f"Uptime: {humanize_ms(int(report.get('uptime_ms', 0)))}\n"
+        f"{maintenance_line}"
         + (("\nVenues:\n" + "\n".join(venue_lines)) if venue_lines else "")
         + (("\nalgo_active:\n" + "\n".join(algo_lines)) if algo_lines else "")
     )
@@ -700,7 +722,7 @@ def _evidence_text(link: dict, now_ms: int) -> str:
         parts.append('both ways' if both else ('in' if int(e.get('in', 0)) else 'out'))
         usd = to_decimal(e.get('usd'))
         if usd:
-            parts.append(compact_usd(usd))
+            parts.append(f"vol {compact_usd(usd)}")
         if e.get('last_ms'):
             parts.append(f"last {kst_time(int(e['last_ms']), now_ms)}")
         if e.get('background') and not e.get('discovery'):
@@ -751,7 +773,7 @@ def format_related(alias: str, address: str, links: list[dict], now_ms: int, wei
         evidence = "; ".join(_evidence_text(r, now_ms) for r in rows)
         value = next((to_decimal((r.get('evidence') or {}).get('account_value')) for r in rows
                       if (r.get('evidence') or {}).get('account_value') is not None), None)
-        value_text = f" · {compact_usd(value)}" if value is not None else ""
+        value_text = f" · acct {compact_usd(value)}" if value is not None else ""
         sections.setdefault(best, []).append(
             f"{n}. <a href=\"{h(hl_address_url(other))}\">{h(short_address(other))}</a> · {evidence}{value_text}")
         buttons.append((f"{alias}-{n}", rows[0]['row_id']))

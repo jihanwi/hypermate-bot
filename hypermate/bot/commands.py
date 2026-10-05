@@ -12,11 +12,12 @@ from telegram.ext import ContextTypes
 from hypermate.bot import texts
 from hypermate.config import Config
 from hypermate.core import formatter, poller, related
-from hypermate.core.venues import resolve_summary, resolve_wallet
+from hypermate.core.venues import resolve_summary, resolve_wallet, split_venue_prefix
 from hypermate.venues import base as venues
 from hypermate.venues.base import VenueAccount, as_clearinghouse_state
 from hypermate.core.events import HYPERLIQUID, EventType, dedupe_key
 from hypermate.core.formatter import h
+from hypermate.core import pipeline
 from hypermate.core.pipeline import algo_source
 from hypermate.core.numbers import to_decimal
 from hypermate.db.repo import ADDED, ALIAS_EXISTS, Repo
@@ -74,26 +75,31 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def add_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if len(context.args) < 2 or not is_valid_wallet_address(context.args[0].strip()):
+    """/add 0x... alias, or /add <venue>:0x... alias to pin the address to one venue (spec 6.1)."""
+    venue, raw = split_venue_prefix(context.args[0].strip()) if context.args else (None, '')
+    if len(context.args) < 2 or not is_valid_wallet_address(raw):
         await reply(update, texts.ADD_USAGE)
         return
-    address = context.args[0].strip().lower()
+    address = raw.lower()
     alias = " ".join(context.args[1:]).strip()
     user_id = update.effective_user.id
     try:
-        message = await _add(context, user_id, address, alias)
+        message = await _add(context, user_id, address, alias, venue)
     except Exception as e:
         await reply_internal_error(update, f"add_wallet user={user_id}", e)
         return
     await reply(update, message)
 
 
-async def _add(context: ContextTypes.DEFAULT_TYPE, user_id: int, address: str, alias: str) -> str:
+async def _add(context: ContextTypes.DEFAULT_TYPE, user_id: int, address: str, alias: str,
+               only_venue: Optional[str] = None) -> str:
     """The /add flow (also used by the /related Track button). Returns the reply text."""
-    result = await _repo(context).add_subscription(user_id, address, alias, now_ms())
+    result = await _repo(context).add_subscription(user_id, address, alias, now_ms(),
+                                                   create_hl=only_venue in (None, venues.HYPERLIQUID))
     if result == ADDED:
-        logger.info(f"User {user_id} added wallet {address} as '{alias}'")
-        summary = await _resolve_venues(context, address)
+        logger.info(f"User {user_id} added wallet {address} as '{alias}'" + (f" on {only_venue}" if only_venue else ""))
+        await pipeline.expire_stale_algos(_repo(context), address, now_ms())
+        summary = await _resolve_venues(context, address, only_venue)
         message = texts.WALLET_ADDED.format(alias=h(alias))
         if summary:
             message += texts.WALLET_VENUES.format(venues=h(summary))
@@ -113,8 +119,10 @@ async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not wallets:
         await reply(update, texts.NO_WALLETS)
         return
-    lines = [formatter.format_list_line(alias, address, await _account_value(context, address))
-             for alias, address in wallets]
+    lines = []
+    for alias, address in wallets:
+        active = [r['venue'] for r in await _repo(context).venue_accounts_of(address) if r['active']]
+        lines.append(formatter.format_list_line(alias, address, await _account_value(context, address), active))
     await reply(update, texts.LIST_HEADER + "\n" + "\n".join(lines))
 
 
@@ -222,15 +230,15 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     logger.info(f"User {user_id} checked stats for {address} ({alias})")
 
 
-async def _resolve_venues(context: ContextTypes.DEFAULT_TYPE, address: str) -> str:
+async def _resolve_venues(context: ContextTypes.DEFAULT_TYPE, address: str, only_venue: Optional[str] = None) -> str:
     """Run every adapter's resolve (spec 6.1) and the HL HIP-3 dex scan; returns the summary line.
     Without adapters (HL-only wiring) only the dex scan runs and the summary names the dexs."""
     adapters = _venues(context)
-    dexs = await _scan_dexs(context, address)
+    dexs = await _scan_dexs(context, address) if only_venue in (None, venues.HYPERLIQUID) else []
     if not adapters:
-        return ("HL ✅" + (f" ({', '.join(dexs)})" if dexs else "")) if dexs else ""
+        return ("HL ✅" + (f" · dex: {', '.join(dexs)}" if dexs else "")) if dexs else ""
     try:
-        results = await resolve_wallet(_repo(context), adapters, address, now_ms())
+        results = await resolve_wallet(_repo(context), adapters, address, now_ms(), only_venue=only_venue)
     except Exception as e:
         logger.error(f"resolve failed for {address}: {e}")
         return ""

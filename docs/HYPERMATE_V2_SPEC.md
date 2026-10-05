@@ -448,6 +448,8 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 - 진행: START 메시지를 `algo_progress_sec` (600) 마다 edit (누적 fills, 누적 notional, VWAP, 경과시간). 새 메시지 아님. `sent_messages` 테이블 사용.
 - 운영 (fix/db-retention): `events.payload_json` 은 집계값만 저장 (fills 수, size, notional, VWAP, 첫/마지막 tid). 원본 fills 배열은 저장하지 않는다. events 는 30일 보존, 매일 백업 job 뒤에 prune 과 `PRAGMA wal_checkpoint(TRUNCATE)`. `/health` 에 WAL 크기, events 행 수, `algo_active` 행 목록.
 - 종료: 마지막 fill 이후 `algo_idle_sec` (600) 동안 fill 없음 → `ALGO_END` 1건 (총 size, notional, VWAP, 소요시간) 후 상태 삭제.
+- 재감지 버퍼 (배포 리뷰 2026-10-05): 같은 (계정, coin) 에서 `ALGO_END` 뒤 `ALGO_REARM_SEC` (600) 안에 들어오는 fill 은 즉시 알림 대신 `delivery='rearm_buffer'` 로 기록만 한다. 그 안에 algo 가 재감지되면 START 집계에 흡수되고 행은 `summarized` 로 바뀐다. 재감지가 없으면 창이 닫힐 때 (coin, dir) 별로 합산한 메시지 1건으로 보낸다.
+- 지갑 추가/재추가 (`/add`): 그 주소의 기존 `algo_active` 중 last_fill 이 `ALGO_STALE_SEC` (2h) 보다 오래된 것은 무음 종료 (베이스라인 스냅샷과 같은 원칙: 추적 시작 전 일은 알리지 않는다). 모든 알고가 사라지면 요약 모드 행도 삭제.
 - 반대 방향 체결, 청산, 포지션 완전 종료는 즉시 정상 알림. 상태는 유지.
 - 메시지 형식은 네이티브 TWAP 과 맞추되 라벨은 "TWAP" 대신 "algo".
 - 상태는 `algo_active` 테이블 (3.4, `twap_active` 와 별도). 재시작 후에도 DB 에 있으므로 이어서 추적.
@@ -502,7 +504,8 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 
 ### 6.1 공통
 
-- `/add <evm_address> <alias>` 시 모든 어댑터의 `resolve()` 를 병렬 호출 (`core/venues.resolve_wallet`). 활동 있는 베뉴만 `venue_accounts` 에 `active=1` (없는 베뉴는 행이 없거나 `active=0`). 결과를 유저에게 표시: "✅ Wallet added as cl · HL ✅ (xyz) · Lighter ✅ (2 sub-accounts) · RISEx ✗ · Aster ✗" (구현된 베뉴만 나열). HL 의 활동 판정: 포지션, accountValue > 0, 또는 spot 잔고 (2A). HL 비활성 지갑은 HL 폴링에서 빠지고 일일 재탐색(04:10 KST) 또는 `/rescan` 으로 복귀.
+- `/add <venue>:<evm_address> <alias>` (예: `risex:0x…`) 는 배타적이다: 그 베뉴만 resolve 하고, 어댑터가 활동을 못 찾아도 그 베뉴에 활성 계정을 만들며, HL 계정 행 생성과 dex scan 은 하지 않는다 (크로스 베뉴 자동 매핑이 실패하는 베뉴별 별도 주소용. 응답 "RISEx ✅ (added as given, no activity seen)"). `/list` 는 지갑별 활성 베뉴 뱃지를 보여준다.
+- `/add <evm_address> <alias>` 시 모든 어댑터의 `resolve()` 를 병렬 호출 (`core/venues.resolve_wallet`). 활동 있는 베뉴만 `venue_accounts` 에 `active=1` (없는 베뉴는 행이 없거나 `active=0`). 결과를 유저에게 표시: "✅ Wallet added as cl · HL ✅ · dex: xyz · Lighter ✅ (2 sub-accounts) · RISEx ✗ · Aster ✗" (구현된 베뉴만 나열. `dex: xyz` 는 HIP-3 dex 활동). HL 의 활동 판정: 포지션, accountValue > 0, 또는 spot 잔고 (2A). HL 비활성 지갑은 HL 폴링에서 빠지고 일일 재탐색(04:10 KST) 또는 `/rescan` 으로 복귀.
 - 이미 추적 중인 지갑도 `/rescan <alias>` 로 재탐색. 그리고 매일 1회 비활성 베뉴 재탐색 (새로 쓰기 시작하는 경우).
 - 알림 메시지 머리에 베뉴 뱃지 (섹션 10).
 - 포지션 이벤트는 HL과 동일 `EventType`. 베뉴가 fills를 공개하지 않으면 snapshot diff 로 OPEN/INCREASE/DECREASE/CLOSE/FLIP 생성 (가격은 snapshot의 entry/mark 사용, realized_pnl은 None).
@@ -524,7 +527,7 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 
 - RISE Chain(ETH L2, chain id 4153) 위 온체인 CLOB. Base `https://api.rise.trade`. 무인증 500 req/10초/IP. WS 10 req/s.
 - resolve: `GET /v1/positions?account=0x...` 가 200 이고 positions 가 비어있지 않거나, `GET /v1/trade-history?account=&limit=1` 에 trades 가 있으면 활성 (PM 라이브 확인 2026-10-04). 계정 없으면 `/v1/account/cross-margin-balance` 가 500 을 주므로 그 호출은 활성 판정에 쓰지 않는다 (잔고 None 처리).
-- snapshot: `GET /v1/positions?account=&page=&page_size=` → `data.positions[]`: `account, market_id, size (18-dec, 부호 포함), quote_amount, side (BUY|SELL), margin_mode, isolated_usdc_balance, leverage, avg_entry_price, last_funding_payment, unsettled_funding` [V 2026-10-04]. 모든 숫자가 18-decimal 고정소수점 문자열 → `Decimal(x) / 10**18`. 계정 가치: `GET /v1/account/cross-margin-balance?account=` 의 `data.balance` (사람 단위) + isolated 잔고 합. 포지션 키는 마켓 이름의 base (`BTC/USDC` → `BTC`).
+- snapshot: `GET /v1/positions?account=&page=&page_size=` → `data.positions[]`: `account, market_id, size (18-dec, 부호 포함), quote_amount, side (BUY|SELL), margin_mode, isolated_usdc_balance, leverage, avg_entry_price, last_funding_payment, unsettled_funding` [V 2026-10-04]. 모든 숫자가 18-decimal 고정소수점 문자열 → `Decimal(x) / 10**18`. 계정 가치: `GET /v1/account/cross-margin-balance?account=` 의 `data.balance` (사람 단위) + isolated 잔고 합. 포지션 키는 마켓 이름의 base (`BTC/USDC` → `BTC`). D-3 (2026-10-05): notional = |size| × `markets[].mark_price`, uPnL = size × (mark − avg_entry) (부호 있는 size 가 방향을 정함), `/v1/markets` 캐시 30초, 표시 entry 는 `config.step_price` 자리수, leverage 와 unsettled_funding 표시.
 - events: `GET /v1/trade-history?account=&limit=&market_id=` → `data.trades[]`: `id, market_id, order_id, side, price, size, fee, liquidity_indicator (TAKER|MAKER), time (나노초 문자열), is_liquidation, realized_pnl, position_side` [V]. **사람 단위** (18-dec 아님, 혼재 주의). ns → ms 변환, `order_id` 가 oid, `is_liquidation` → `LIQUIDATION`, `realized_pnl` 이 closedPnl. startPosition 이 없으므로 직전 snapshot 의 포지션에서 시작해 배치 안의 fills 를 순서대로 누적해 OPEN/INCREASE/DECREASE/CLOSE/FLIP 판정 (2B 구현 결정). cursors.kind `trades` 에는 `{"id": 마지막 trade id, "ms": 시각}` JSON; JSON 이 아닌 커서(신규 계정의 ms 초기값)는 베이스라인.
 - WS `wss://api.rise.trade/ws/`: `{"method":"subscribe","params":{"channel":"positions","makers":[addr,...],"market_ids":[...]}}` 로 **임의 주소 리스트 무인증 구독** [V PM 라이브 2026-10-04: 연결, 구독, 스냅샷 수신 성공]. 응답 순서: `{type: snapshot, method: snapshot, channel: positions, data: [{account, market_id, side, size (사람 단위!), avg_entry_price, leverage, quote_amount, ...}], position_count}` → `{type: subscribed, ...}` → `{type: update, ...}`. WS 의 size/price 는 사람 단위, REST `/v1/positions` 는 18-dec: 두 포맷 모두 파싱. `market_ids` 는 `/v1/markets` 전체 id. `trades` 채널 `{channel: trades, market_ids: [...]}` 의 update 는 `data.maker` / `data.taker` 주소와 `maker_side` (0 = maker 매수) 를 포함하므로 추적 주소 필터로 fills 실시간 수신. 구현 (2B): 한 커넥션에 추적 주소 전부를 makers 로, 주소 추가 시 positions 구독 재전송; 끊기면 REST fallback, 복구 시 재구독 (Lighter 와 같은 `venues/stream.py` 루프).
 - market_id → 심볼 매핑: `GET /v1/markets` → `data.markets[] {market_id, config: {name: "BTC/USDC", step_size, step_price, max_leverage, ...}, display_name, mark_price, ...}` [V], 1시간 캐시.
@@ -712,7 +715,7 @@ Arbitrum 브릿지 (선택, `ARBISCAN_API_KEY` 있을 때만): 레거시 브릿�
 }
 ```
 
-`min_notional_usd` 는 포지션/spot 이벤트의 `notional_usd` 가 그 미만이면 알림 skip (events에는 기록). 버튼으로 0 / 1k / 10k / 100k 선택. 전역 기본값 변경은 `/settings default`.
+`min_notional_usd` 는 포지션/spot 이벤트의 `notional_usd` 가 그 미만이면 알림 skip (events 에는 `delivery='filtered_threshold'` 로 기록, `/recent` 에 흐리게 표시, algo 감지 집계에는 포함, 청산과 전량 종료 `POSITION_CLOSE` 는 예외, 부분 감소는 필터). 버튼으로 0 / 1k / 10k / 100k 선택. 전역 기본값 변경은 `/settings default`. 선행 구현 (2026-10-05): 전역 기본값 `MIN_NOTIONAL_USD` 환경변수, 기본 $1,000. 유저별 UI 는 미구현.
 
 ### 9.5 `/mute <alias> [duration]`
 

@@ -34,6 +34,10 @@ class Config:
     POLL_LEDGER_MAX_SEC: int = 600
     HL_WEIGHT_BUDGET: int = int(os.getenv("HL_WEIGHT_BUDGET", "1020"))   # 1200/min with a 15% margin
     DORMANT_AFTER_MS: int = 7 * 24 * 3600 * 1000     # no activity for 7 days -> polled every 3rd cycle
+    # Alert hygiene (deploy review 2026-10-05)
+    MIN_NOTIONAL_USD: int = int(os.getenv("MIN_NOTIONAL_USD", "1000"))   # spec 9.4 min_notional, global for now
+    ALGO_STALE_SEC: int = 2 * 3600       # on /add, algos idle longer than this end silently
+    ALGO_REARM_SEC: int = 600            # after an ALGO_END, fills on that coin wait for re-detection this long
     ADMIN_USER_IDS: frozenset = frozenset(
         int(x) for x in os.getenv("ADMIN_USER_IDS", "").replace(",", " ").split() if x.strip().isdigit())
 

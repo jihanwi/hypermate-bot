@@ -289,6 +289,7 @@ def health_report(context: ContextTypes.DEFAULT_TYPE, counts: dict, db_path: str
         'algo_rows': algos or [],
         'summary_modes': summary_modes or {},
         'venues': venues_info or {},
+        'maintenance': dict(context.bot_data.get('maintenance') or {}),
         'uptime_ms': adapter.now_ms() - state.started_ms,
         'started_ms': state.started_ms,
     }

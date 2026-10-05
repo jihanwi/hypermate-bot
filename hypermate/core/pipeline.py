@@ -362,7 +362,8 @@ async def process_fills(bot: Bot, repo: Repo, client: HyperliquidClient, key: in
     for k, batch in batches.items():
         recorded = [dict(e['payload'], _event_id=e['event_id'], _delivery=e['delivery'])
                     for e in await repo.events_since(key, window_since, list(aggregator.ALGO_TYPES))
-                    if aggregator.algo_key(e['payload']) == k and e['delivery'] == events.SENT]
+                    if aggregator.algo_key(e['payload']) == k
+                    and e['delivery'] in (events.SENT, events.FILTERED_THRESHOLD, events.REARM_BUFFER)]
         orders = sorted(recorded + batch, key=lambda o: int(o['ts_ms']))
         if aggregator.should_start_algo(orders, st):
             to_start[k] = orders
@@ -397,12 +398,79 @@ async def process_fills(bot: Bot, repo: Repo, client: HyperliquidClient, key: in
                 await _liquidation_already_alerted(repo, key, [event.coin], event.ts_ms):
             logger.info(f"Liquidation {event.coin} already alerted from the ledger, skipping")
             continue
-        event_id = await repo.record_event(event.dedupe_key, key, p['type'], event.ts_ms, p, events.SENT,
+        delivery = events.SENT
+        if (event.type not in (EventType.LIQUIDATION, EventType.POSITION_CLOSE)
+                and (event.notional_usd or Decimal(0)) < Decimal(Config.MIN_NOTIONAL_USD)):
+            delivery = events.FILTERED_THRESHOLD          # spec 9.4 min_notional; closes and liquidations exempt
+        elif k is not None and await _recently_ended(repo, key, p['coin'], poll_ms):
+            delivery = events.REARM_BUFFER                # ALGO_END just happened: wait for re-detection
+        event_id = await repo.record_event(event.dedupe_key, key, p['type'], event.ts_ms, p, delivery,
                                            adapter.now_ms())
         if event_id is None:
             logger.info(f"Duplicate event {event.dedupe_key}, not sent")
             continue
+        if delivery != events.SENT:
+            logger.info(f"Event {event.dedupe_key} recorded as {delivery}, not sent")
+            continue
         await _send_fill_event(bot, repo, key, address, event_id, p)
+
+
+async def _recently_ended(repo: Repo, key: int, coin: str, now: int) -> bool:
+    ended = await repo.last_event_ts(key, EventType.ALGO_END.value, coin)
+    return ended is not None and now - ended < Config.ALGO_REARM_SEC * 1000
+
+
+async def expire_stale_algos(repo: Repo, address: str, now: int) -> int:
+    """On /add or re-add: algos of the wallet whose last fill is older than ALGO_STALE_SEC end silently
+    (the same rule as the baseline snapshot: nothing from before tracking began is alerted)."""
+    removed = 0
+    for row in await repo.venue_accounts_of(address):
+        key = row['key']
+        for (coin, sign), state in (await repo.active_algos(key)).items():
+            if now - int(state['last_fill_ms']) >= Config.ALGO_STALE_SEC * 1000:
+                await repo.delete_algo(key, coin, sign)
+                removed += 1
+        if removed and not await repo.active_algos(key) and await repo.multi_algo_mode(key) is not None:
+            await repo.exit_multi_algo_mode(key)
+    if removed:
+        logger.info(f"{address}: {removed} stale algos ended silently on add")
+    return removed
+
+
+async def flush_rearm_buffer(bot: Bot, repo: Repo, key: int, address: str, now: int) -> None:
+    """Buffered fills whose re-arm window passed: absorbed (marked summarized) when an algo for the coin
+    is active again, otherwise sent as one summed message per (coin, dir)."""
+    since = now - 2 * Config.ALGO_REARM_SEC * 1000
+    buffered = [e for e in await repo.events_since(key, since - 24 * 3600 * 1000)
+                if e['delivery'] == events.REARM_BUFFER]
+    if not buffered:
+        return
+    algos = await repo.active_algos(key)
+    groups: dict[tuple, list[dict]] = {}
+    for e in buffered:
+        coin = e['payload'].get('coin')
+        if await _recently_ended(repo, key, coin, now):
+            continue                                   # window still open
+        groups.setdefault(aggregator.debounce_key(e['payload']), []).append(e)
+    for group_key, rows in groups.items():
+        coin = rows[0]['payload'].get('coin')
+        if any(k[0] == coin for k in algos):
+            for e in rows:
+                await repo.update_event_delivery(e['event_id'], events.SUMMARIZED)
+            continue
+        chain = aggregator.start_chain(rows[0]['payload'])
+        for e in rows[1:]:
+            chain = aggregator.merge_into_chain(chain, e['payload'])
+        base_id = rows[0]['event_id']
+        await repo.update_event_payload(base_id, {**rows[0]['payload'], 'chain': chain})
+        await repo.update_event_delivery(base_id, events.SENT)
+        for e in rows[1:]:
+            await repo.update_event_payload(e['event_id'], {**e['payload'], 'chain_base': base_id})
+            await repo.update_event_delivery(e['event_id'], events.SENT)
+        held = await _held_ms(repo, key, {**rows[0]['payload'], 'type': chain['type']})
+        logger.info(f"Re-arm window closed for {coin} on {address}: {len(rows)} fills sent as one message")
+        await deliver(bot, repo, key, lambda alias, c=chain, hm=held: format_fill_message(address, alias, c, hm, venue_of(key)),
+                      base_id)
 
 
 def _big_order(payload: dict, st: dict) -> bool:
@@ -422,6 +490,7 @@ async def maintain_algos(bot: Bot, repo: Repo, key: int, address: str, now: int)
     In summary mode START/END are recorded as 'summarized' and the summary message is edited instead."""
     st = settings()
     summary = await repo.multi_algo_mode(key)
+    await flush_rearm_buffer(bot, repo, key, address, now)
     for (coin, sign), state in (await repo.active_algos(key)).items():
         source = algo_source(coin, sign, int(state['started_ms']))
         start = await repo.get_event_by_key(events.dedupe_key(events.HYPERLIQUID, key, EventType.ALGO_START, source))
