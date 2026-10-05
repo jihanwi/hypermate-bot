@@ -94,7 +94,8 @@ async def add_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def _add(context: ContextTypes.DEFAULT_TYPE, user_id: int, address: str, alias: str,
                only_venue: Optional[str] = None) -> str:
     """The /add flow (also used by the /related Track button). Returns the reply text."""
-    result = await _repo(context).add_subscription(user_id, address, alias, now_ms())
+    result = await _repo(context).add_subscription(user_id, address, alias, now_ms(),
+                                                   create_hl=only_venue in (None, venues.HYPERLIQUID))
     if result == ADDED:
         logger.info(f"User {user_id} added wallet {address} as '{alias}'" + (f" on {only_venue}" if only_venue else ""))
         await pipeline.expire_stale_algos(_repo(context), address, now_ms())

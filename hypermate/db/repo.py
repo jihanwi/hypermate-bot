@@ -367,11 +367,13 @@ class Repo:
 
     # Subscriptions ----------------------------------------------------------
 
-    async def add_subscription(self, user_id: int, address: str, alias: str, now_ms: int) -> str:
+    async def add_subscription(self, user_id: int, address: str, alias: str, now_ms: int,
+                               create_hl: bool = True) -> str:
         """Subscribe user to address (lowercase) under alias.
 
         When the wallet had no subscribers, its HL cursors restart at now_ms and its
         snapshot is cleared, so a re-added wallet does not replay old activity.
+        create_hl=False (/add <venue>:<address>): no Hyperliquid account row is created.
         """
         db = self.db
         cur = await db.execute(
@@ -390,17 +392,19 @@ class Repo:
             await db.rollback()
             return ADDRESS_EXISTS
 
-        await db.execute(
-            "INSERT OR IGNORE INTO venue_accounts (wallet_id, venue, account_ref, last_activity_ms) "
-            "VALUES (?, ?, ?, ?)", (wallet_id, HYPERLIQUID, address, now_ms))
+        if create_hl:
+            await db.execute(
+                "INSERT OR IGNORE INTO venue_accounts (wallet_id, venue, account_ref, last_activity_ms) "
+                "VALUES (?, ?, ?, ?)", (wallet_id, HYPERLIQUID, address, now_ms))
         cur = await db.execute(
             "SELECT venue_account_id FROM venue_accounts WHERE venue = ? AND account_ref = ?",
             (HYPERLIQUID, address))
-        (venue_account_id,) = await cur.fetchone(); await cur.close()
+        row = await cur.fetchone(); await cur.close()
+        venue_account_id = row[0] if row else None
 
         cur = await db.execute("SELECT COUNT(*) FROM subscriptions WHERE wallet_id = ?", (wallet_id,))
         (subscriber_count,) = await cur.fetchone(); await cur.close()
-        if subscriber_count == 0:
+        if subscriber_count == 0 and venue_account_id is not None:
             await db.execute("DELETE FROM snapshots WHERE venue_account_id = ?", (venue_account_id,))
             for kind in CURSOR_KINDS:
                 await db.execute(

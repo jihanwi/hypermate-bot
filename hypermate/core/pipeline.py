@@ -399,8 +399,9 @@ async def process_fills(bot: Bot, repo: Repo, client: HyperliquidClient, key: in
             logger.info(f"Liquidation {event.coin} already alerted from the ledger, skipping")
             continue
         delivery = events.SENT
-        if event.type != EventType.LIQUIDATION and (event.notional_usd or Decimal(0)) < Decimal(Config.MIN_NOTIONAL_USD):
-            delivery = events.FILTERED_THRESHOLD          # spec 9.4 min_notional (global default for now)
+        if (event.type not in (EventType.LIQUIDATION, EventType.POSITION_CLOSE)
+                and (event.notional_usd or Decimal(0)) < Decimal(Config.MIN_NOTIONAL_USD)):
+            delivery = events.FILTERED_THRESHOLD          # spec 9.4 min_notional; closes and liquidations exempt
         elif k is not None and await _recently_ended(repo, key, p['coin'], poll_ms):
             delivery = events.REARM_BUFFER                # ALGO_END just happened: wait for re-detection
         event_id = await repo.record_event(event.dedupe_key, key, p['type'], event.ts_ms, p, delivery,
