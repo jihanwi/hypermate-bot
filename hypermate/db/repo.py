@@ -254,14 +254,23 @@ class Repo:
         await self.db.commit()
         return cur.rowcount, messages
 
+    async def free_space(self) -> tuple[int, int, int]:
+        """(free bytes, file bytes, free ratio in percent) from PRAGMA freelist_count / page_count."""
+        free = (await self._row(await self.db.execute("PRAGMA freelist_count")))[0]
+        pages = (await self._row(await self.db.execute("PRAGMA page_count")))[0]
+        page_size = (await self._row(await self.db.execute("PRAGMA page_size")))[0]
+        return free * page_size, pages * page_size, (free * 100 // pages) if pages else 0
+
     async def vacuum(self) -> int:
         """Rebuild the file to reclaim the space of deleted rows. Needs no open transaction and a volume
         with room for a second copy; run before the poller starts. Returns the bytes freed."""
         await self.db.commit()
-        before = os.path.getsize(self.path)
+        _, before, _ = await self.free_space()
         await self.db.execute("VACUUM")
         await self.db.commit()
-        after = os.path.getsize(self.path)
+        # page_count x page_size, not the file size: in WAL mode the rebuilt pages sit in the WAL until
+        # the checkpoint that follows, so the main file shrinks only then
+        _, after, _ = await self.free_space()
         logger.info(f"VACUUM: {before // 1_048_576} MB -> {after // 1_048_576} MB")
         return max(0, before - after)
 
