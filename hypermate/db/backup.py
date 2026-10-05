@@ -67,7 +67,7 @@ MAINTENANCE_KEYS = ('pruned', 'slimmed', 'cleaned', 'freelist', 'vacuum', 'check
 
 
 def maintenance_summary(status: dict) -> str:
-    """'pruned 0, freelist 2% (1 MB of 50 MB), vacuum skipped, checkpoint 12 pages' for the log and /health."""
+    """'pruned 0, freelist 1 MB (2% of 50 MB), vacuum skipped, checkpoint 12 pages' for the log and /health."""
     return ", ".join(f"{k} {status[k]}" for k in MAINTENANCE_KEYS if k in status)
 
 
@@ -84,10 +84,10 @@ async def _maintenance_steps(repo: Repo, now_ms: int, status: dict) -> None:
     # Free pages are only reclaimed by VACUUM. The decision looks at the freelist on every boot, not at
     # what this run deleted: v12 skipped it on a 200 MB file whose rows were gone before the restart.
     free_bytes, file_bytes, free_pct = await repo.free_space()
-    status['freelist'] = f"{free_pct}% ({free_bytes // 1_048_576} MB of {file_bytes // 1_048_576} MB)"
+    status['freelist'] = f"{free_bytes // 1_048_576} MB ({free_pct}% of {file_bytes // 1_048_576} MB)"
     if free_pct > VACUUM_FREE_PERCENT or free_bytes > VACUUM_FREE_BYTES:
         # runs before the poller starts, with the volume's 2x headroom
-        status['vacuum'] = f"{await repo.vacuum() // 1_048_576} MB freed"
+        status['vacuum'] = f"done ({await repo.vacuum() // 1_048_576} MB freed)"
     else:
         status['vacuum'] = 'skipped'
     # the checkpoint is cheap and runs on every attempt (a retry after a failed checkpoint still does it)

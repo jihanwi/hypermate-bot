@@ -77,7 +77,7 @@ async def test_maintenance_runs_while_the_poller_reads_and_writes(tmp_path, capl
     # cleanup removes the 2000 suppressed ones, then the checkpoint truncates the WAL
     assert status['cleaned'] == 2000 and status['slimmed'].startswith('6000/') and status['checkpoint'] != 'busy'
     # 2000 small rows gone leaves a freelist far under 30% / 10 MB: no VACUUM, but the decision is logged
-    assert status['vacuum'] == 'skipped' and status['freelist'].endswith('MB)')
+    assert status['vacuum'] == 'skipped' and status['freelist'].startswith('0 MB (')
     assert 'table is locked' not in caplog.text and 'failed' not in caplog.text
     assert len(written) >= 5, len(written)                  # the writer kept going between batches
     cur = await repo.db.execute("SELECT COUNT(*) FROM events WHERE dedupe_key LIKE 'new%'")
@@ -169,7 +169,7 @@ async def test_vacuum_follows_the_freelist_and_every_boot_logs_one_line(repo, ca
     # nothing pending, nothing free: skipped, still logged
     status = {}
     await backup.startup_maintenance(repo, T0, status)
-    assert status['vacuum'] == 'skipped' and status['freelist'].startswith('0%')
+    assert status['vacuum'] == 'skipped' and status['freelist'].startswith('0 MB (0%')
     assert sum('Maintenance: ok (attempt 1, ' in m and 'vacuum skipped' in m for m in caplog.messages) == 1
     # rows deleted before the restart (already migrated, so no prune/slim this run): the freelist says VACUUM
     big = {'coin': 'BTC', 'blob': 'x' * 4000}
@@ -182,7 +182,7 @@ async def test_vacuum_follows_the_freelist_and_every_boot_logs_one_line(repo, ca
     caplog.clear()
     status = {}
     await backup.startup_maintenance(repo, T0, status)
-    assert status['vacuum'].endswith('MB freed') and status['vacuum'] != '0 MB freed'
+    assert status['vacuum'].startswith('done (') and status['vacuum'] != 'done (0 MB freed)'
     assert (await repo.free_space())[2] == 0
     assert sum('Maintenance: ok' in m and 'vacuum' in m and 'MB freed' in m for m in caplog.messages) == 1
     # 10 MB absolute threshold on a file whose free share is under 30%
@@ -193,11 +193,11 @@ async def test_vacuum_follows_the_freelist_and_every_boot_logs_one_line(repo, ca
     await repo.db.commit()
     status = {}
     await backup.startup_maintenance(repo, T0, status)
-    assert status['vacuum'].endswith('MB freed')
+    assert status['vacuum'].startswith('done (')
     # /health shows the freelist and the vacuum outcome
     monkeypatch.setattr(Config, 'ADMIN_USER_IDS', frozenset({1}))
     update = make_update(1)
     await commands.health_command(update, make_context({'repo': repo, 'hl': FakeHLClient(), 'maintenance': status}))
     text = update.message.replies[0]['text']
     check_telegram_html(text)
-    assert 'freelist' in text and 'vacuum 0 MB freed' in text
+    assert 'freelist' in text and 'vacuum done (0 MB freed)' in text
