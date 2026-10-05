@@ -90,6 +90,9 @@ def resolve_summary(results: dict[str, Optional[list[VenueAccount]]], hl_dexs: O
             parts.append(f"{name} ✅ ({n} sub-account{'s' if n != 1 else ''})")
         elif (accounts[0].meta or {}).get('forced'):
             parts.append(f"{name} ✅ (added as given, no activity seen)")
+        elif venue == base.ASTER:
+            privacy = (accounts[0].meta or {}).get('privacy')
+            parts.append(f"{name} ✅" + (f" (privacy: {'on' if privacy == 'enabled' else 'off'})" if privacy else ""))
         else:
             parts.append(f"{name} ✅")
     return " · ".join(parts)

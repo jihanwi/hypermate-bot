@@ -52,6 +52,10 @@ class Config:
     RISEX_WS_URL: str = os.getenv("RISEX_WS_URL", "wss://api.rise.trade/ws/")
     RISEX_REQ_BUDGET: int = int(os.getenv("RISEX_REQ_BUDGET", "2400"))   # per minute, 80% of 3000
     RISEX_WS_ENABLED: bool = os.getenv("RISEX_WS_ENABLED", "true").lower() == "true"
+    # Aster (spec 6.4): JSON-RPC, no published limit; the bucket starts here and halves on 429
+    ASTER_RPC_URL: str = os.getenv("ASTER_RPC_URL", "https://tapi.asterdex.com/info")
+    ASTER_REQ_BUDGET: int = int(os.getenv("ASTER_REQ_BUDGET", "300"))
+    ASTER_POLL_SEC: int = 30
     VENUE_RESCAN_HOUR_KST: int = 4                   # daily rescan of inactive venues at 04:10 KST
     VENUE_RESCAN_MINUTE: int = 10
 

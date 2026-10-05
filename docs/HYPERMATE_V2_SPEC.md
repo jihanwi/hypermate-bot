@@ -543,13 +543,13 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
   - `aster_userFills` `[address, symbol|null, from, to, "latest"]` → `fills[] {symbol, side, price, qty, time}`. 7일 윈도우, 최대 1000.
   - `aster_openOrders` `[address, symbol|"", "latest"]`.
   - 문서: `github.com/asterdex/api-docs/blob/master/RPC/aster-chain-rpc.md`
-- resolve: `aster_getBalance` 에 포지션 또는 `walletBalance > 0` 이면 활성. `accountPrivacy` 저장.
-- snapshot: `aster_getBalance`. events: `aster_userFills(from=cursor)`. fills에 realized pnl 없음 → `realized_pnl=None`, `/positions` 에는 `unrealizedProfit` 표시.
-- **privacy** [V]: `accountPrivacy == "enabled"` 면 포지션/주문이 가려짐. snapshot에서 privacy가 off → on 으로 바뀌면 `PRIVACY_ON` 이벤트 1회 ("이 지갑은 Aster privacy를 켰습니다. 이후 Aster 포지션은 추적 불가"). 그 계정은 `active=0`, 일 1회 재확인.
-- 한도: RPC 문서는 weight 1만 명시, 분당 한도 미공개 [?]. 보수적으로 베뉴 버킷 300/분으로 시작, 429 보이면 자동 반감. 폴링 30초.
+- resolve: `aster_getBalance` 에 포지션 또는 `walletBalance > 0` 이면 활성. `accountPrivacy` 저장 (`/add` 응답에 "Aster ✅ (privacy: off)"). PM 확인 2026-10-04: 비활성 주소는 `perpAssets` / `positions` 키 자체가 없음 (fixture `aster_getBalance.json`). 활성 주소 응답은 문서 기준 [?] (오너 확인 필요: Aster 활성 주소 1개).
+- snapshot: `aster_getBalance` (`positionAmount` 부호 = 방향, 0 행 제외, 코인은 심볼에서 USDT/USDC/USD1 접미사 제거, 계정 가치 = walletBalance 합 + unrealizedProfit 합). events: `aster_userFills(from=cursor+1, to=min(cursor+7일, now))`, cursors.kind `trades` 에 `{"ms": 마지막 fill 시각}`; 빈 7일 창이면 커서를 창 끝으로 전진. fills 에 id 가 없어 (ms, symbol, side) 를 oid 로, 인덱스를 붙여 tid 로 쓴다. realized pnl 없음 → `realized_pnl=None` (알림에 realized 줄 없음), startPosition 은 직전 snapshot 에서 누적 (RISEx 와 같은 방식). `/positions` 에는 `unrealizedProfit` 표시.
+- **privacy** [V]: `accountPrivacy == "enabled"` 면 포지션/주문이 가려짐. snapshot에서 privacy가 off → on 으로 바뀌면 `PRIVACY_ON` 이벤트 1회 ("turned on Aster privacy. Aster positions and fills are hidden from now on"). 그 계정은 `active=0`, 일 1회 재확인 (04:10 KST 재탐색이 resolve 로 다시 판정: privacy 가 켜진 동안은 응답에 자산/포지션이 없어 비활성 유지, 꺼지면 복귀). 마지막 privacy 상태는 `api_cache` 의 `privacy:aster:<addr>`.
+- 한도: RPC 문서는 weight 1만 명시, 분당 한도 미공개 [?]. 베뉴 버킷 300/분 (`ASTER_REQ_BUDGET`) 으로 시작, 429 마다 반감 (`WeightBudget.halve`, 바닥 30/분). 폴링 30초 (`ASTER_POLL_SEC`).
 - WS: 타인 계정용 없음 → 폴링만.
 - TWAP: 웹 UI 전용 private endpoint. 타인 TWAP 비공개 [V]. `aster_openOrders` 의 `type` 에 TWAP 노출되는지 [?] 구현 중 확인. 안 되면 Lighter와 동일하게 집계/debounce만.
-- explorer: Aster Chain explorer [?].
+- explorer: Aster Chain explorer [?] 미확인. `https://www.asterdex.com/` 로 대체.
 
 ### 6.5 완료 기준
 

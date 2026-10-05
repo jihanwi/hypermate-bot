@@ -176,6 +176,7 @@ def order_event(venue_account_id: int, fills: list[dict]) -> Event:
     notional = sum(((to_decimal(f.get('px')) or ZERO) * (to_decimal(f.get('sz')) or ZERO) for f in fills), ZERO)
     vwap = notional / size if size else None
     pnl = sum((to_decimal(f.get('closedPnl')) or ZERO for f in fills), ZERO)
+    no_pnl = all(f.get('closedPnl') is None for f in fills)      # venues without PnL in fills (Aster)
     fee = sum((to_decimal(f.get('fee')) or ZERO for f in fills), ZERO)
     # Aggregates only: the raw fills are not stored (events.payload_json stays small)
     meta = {'dir': first.get('dir'), 'oid': first.get('oid'), 'fills': len(fills), 'sign': sign,
@@ -202,7 +203,7 @@ def order_event(venue_account_id: int, fills: list[dict]) -> Event:
                              EventType.LIQUIDATION)
     return Event(HYPERLIQUID, venue_account_id, event_type, int(last['time']), str(first.get('tid')),
                  coin=coin, side=side, size=size, notional_usd=notional, price=vwap, position_after=end,
-                 realized_pnl=pnl if has_pnl else None, meta=meta)
+                 realized_pnl=pnl if has_pnl and not no_pnl else None, meta=meta)
 
 
 def fill_events(venue_account_id: int, fills: list[dict]) -> list[Event]:

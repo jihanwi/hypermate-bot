@@ -19,6 +19,7 @@ from hypermate.core import aggregator, events, related
 from hypermate.core.events import POSITION_TYPES, SPOT_TYPES, Event, EventType
 from hypermate.core.formatter import (algo_label, format_algo_end, format_algo_progress, format_fill_message,
                                       format_ledger_event, format_multi_algo_exit, format_multi_algo_summary,
+                                      format_privacy_on,
                                       format_twap_end, format_twap_start)
 from hypermate.core.numbers import to_decimal
 from hypermate.db.repo import Repo
@@ -538,6 +539,24 @@ def diff_fills(previous: dict[str, dict], current: dict[str, dict], now_ms: int)
     return fills
 
 
+async def _privacy_turned_on(bot: Bot, repo: Repo, key: int, account: VenueAccount, snap, now: int) -> bool:
+    """Aster privacy (spec 6.4): off -> on sends PRIVACY_ON once and deactivates the account; the daily
+    rescan re-resolves it. The last seen state lives in api_cache."""
+    privacy = (snap.extra or {}).get('privacy')
+    if privacy is None:
+        return False
+    cache_key = f"privacy:{account.venue}:{account.account_ref}"
+    previous = await repo.cache_get(cache_key, now)
+    await repo.cache_set(cache_key, privacy, now + 10 * 365 * 24 * 3600 * 1000)
+    if privacy != 'enabled' or previous == 'enabled':
+        return False
+    logger.info(f"{account.venue} privacy enabled for {account.address}, deactivating")
+    await emit(bot, repo, key, EventType.PRIVACY_ON, f"privacy:{now}", now, {'venue': account.venue},
+               lambda alias: format_privacy_on(account.address, alias, account.venue))
+    await repo.ensure_venue_account(account.address, account.venue, account.account_ref, False, now)
+    return True
+
+
 async def poll_venue_account(bot: Bot, repo: Repo, adapter_obj, account: VenueAccount) -> tuple[bool, int]:
     """One poll of a non-HL venue account. Returns (activity seen, snapshot weight).
 
@@ -556,6 +575,8 @@ async def poll_venue_account(bot: Bot, repo: Repo, adapter_obj, account: VenueAc
         logger.info(f"Baseline {account.venue} snapshot for {account.address}#{account.account_ref}: "
                     f"{len(snap.positions)} positions")
     await repo.save_snapshot(key, current, now, str(snap.account_value) if snap.account_value is not None else None)
+    if await _privacy_turned_on(bot, repo, key, account, snap, now):
+        return True, adapter_obj.cost('snapshot')
     activity = changed
     active_algo = bool(await repo.active_algos(key))
     if changed or active_algo or previous is None:      # baseline poll sets the trades cursor
