@@ -104,14 +104,14 @@ def format_transfer_message(transfer: dict, wallet_address: str, alias: str) -> 
 
 def _funding_text(position: dict) -> str:
     """HL cumFunding.sinceOpen is positive when the position paid funding. Other venues (RISEx) carry
-    unsettledFunding as given by the venue (sign as reported [?])."""
+    fundingPnl already signed as PnL: negative when the position pays (a long with positive funding)."""
     funding = to_decimal((position.get('cumFunding') or {}).get('sinceOpen'))
     if funding:
         received = -funding
         return f" · funding {'+' if received >= 0 else '-'}{compact_usd(abs(received))}"
-    unsettled = to_decimal(position.get('unsettledFunding'))
-    if unsettled:
-        return f" · unsettled funding {'+' if unsettled >= 0 else '-'}{compact_usd(abs(unsettled))}"
+    funding_pnl = to_decimal(position.get('fundingPnl'))
+    if funding_pnl:
+        return f" · funding {'+' if funding_pnl > 0 else ''}{usd(funding_pnl)}"
     return ""
 
 

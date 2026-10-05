@@ -198,6 +198,7 @@ def test_risex_positions_use_mark_price_for_notional_and_unrealized_pnl():
     assert abs(Decimal(zec['unrealized_pnl']) - Decimal('4315')) < 1      # 150 x (1340.258925 - 1311.494614)
     assert zec['entry_px'] == '1311.49' and zec['leverage'] == '10'
     assert Decimal(zec['unsettled_funding']) == Decimal('87.79075841250791025')
+    assert Decimal(zec['funding_pnl']) == Decimal('-87.79075841250791025')      # a long pays funding
     pump = positions['PUMP']
     assert Decimal(pump['szi']) == 5_000_000 and pump['entry_px'] == '0.006268'
     assert abs(Decimal(pump['unrealized_pnl']) - Decimal('520')) < 1       # 5M x (0.006372 - 0.006268)
@@ -205,6 +206,7 @@ def test_risex_positions_use_mark_price_for_notional_and_unrealized_pnl():
     short = risex.parse_rest_positions({'positions': [{**rest_rows[0], 'size': '-' + rest_rows[0]['size'], 'side': 'SELL'}]},
                                        markets)['ZEC']
     assert abs(Decimal(short['unrealized_pnl']) + Decimal('4315')) < 1
+    assert Decimal(short['funding_pnl']) == Decimal('87.79075841250791025')     # a short receives it [?]
     # the same numbers through the human-unit WS path
     ws = risex.parse_ws_positions([{**rest_rows[0], 'size': '150', 'avg_entry_price': '1311.494614892857142853',
                                     'leverage': '10', 'unsettled_funding': '87.79075841250791025'}], markets)['ZEC']
@@ -215,7 +217,7 @@ def test_risex_positions_use_mark_price_for_notional_and_unrealized_pnl():
     state = as_clearinghouse_state(AccountSnapshot(positions, Decimal(50000)))
     text = format_positions('w', W, None, {}, Decimal(10), [('RISEx', state)])
     check_telegram_html(text)
-    assert 'Entry: $1,311.49' in text and 'Size: $201,039' in text and '🟢 $4,314.65' in text and '· 10x' in text and 'unsettled funding +$87.8' in text
+    assert 'Entry: $1,311.49' in text and 'Size: $201,039' in text and '🟢 $4,314.65' in text and '· 10x' in text and '· funding -$87.79' in text
     # no mark price: the quote amount stands in and PnL is unknown
     nomark = risex.parse_rest_positions({'positions': rest_rows[:1]}, {'8': {'name': 'ZEC/USDC'}})['ZEC']
     assert Decimal(nomark['position_value']) == Decimal('195730.439897416756007236') and nomark['unrealized_pnl'] == 'N/A'
