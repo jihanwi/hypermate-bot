@@ -365,3 +365,46 @@ async def test_notional_threshold_uses_the_snapshot_account_value(repo, clock, m
     (va, _), = await repo.tracked_accounts()
     rows = {e['payload']['coin']: e['delivery'] for e in await repo.events_since(va, 0)}
     assert rows == {'LINK': 'filtered_threshold', 'ETH': 'filtered_threshold', 'BTC': 'sent'}
+
+
+async def test_remove_deactivates_every_venue_account_and_the_streams_until_readded(repo, clock):
+    """post-deploy 1005b (6): loracle-2 kept venue_accounts.active=1 (and the RISEx WS track) after /remove.
+    The last subscriber leaving deactivates all venues and drops the WS subscriptions; /add brings them back."""
+    from hypermate.venues.lighter import adapter as lighter_adapter
+    from hypermate.venues.lighter.stream import LighterStream
+    from hypermate.venues.risex.stream import RisexStream
+    from tests.test_lighter import FakeLighterClient
+    hl = FakeHLClient()
+    from tests.helpers import clearinghouse
+    hl.clearinghouse[W] = clearinghouse(account_value='483000')             # active on HL
+    risex_client, lighter_client = FakeRisexClient(), FakeLighterClient()
+    risex_stream, lighter_stream = RisexStream('wss://unused', connect=None), LighterStream('wss://unused', connect=None)
+    adapters = {base.HYPERLIQUID: HyperliquidVenue(hl), base.RISEX: risex.RisexAdapter(risex_client, risex_stream),
+                base.LIGHTER: lighter_adapter.LighterAdapter(lighter_client, lighter_stream)}
+    bot_data = {'repo': repo, 'hl': hl, 'venues': adapters}
+    await repo.add_subscription(7, W, 'loracle-2', T0)
+    await repo.add_subscription(8, W, 'l2', T0)
+    await repo.ensure_venue_account(W, base.RISEX, W, True, T0)
+    await repo.ensure_venue_account(W, base.LIGHTER, '42', True, T0)
+    await risex_stream.track(W)
+    await lighter_stream.subscribe(42)
+    assert len(await repo.tracked_accounts()) == 1 and len(await repo.tracked_venue_accounts(base.RISEX)) == 1
+
+    # one of two subscribers leaves: nothing changes for the wallet
+    await commands.remove_wallet(make_update(8), make_context(bot_data, args=['l2']))
+    assert all(r['active'] for r in await repo.venue_accounts_of(W)) and W in risex_stream.addresses
+    # the last one leaves: inactive everywhere, streams released, poller targets empty
+    await commands.remove_wallet(make_update(7), make_context(bot_data, args=['loracle-2']))
+    assert not any(r['active'] for r in await repo.venue_accounts_of(W))
+    assert risex_stream.addresses == set() and lighter_stream.indexes == set()
+    assert await repo.tracked_accounts() == [] and await repo.tracked_venue_accounts(base.RISEX) == []
+
+    # re-add: HL comes back through add_subscription, RISEx through resolve (positions on the venue)
+    risex_client.positions_by[W] = [{'account': W, 'market_id': '1', 'size': '1', 'side': 'BUY',
+                                     'avg_entry_price': '84000', 'quote_amount': '-84000', 'leverage': '10',
+                                     'isolated_usdc_balance': '0', 'unsettled_funding': '0'}]
+    update = make_update(7)
+    await commands.add_wallet(update, make_context(bot_data, args=[W, 'loracle-2']))
+    active = {r['venue'] for r in await repo.venue_accounts_of(W) if r['active']}
+    assert base.HYPERLIQUID in active and base.RISEX in active and base.LIGHTER not in active
+    assert len(await repo.tracked_accounts()) == 1 and len(await repo.tracked_venue_accounts(base.RISEX)) == 1

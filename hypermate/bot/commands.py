@@ -143,7 +143,10 @@ async def remove_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     alias = " ".join(context.args).strip()
     user_id = update.effective_user.id
     try:
+        found = await _repo(context).find_subscription(user_id, alias)
         removed = await _repo(context).remove_subscription(user_id, alias)
+        if removed and found is not None and await _repo(context).subscriber_count(found[1]) == 0:
+            await _release_wallet(context, found[1])
     except Exception as e:
         await reply_internal_error(update, f"remove_wallet user={user_id}", e)
         return
@@ -152,6 +155,22 @@ async def remove_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await reply(update, texts.WALLET_REMOVED.format(alias=h(alias)))
     else:
         await reply(update, texts.ALIAS_NOT_FOUND.format(alias=h(alias)))
+
+
+async def _release_wallet(context: ContextTypes.DEFAULT_TYPE, address: str) -> None:
+    """The last subscriber left: every venue account goes inactive and the WS streams forget the address
+    (post-deploy 2026-10-05: loracle-2 stayed active=1 and tracked after /remove). /add reactivates."""
+    rows = await _repo(context).deactivate_wallet(address)
+    adapters = _venues(context)
+    for row in rows:
+        stream = getattr(adapters.get(row['venue']), 'stream', None)
+        if stream is None:
+            continue
+        if row['venue'] == venues.RISEX:
+            await stream.untrack(address)
+        elif row['venue'] == venues.LIGHTER and str(row['account_ref']).isdigit():
+            await stream.unsubscribe(int(row['account_ref']))
+    logger.info(f"Wallet {address} has no subscribers: {len(rows)} venue accounts deactivated")
 
 
 async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
