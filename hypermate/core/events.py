@@ -41,7 +41,7 @@ SPOT_TYPES = (EventType.SPOT_BUY, EventType.SPOT_SELL)
 SENT = 'sent'
 SUMMARIZED = 'summarized'          # ALGO_START / ALGO_END recorded during multi-algo summary mode, not sent
 FILTERED_SETTINGS = 'filtered_settings'
-FILTERED_THRESHOLD = 'filtered_threshold'   # under MIN_NOTIONAL_USD: recorded, counts for algo detection, not sent
+FILTERED_THRESHOLD = 'filtered_threshold'   # under min_notional_usd(): recorded, counts for algo detection, not sent
 REARM_BUFFER = 'rearm_buffer'               # after an ALGO_END: waits ALGO_REARM_SEC for re-detection, then flushed
 MUTED = 'muted'
 

@@ -24,6 +24,7 @@ from hypermate.venues.risex.client import RisexClient
 logger = logging.getLogger(__name__)
 
 ZERO = Decimal(0)
+MAX_PX_DECIMALS = 8
 WEI = Decimal(10) ** 18
 EXPLORER_FALLBACK = 'https://app.rise.trade/'       # RISE chain explorer address format not confirmed [?]
 RECONCILE_SEC = 300          # with the WS connected, compare the cache with a REST snapshot this often
@@ -78,6 +79,9 @@ def _positions(rows, markets):
             upnl = None
         shown_entry = entry.quantize(step) if entry is not None and step is not None and step > 0 else entry
         positions[coin] = position_entry(coin, size, shown_entry, value, upnl)
+        if step is not None and step > 0:
+            # /positions shows the entry with the market's step_price decimals (PUMP 0.006268, not $0.0063)
+            positions[coin]['px_decimals'] = min(MAX_PX_DECIMALS, max(0, -step.normalize().as_tuple().exponent))
         positions[coin]['leverage'] = str(convert(row.get('leverage')) or '')
         positions[coin]['isolated_balance'] = str(convert(row.get('isolated_usdc_balance')) or ZERO)
         unsettled = abs(convert(row.get('unsettled_funding')) or ZERO)

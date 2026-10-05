@@ -93,6 +93,7 @@ def as_clearinghouse_state(snapshot: AccountSnapshot) -> dict:
             'leverage': {'value': p['leverage']} if p.get('leverage') else None,
             'unsettledFunding': p.get('unsettled_funding'),
             'fundingPnl': p.get('funding_pnl'),
+            'pxDecimals': p.get('px_decimals'),
         }} for p in snapshot.positions.values()],
         'marginSummary': {'accountValue': str(snapshot.account_value) if snapshot.account_value is not None else None},
     }

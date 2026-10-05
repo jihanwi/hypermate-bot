@@ -63,11 +63,11 @@ async def retention(repo: Repo, now_ms: int, days: int = Config.EVENTS_RETENTION
 MAINTENANCE_RETRY_SEC = 5
 VACUUM_FREE_PERCENT = 30            # VACUUM when free pages exceed this share of the file ...
 VACUUM_FREE_BYTES = 10 * 1_048_576  # ... or this many bytes, whichever comes first
-MAINTENANCE_KEYS = ('pruned', 'slimmed', 'cleaned', 'freelist', 'vacuum', 'checkpoint')
+MAINTENANCE_KEYS = ('db', 'freelist', 'vacuum', 'checkpoint', 'pruned', 'slimmed', 'cleaned')
 
 
 def maintenance_summary(status: dict) -> str:
-    """'pruned 0, freelist 1 MB (2% of 50 MB), vacuum skipped, checkpoint 12 pages' for the log and /health."""
+    """'db 50 MB, freelist 1 MB (2%), vacuum skipped, checkpoint 12 pages, pruned 0' for the log and /health."""
     return ", ".join(f"{k} {status[k]}" for k in MAINTENANCE_KEYS if k in status)
 
 
@@ -84,7 +84,8 @@ async def _maintenance_steps(repo: Repo, now_ms: int, status: dict) -> None:
     # Free pages are only reclaimed by VACUUM. The decision looks at the freelist on every boot, not at
     # what this run deleted: v12 skipped it on a 200 MB file whose rows were gone before the restart.
     free_bytes, file_bytes, free_pct = await repo.free_space()
-    status['freelist'] = f"{free_bytes // 1_048_576} MB ({free_pct}% of {file_bytes // 1_048_576} MB)"
+    status['db'] = f"{file_bytes // 1_048_576} MB"
+    status['freelist'] = f"{free_bytes // 1_048_576} MB ({free_pct}%)"
     if free_pct > VACUUM_FREE_PERCENT or free_bytes > VACUUM_FREE_BYTES:
         # runs before the poller starts, with the volume's 2x headroom
         status['vacuum'] = f"done ({await repo.vacuum() // 1_048_576} MB freed)"
@@ -114,8 +115,8 @@ async def startup_maintenance(repo: Repo, now_ms: int, status: Optional[dict] = 
             if attempt == 1:
                 await asyncio.sleep(MAINTENANCE_RETRY_SEC)
     # one line on every boot, whatever happened (v12 left no trace of a skipped VACUUM)
-    logger.info(f"Maintenance: {status['state']} (attempt {status['attempts']}, {maintenance_summary(status)}"
-                + (f", error: {status['error']}" if status.get('error') else "") + ")")
+    logger.info(f"Maintenance: {maintenance_summary(status)} · {status['state']} (attempt {status['attempts']})"
+                + (f", error: {status['error']}" if status.get('error') else ""))
     return status
 
 

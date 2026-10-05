@@ -32,9 +32,12 @@ def usd(value: Decimal, places: int = 2) -> str:
     return f"{sign}${abs(value):,.{places}f}"
 
 
-def price(value: Decimal) -> str:
-    """$1,234.5678 with trailing zeros removed."""
-    return f"${value:,.4f}".rstrip('0').rstrip('.')
+def price(value: Decimal, decimals: Optional[int] = None) -> str:
+    """$1,234.5678 with trailing zeros removed (HL: szDecimals / tick logic unchanged). With `decimals`
+    (a venue's step_price, at most 8) the value keeps exactly that many places: $0.006268."""
+    if decimals is None:
+        return f"${value:,.4f}".rstrip('0').rstrip('.')
+    return f"${value:,.{min(decimals, 8)}f}"
 
 
 def short_address(address: str) -> str:
@@ -140,7 +143,8 @@ def _futures_lines(perp_state: dict, dust_usd: Decimal = ZERO) -> list[str]:
         side_emoji = "📈" if side == "LONG" else "📉"
         size_str = usd(position_value, 0) if position_value is not None else f"{abs(szi):,.2f}"
         entry_px = to_decimal(position.get('entryPx'))
-        entry_str = price(entry_px) if entry_px is not None else "N/A"
+        px_decimals = position.get('pxDecimals')
+        entry_str = price(entry_px, int(px_decimals) if px_decimals is not None else None) if entry_px is not None else "N/A"
         upnl = to_decimal(position.get('unrealizedPnl'))
         pnl_str = f"{'🟢' if upnl >= 0 else '🔴'} {usd(upnl)}" if upnl is not None else "N/A"
         lines.append(

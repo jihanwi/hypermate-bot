@@ -242,3 +242,11 @@ def test_algo_progress_elapsed_runs_to_the_last_fill():
     progress = formatter.format_algo_progress(ADDR, 'loracle', state, 'accumulating', 'LONG', Decimal('429'))
     end = formatter.format_algo_end(ADDR, 'loracle', state, 'accumulating', 'LONG')
     assert '411 fills +$709k in 52m' in progress and '· 411 fills · 52m' in end
+
+
+def test_price_keeps_the_venue_step_price_decimals_but_hl_logic_unchanged():
+    """post-deploy 1005b (5): PUMP entry 0.006268 (step_price 0.000001) rendered $0.006268, not $0.0063."""
+    from hypermate.core.formatter import price
+    assert price(Decimal('0.006268'), 6) == '$0.006268' and price(Decimal('1311.49'), 2) == '$1,311.49'
+    assert price(Decimal('0.000000012345'), 12) == '$0.00000001'          # capped at 8
+    assert price(Decimal('0.00631234')) == '$0.0063' and price(Decimal('60000')) == '$60,000'   # HL as before

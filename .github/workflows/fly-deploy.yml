@@ -1,5 +1,7 @@
 # Deploys every push to main to Fly.io (one machine, volume-backed SQLite: --ha=false keeps it at one).
-# Needs the FLY_API_TOKEN repository secret: fly tokens create deploy -x 999999h
+# --depot=false: the Depot builder stalled for 10+ minutes twice; the remote Fly builder is used instead.
+# Needs the FLY_API_TOKEN repository secret (fly tokens create deploy -x 999999h); without it the
+# deploy steps are skipped and the job stays green.
 name: Fly Deploy
 
 on:
@@ -14,9 +16,15 @@ jobs:
   deploy:
     name: Deploy app
     runs-on: ubuntu-latest
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
+      - name: Skip without FLY_API_TOKEN
+        if: env.FLY_API_TOKEN == ''
+        run: echo "FLY_API_TOKEN is not set, skipping the deploy"
       - uses: actions/checkout@v4
+        if: env.FLY_API_TOKEN != ''
       - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: env.FLY_API_TOKEN != ''
       - run: flyctl deploy --remote-only --depot=false --ha=false
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        if: env.FLY_API_TOKEN != ''

@@ -327,6 +327,15 @@ async def _update_algo_position(repo: Repo, key: int, k: tuple, state: dict, pay
                                         {**start['payload'], 'position_after': payload.get('position_after')})
 
 
+def min_notional_usd(account_value: Optional[Decimal]) -> Decimal:
+    """Alert threshold for one account (spec 9.4, post-deploy 2026-10-05): max(MIN_NOTIONAL_FLOOR_USD,
+    account_value x MIN_NOTIONAL_PCT); the floor alone when no snapshot value is known yet."""
+    floor = Decimal(Config.MIN_NOTIONAL_FLOOR_USD)
+    if account_value is None or account_value <= 0:
+        return floor
+    return max(floor, account_value * Config.MIN_NOTIONAL_PCT)
+
+
 async def process_fills(bot: Bot, repo: Repo, client: HyperliquidClient, key: int, address: str,
                         fills: list[dict], poll_ms: int) -> None:
     fill_events: list[Event] = adapter.fill_events(key, fills)
@@ -348,6 +357,7 @@ async def process_fills(bot: Bot, repo: Repo, client: HyperliquidClient, key: in
     twap_states = list((await repo.active_twaps(key)).values())
     algos = await repo.active_algos(key)
     st = settings()
+    threshold = min_notional_usd(to_decimal(await repo.account_value(key)))
     payloads = [e.payload() for e in fill_events]
     twap_hit = [twap.is_suppressed(p, twap_states) for p in payloads]
     summary = await repo.multi_algo_mode(key)
@@ -401,7 +411,7 @@ async def process_fills(bot: Bot, repo: Repo, client: HyperliquidClient, key: in
             continue
         delivery = events.SENT
         if (event.type not in (EventType.LIQUIDATION, EventType.POSITION_CLOSE)
-                and (event.notional_usd or Decimal(0)) < Decimal(Config.MIN_NOTIONAL_USD)):
+                and (event.notional_usd or Decimal(0)) < threshold):
             delivery = events.FILTERED_THRESHOLD          # spec 9.4 min_notional; closes and liquidations exempt
         elif k is not None and await _recently_ended(repo, key, p['coin'], poll_ms):
             delivery = events.REARM_BUFFER                # ALGO_END just happened: wait for re-detection

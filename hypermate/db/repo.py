@@ -405,6 +405,10 @@ class Repo:
             await db.execute(
                 "INSERT OR IGNORE INTO venue_accounts (wallet_id, venue, account_ref, last_activity_ms) "
                 "VALUES (?, ?, ?, ?)", (wallet_id, HYPERLIQUID, address, now_ms))
+            # a wallet whose last subscriber left was deactivated on every venue; /add brings HL back
+            # here and the other venues through resolve
+            await db.execute("UPDATE venue_accounts SET active = 1 WHERE venue = ? AND account_ref = ?",
+                             (HYPERLIQUID, address))
         cur = await db.execute(
             "SELECT venue_account_id FROM venue_accounts WHERE venue = ? AND account_ref = ?",
             (HYPERLIQUID, address))
@@ -431,6 +435,22 @@ class Repo:
             "DELETE FROM subscriptions WHERE user_id = ? AND alias = ? COLLATE NOCASE", (user_id, alias))
         await self.db.commit()
         return cur.rowcount > 0
+
+    async def subscriber_count(self, address: str) -> int:
+        row = await self._row(await self.db.execute(
+            "SELECT COUNT(*) FROM subscriptions s JOIN wallets w USING (wallet_id) WHERE w.evm_address = ?",
+            (address.lower(),)))
+        return row[0] if row else 0
+
+    async def deactivate_wallet(self, address: str) -> list[dict]:
+        """active = 0 on every venue account of the wallet (its last subscriber left). Returns the rows
+        that were active, {venue, account_ref}, so the caller can drop their WS subscriptions."""
+        rows = [r for r in await self.venue_accounts_of(address) if r['active']]
+        await self.db.execute(
+            "UPDATE venue_accounts SET active = 0 WHERE wallet_id = (SELECT wallet_id FROM wallets WHERE evm_address = ?)",
+            (address.lower(),))
+        await self.db.commit()
+        return [{'venue': r['venue'], 'account_ref': r['account_ref']} for r in rows]
 
     async def list_subscriptions(self, user_id: int) -> list[tuple[str, str]]:
         """[(alias, address)] ordered by alias (case-insensitive)."""
@@ -619,6 +639,12 @@ class Repo:
         await self.db.execute("UPDATE venue_accounts SET dexs_json = ? WHERE venue_account_id = ?",
                               (json.dumps(sorted(set(dexs))), venue_account_id))
         await self.db.commit()
+
+    async def account_value(self, venue_account_id: int) -> Optional[str]:
+        """Last polled account value of one venue account (Decimal string), or None."""
+        row = await self._row(await self.db.execute(
+            "SELECT account_value FROM snapshots WHERE venue_account_id = ?", (venue_account_id,)))
+        return row[0] if row else None
 
     async def hl_account_value(self, address: str) -> Optional[str]:
         """Last polled HL account value for the address, or None if not polled yet."""

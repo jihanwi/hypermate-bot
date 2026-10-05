@@ -109,7 +109,7 @@ def micro_fills(coins, start, minutes, notional_usd=Decimal(300)):
 async def test_readd_with_stale_algos_and_micro_fills_sends_only_the_summary(repo, clock, monkeypatch):
     """The review case: 4 stale algo rows (last fill > 2 h ago) plus a stream of micro fills right after
     /add. Expected: 0 individual alerts, 0 stale algo_end messages, 1 summary."""
-    monkeypatch.setattr(Config, 'MIN_NOTIONAL_USD', 1000)
+    monkeypatch.setattr(Config, 'MIN_NOTIONAL_FLOOR_USD', 1000)
     hl, bot = FakeHLClient(), FakeBot()
     coins = ['LINK', 'DOGE', 'SUI', 'ONDO', 'UNI', 'ARB']
     from tests.helpers import clearinghouse, position
@@ -149,7 +149,7 @@ async def test_readd_with_stale_algos_and_micro_fills_sends_only_the_summary(rep
 
 
 async def test_min_notional_floor_filters_small_fills_but_not_liquidations(repo, clock, monkeypatch):
-    monkeypatch.setattr(Config, 'MIN_NOTIONAL_USD', 1000)
+    monkeypatch.setattr(Config, 'MIN_NOTIONAL_FLOOR_USD', 1000)
     await repo.add_subscription(7, W, 'w', T0)
     hl, bot = FakeHLClient(), FakeBot()
     hl.fills[W] = [fill('ETH', 'Open Long', '0.1', '3000', T0 + 1000, '0', oid=1),                    # $300
@@ -165,7 +165,7 @@ async def test_min_notional_floor_filters_small_fills_but_not_liquidations(repo,
 
 
 async def test_full_close_is_never_filtered_by_the_notional_floor(repo, clock, monkeypatch):
-    monkeypatch.setattr(Config, 'MIN_NOTIONAL_USD', 1000)
+    monkeypatch.setattr(Config, 'MIN_NOTIONAL_FLOOR_USD', 1000)
     await repo.add_subscription(7, W, 'w', T0)
     hl, bot = FakeHLClient(), FakeBot()
     hl.fills[W] = [fill('ETH', 'Close Long', '0.1', '3000', T0 + 1000, '0.5', oid=1, closed_pnl='2'),   # $300 partial
@@ -201,6 +201,7 @@ def test_risex_positions_use_mark_price_for_notional_and_unrealized_pnl():
     assert Decimal(zec['funding_pnl']) == Decimal('-87.79075841250791025')      # a long pays funding
     pump = positions['PUMP']
     assert Decimal(pump['szi']) == 5_000_000 and pump['entry_px'] == '0.006268'
+    assert zec['px_decimals'] == 2 and pump['px_decimals'] == 6                 # from step_price
     assert abs(Decimal(pump['unrealized_pnl']) - Decimal('520')) < 1       # 5M x (0.006372 - 0.006268)
     # a short: PnL sign follows the signed size
     short = risex.parse_rest_positions({'positions': [{**rest_rows[0], 'size': '-' + rest_rows[0]['size'], 'side': 'SELL'}]},
@@ -217,6 +218,7 @@ def test_risex_positions_use_mark_price_for_notional_and_unrealized_pnl():
     state = as_clearinghouse_state(AccountSnapshot(positions, Decimal(50000)))
     text = format_positions('w', W, None, {}, Decimal(10), [('RISEx', state)])
     check_telegram_html(text)
+    assert 'Entry: $0.006268' in text                                            # (5) step_price decimals, not $0.0063
     assert 'Entry: $1,311.49' in text and 'Size: $201,039' in text and '🟢 $4,314.65' in text and '· 10x' in text and '· funding -$87.79' in text
     # no mark price: the quote amount stands in and PnL is unknown
     nomark = risex.parse_rest_positions({'positions': rest_rows[:1]}, {'8': {'name': 'ZEC/USDC'}})['ZEC']
@@ -331,3 +333,78 @@ async def test_related_row_separates_volume_and_account_value(repo, clock):
     assert '10 transfers both ways · vol $113M' in text and '· acct $3.15M' in text
     assert buttons == [('w-1', 1)]
     assert await resolve_wallet(repo, {}, W, T0) == {}
+
+
+def test_min_notional_scales_with_the_account_value(monkeypatch):
+    """post-deploy 1005b (4): loracle-2's $999.99 clips passed a fixed $1,000 by one cent. The threshold is
+    max(floor $100, 0.5% of the account value): smb $483k -> $2,415, iroh $79k -> $397, a $5k wallet -> $100."""
+    monkeypatch.setattr(Config, 'MIN_NOTIONAL_FLOOR_USD', 100)
+    monkeypatch.setattr(Config, 'MIN_NOTIONAL_PCT', Decimal('0.005'))
+    assert pipeline.min_notional_usd(Decimal(483_000)) == Decimal(2415)
+    assert pipeline.min_notional_usd(Decimal(79_400)) == Decimal(397)
+    assert pipeline.min_notional_usd(Decimal(5_000)) == Decimal(100)
+    assert pipeline.min_notional_usd(None) == Decimal(100)          # no snapshot yet: the floor
+
+
+async def test_notional_threshold_uses_the_snapshot_account_value(repo, clock, monkeypatch):
+    """A $483k account (smb): a $999.99 clip and a $2,000 order are filtered, a $3,000 one is sent."""
+    monkeypatch.setattr(Config, 'MIN_NOTIONAL_FLOOR_USD', 100)
+    monkeypatch.setattr(Config, 'MIN_NOTIONAL_PCT', Decimal('0.005'))
+    await repo.add_subscription(7, W, 'smb', T0)
+    hl, bot = FakeHLClient(), FakeBot()
+    from tests.helpers import clearinghouse
+    hl.clearinghouse[W] = clearinghouse(account_value='483000')
+    hl.fills[W] = [fill('LINK', 'Open Long', '50', '19.9998', T0 + 1000, '0', oid=1),        # $999.99
+                   fill('ETH', 'Open Long', '0.5', '4000', T0 + 2000, '0', oid=2),           # $2,000
+                   fill('BTC', 'Open Long', '0.05', '60000', T0 + 3000, '0', oid=3)]         # $3,000
+    hl.now = clock
+    await pipeline.monitor_positions_job(make_context({'repo': repo, 'hl': hl}, bot=bot))   # snapshot: $483k
+    await run_cycles(repo, hl, bot, clock, T0 + CYCLE_MS)
+    texts = [m['text'] for m in bot.sent]
+    assert len(texts) == 1 and '$BTC' in texts[0]
+    (va, _), = await repo.tracked_accounts()
+    rows = {e['payload']['coin']: e['delivery'] for e in await repo.events_since(va, 0)}
+    assert rows == {'LINK': 'filtered_threshold', 'ETH': 'filtered_threshold', 'BTC': 'sent'}
+
+
+async def test_remove_deactivates_every_venue_account_and_the_streams_until_readded(repo, clock):
+    """post-deploy 1005b (6): loracle-2 kept venue_accounts.active=1 (and the RISEx WS track) after /remove.
+    The last subscriber leaving deactivates all venues and drops the WS subscriptions; /add brings them back."""
+    from hypermate.venues.lighter import adapter as lighter_adapter
+    from hypermate.venues.lighter.stream import LighterStream
+    from hypermate.venues.risex.stream import RisexStream
+    from tests.test_lighter import FakeLighterClient
+    hl = FakeHLClient()
+    from tests.helpers import clearinghouse
+    hl.clearinghouse[W] = clearinghouse(account_value='483000')             # active on HL
+    risex_client, lighter_client = FakeRisexClient(), FakeLighterClient()
+    risex_stream, lighter_stream = RisexStream('wss://unused', connect=None), LighterStream('wss://unused', connect=None)
+    adapters = {base.HYPERLIQUID: HyperliquidVenue(hl), base.RISEX: risex.RisexAdapter(risex_client, risex_stream),
+                base.LIGHTER: lighter_adapter.LighterAdapter(lighter_client, lighter_stream)}
+    bot_data = {'repo': repo, 'hl': hl, 'venues': adapters}
+    await repo.add_subscription(7, W, 'loracle-2', T0)
+    await repo.add_subscription(8, W, 'l2', T0)
+    await repo.ensure_venue_account(W, base.RISEX, W, True, T0)
+    await repo.ensure_venue_account(W, base.LIGHTER, '42', True, T0)
+    await risex_stream.track(W)
+    await lighter_stream.subscribe(42)
+    assert len(await repo.tracked_accounts()) == 1 and len(await repo.tracked_venue_accounts(base.RISEX)) == 1
+
+    # one of two subscribers leaves: nothing changes for the wallet
+    await commands.remove_wallet(make_update(8), make_context(bot_data, args=['l2']))
+    assert all(r['active'] for r in await repo.venue_accounts_of(W)) and W in risex_stream.addresses
+    # the last one leaves: inactive everywhere, streams released, poller targets empty
+    await commands.remove_wallet(make_update(7), make_context(bot_data, args=['loracle-2']))
+    assert not any(r['active'] for r in await repo.venue_accounts_of(W))
+    assert risex_stream.addresses == set() and lighter_stream.indexes == set()
+    assert await repo.tracked_accounts() == [] and await repo.tracked_venue_accounts(base.RISEX) == []
+
+    # re-add: HL comes back through add_subscription, RISEx through resolve (positions on the venue)
+    risex_client.positions_by[W] = [{'account': W, 'market_id': '1', 'size': '1', 'side': 'BUY',
+                                     'avg_entry_price': '84000', 'quote_amount': '-84000', 'leverage': '10',
+                                     'isolated_usdc_balance': '0', 'unsettled_funding': '0'}]
+    update = make_update(7)
+    await commands.add_wallet(update, make_context(bot_data, args=[W, 'loracle-2']))
+    active = {r['venue'] for r in await repo.venue_accounts_of(W) if r['active']}
+    assert base.HYPERLIQUID in active and base.RISEX in active and base.LIGHTER not in active
+    assert len(await repo.tracked_accounts()) == 1 and len(await repo.tracked_venue_accounts(base.RISEX)) == 1
