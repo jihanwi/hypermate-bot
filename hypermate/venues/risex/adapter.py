@@ -55,6 +55,9 @@ def parse_ws_positions(rows: list[dict], markets: dict[str, dict]) -> dict[str, 
 
 
 def _positions(rows, markets):
+    """Notional = |size| x mark and unrealized PnL = size x (mark - entry) from the market's mark price
+    (D-3, 2026-10-05); without a mark the quote amount stands in and PnL is unknown. Entry is rounded to
+    the market's step_price decimals."""
     positions = {}
     for row, convert in rows:
         size = convert(row.get('size')) or ZERO
@@ -64,11 +67,20 @@ def _positions(rows, markets):
             positions.pop(coin, None)
             continue
         entry = convert(row.get('avg_entry_price'))
+        mark = to_decimal(market.get('mark_price'))
+        step = to_decimal(market.get('step_price'))
         quote = convert(row.get('quote_amount'))
-        value = abs(quote) if quote is not None else (abs(size) * entry if entry is not None else None)
-        positions[coin] = position_entry(coin, size, entry, value, None)
+        if mark is not None:
+            value = abs(size) * mark
+            upnl = size * (mark - entry) if entry is not None else None      # PnL from the exact entry
+        else:
+            value = abs(quote) if quote is not None else (abs(size) * entry if entry is not None else None)
+            upnl = None
+        shown_entry = entry.quantize(step) if entry is not None and step is not None and step > 0 else entry
+        positions[coin] = position_entry(coin, size, shown_entry, value, upnl)
         positions[coin]['leverage'] = str(convert(row.get('leverage')) or '')
         positions[coin]['isolated_balance'] = str(convert(row.get('isolated_usdc_balance')) or ZERO)
+        positions[coin]['unsettled_funding'] = str(convert(row.get('unsettled_funding')) or ZERO)
     return positions
 
 
@@ -189,7 +201,8 @@ class RisexAdapter:
         if cached is not None:
             # Safeguard: a position that the WS cache still holds but a REST snapshot no longer lists is
             # treated as closed (size-0 update rows are not confirmed [?]); checked every RECONCILE_SEC
-            if self.stream.clock() - self.stream.last_reconcile.get(address.lower(), 0.0) >= RECONCILE_SEC:
+            last = self.stream.last_reconcile.get(address.lower())
+            if last is None or self.stream.clock() - last >= RECONCILE_SEC:
                 rest = await self.client.positions(address, priority=scheduler.P_SNAPSHOT)
                 rest_ids = {str(p.get('market_id')) for p in (rest or {}).get('positions') or []
                             if (from_wei(p.get('size')) or ZERO) != 0}

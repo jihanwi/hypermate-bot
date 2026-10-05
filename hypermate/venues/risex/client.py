@@ -30,7 +30,9 @@ class RisexRateLimited(RisexAPIError):
 
 
 class RisexClient:
-    def __init__(self, base_url: str, budget: Optional[WeightBudget] = None, markets_ttl_sec: int = 3600) -> None:
+    def __init__(self, base_url: str, budget: Optional[WeightBudget] = None, markets_ttl_sec: int = 30) -> None:
+        """markets_ttl_sec is short (30 s) because /v1/markets also carries the mark prices used for
+        notional and unrealized PnL; the symbol and step mapping rides along."""
         self.base_url = base_url.rstrip('/')
         self.budget = budget
         self.markets_ttl_sec = markets_ttl_sec
@@ -109,8 +111,8 @@ class RisexClient:
                 config = market.get('config') or {}
                 self._markets[str(market.get('market_id'))] = {
                     'name': config.get('name') or market.get('display_name') or str(market.get('market_id')),
-                    'step_size': config.get('step_size'), 'max_leverage': config.get('max_leverage'),
-                    'mark_price': market.get('mark_price'),
+                    'step_size': config.get('step_size'), 'step_price': config.get('step_price'),
+                    'max_leverage': config.get('max_leverage'), 'mark_price': market.get('mark_price'),
                 }
             self._markets_fetched_at = time.monotonic()
         return dict(self._markets)

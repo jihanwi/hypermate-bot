@@ -103,12 +103,21 @@ def format_transfer_message(transfer: dict, wallet_address: str, alias: str) -> 
 
 
 def _funding_text(position: dict) -> str:
-    """HL cumFunding.sinceOpen is positive when the position paid funding."""
+    """HL cumFunding.sinceOpen is positive when the position paid funding. Other venues (RISEx) carry
+    unsettledFunding as given by the venue (sign as reported [?])."""
     funding = to_decimal((position.get('cumFunding') or {}).get('sinceOpen'))
-    if not funding:
-        return ""
-    received = -funding
-    return f" · funding {'+' if received >= 0 else '-'}{compact_usd(abs(received))}"
+    if funding:
+        received = -funding
+        return f" · funding {'+' if received >= 0 else '-'}{compact_usd(abs(received))}"
+    unsettled = to_decimal(position.get('unsettledFunding'))
+    if unsettled:
+        return f" · unsettled funding {'+' if unsettled >= 0 else '-'}{compact_usd(abs(unsettled))}"
+    return ""
+
+
+def _leverage_text(position: dict) -> str:
+    value = to_decimal((position.get('leverage') or {}).get('value'))
+    return f" · {_sig(value, 3)}x" if value else ""
 
 
 def _futures_lines(perp_state: dict, dust_usd: Decimal = ZERO) -> list[str]:
@@ -135,7 +144,7 @@ def _futures_lines(perp_state: dict, dust_usd: Decimal = ZERO) -> list[str]:
         pnl_str = f"{'🟢' if upnl >= 0 else '🔴'} {usd(upnl)}" if upnl is not None else "N/A"
         lines.append(
             f"- {side_emoji} <b>{side}</b> ${h(base_coin(position.get('coin', 'Unknown')))} — Size: {size_str} "
-            f"— Entry: {entry_str} — PnL: {pnl_str}{_funding_text(position)}\n")
+            f"— Entry: {entry_str} — PnL: {pnl_str}{_leverage_text(position)}{_funding_text(position)}\n")
     if dust:
         lines.append(f"- + {dust} dust position{'s' if dust > 1 else ''} (under {usd(dust_usd, 0)})\n")
     return lines
