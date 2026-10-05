@@ -32,6 +32,20 @@ class AsterRateLimited(AsterAPIError):
     """HTTP 429."""
 
 
+class AsterNotFound(AsterAPIError):
+    """JSON-RPC -32603 wrapping BinanceApiError code -40000005 "The account does not exist": the address
+    has no Aster account (post-deploy 2026-10-05, same pattern as Lighter 400 / 21100)."""
+
+
+NOT_FOUND_CODE = -32603
+NOT_FOUND_MARKERS = ('code=-40000005', 'The account does not exist')
+
+
+def is_not_found(error: dict) -> bool:
+    message = str(error.get('message') or '')
+    return error.get('code') == NOT_FOUND_CODE and any(marker in message for marker in NOT_FOUND_MARKERS)
+
+
 class AsterClient:
     def __init__(self, url: str, budget: Optional[WeightBudget] = None) -> None:
         self.url = url
@@ -76,6 +90,9 @@ class AsterClient:
         if status != 200 or not isinstance(body, dict):
             raise AsterAPIError(f"{method} returned HTTP {status}")
         if body.get('error'):
+            error = body['error'] if isinstance(body['error'], dict) else {'message': str(body['error'])}
+            if is_not_found(error):
+                raise AsterNotFound(f"{method}: {error.get('message')}")
             raise AsterAPIError(f"{method} error: {body['error']}")
         return body.get('result')
 

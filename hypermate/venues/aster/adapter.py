@@ -15,7 +15,7 @@ from typing import Optional
 
 from hypermate.core.numbers import to_decimal
 from hypermate.venues import base
-from hypermate.venues.aster.client import FILLS_WINDOW_MS, AsterClient
+from hypermate.venues.aster.client import FILLS_WINDOW_MS, AsterClient, AsterNotFound
 from hypermate.venues.base import AccountSnapshot, VenueAccount, position_entry
 from hypermate.venues.hyperliquid import adapter as hl_adapter
 from hypermate.venues.hyperliquid import scheduler
@@ -108,7 +108,11 @@ class AsterAdapter:
 
     async def resolve(self, evm_address: str) -> list[VenueAccount]:
         address = evm_address.lower()
-        result = await self.client.get_balance(address, priority=scheduler.P_LEDGER)
+        try:
+            result = await self.client.get_balance(address, priority=scheduler.P_LEDGER)
+        except AsterNotFound as e:
+            logger.info(f"Aster: no account for {address}: {e}")
+            return []                      # "✗" in the /add summary; any other failure stays an error ("?")
         if not is_active(result):
             return []
         return [VenueAccount(self.venue, address, address, meta={'privacy': result.get('accountPrivacy')})]

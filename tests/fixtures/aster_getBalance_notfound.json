@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32603,
+    "message": "Internal error: BinanceApiError[code=-40000005, msg=The account does not exist, please check the address]"
+  },
+  "note": "aster_getBalance for an address with no Aster account, from the loracle /add log of 2026-10-05 (message text after 'does not exist' reconstructed)"
+}
