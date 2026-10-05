@@ -110,7 +110,7 @@ fly deploy --ha=false
 fly logs
 ```
 
-Pushes to `main` deploy automatically: `.github/workflows/fly-deploy.yml` runs `flyctl deploy --remote-only --depot=false --ha=false` with the `FLY_API_TOKEN` repository secret (`fly tokens create deploy -x 999999h`, then Settings > Secrets and variables > Actions).
+Pushes to `main` deploy automatically: `.github/workflows/fly-deploy.yml` runs `flyctl deploy --remote-only --depot=false --ha=false` with the `FLY_API_TOKEN` repository secret (`fly tokens create deploy -x 999999h`, then Settings > Secrets and variables > Actions). `--depot=false` because the Depot builder stalled for 10+ minutes twice. Without the secret the deploy steps are skipped and the job stays green.
 
 - **Fly trial accounts stop the machine every 5 minutes** ("Trial machine stopping. To run for longer than 5m0s, add a credit card"). Add a payment method to the Fly organization to run the bot continuously.
 - After `fly deploy` (or `fly secrets set`), check `fly status` that the machine is `started`; if it is `stopped`, run `fly machine start <machine-id>`.
