@@ -109,7 +109,7 @@ def micro_fills(coins, start, minutes, notional_usd=Decimal(300)):
 async def test_readd_with_stale_algos_and_micro_fills_sends_only_the_summary(repo, clock, monkeypatch):
     """The review case: 4 stale algo rows (last fill > 2 h ago) plus a stream of micro fills right after
     /add. Expected: 0 individual alerts, 0 stale algo_end messages, 1 summary."""
-    monkeypatch.setattr(Config, 'MIN_NOTIONAL_USD', 1000)
+    monkeypatch.setattr(Config, 'MIN_NOTIONAL_FLOOR_USD', 1000)
     hl, bot = FakeHLClient(), FakeBot()
     coins = ['LINK', 'DOGE', 'SUI', 'ONDO', 'UNI', 'ARB']
     from tests.helpers import clearinghouse, position
@@ -149,7 +149,7 @@ async def test_readd_with_stale_algos_and_micro_fills_sends_only_the_summary(rep
 
 
 async def test_min_notional_floor_filters_small_fills_but_not_liquidations(repo, clock, monkeypatch):
-    monkeypatch.setattr(Config, 'MIN_NOTIONAL_USD', 1000)
+    monkeypatch.setattr(Config, 'MIN_NOTIONAL_FLOOR_USD', 1000)
     await repo.add_subscription(7, W, 'w', T0)
     hl, bot = FakeHLClient(), FakeBot()
     hl.fills[W] = [fill('ETH', 'Open Long', '0.1', '3000', T0 + 1000, '0', oid=1),                    # $300
@@ -165,7 +165,7 @@ async def test_min_notional_floor_filters_small_fills_but_not_liquidations(repo,
 
 
 async def test_full_close_is_never_filtered_by_the_notional_floor(repo, clock, monkeypatch):
-    monkeypatch.setattr(Config, 'MIN_NOTIONAL_USD', 1000)
+    monkeypatch.setattr(Config, 'MIN_NOTIONAL_FLOOR_USD', 1000)
     await repo.add_subscription(7, W, 'w', T0)
     hl, bot = FakeHLClient(), FakeBot()
     hl.fills[W] = [fill('ETH', 'Close Long', '0.1', '3000', T0 + 1000, '0.5', oid=1, closed_pnl='2'),   # $300 partial
@@ -331,3 +331,35 @@ async def test_related_row_separates_volume_and_account_value(repo, clock):
     assert '10 transfers both ways · vol $113M' in text and '· acct $3.15M' in text
     assert buttons == [('w-1', 1)]
     assert await resolve_wallet(repo, {}, W, T0) == {}
+
+
+def test_min_notional_scales_with_the_account_value(monkeypatch):
+    """post-deploy 1005b (4): loracle-2's $999.99 clips passed a fixed $1,000 by one cent. The threshold is
+    max(floor $100, 0.5% of the account value): smb $483k -> $2,415, iroh $79k -> $397, a $5k wallet -> $100."""
+    monkeypatch.setattr(Config, 'MIN_NOTIONAL_FLOOR_USD', 100)
+    monkeypatch.setattr(Config, 'MIN_NOTIONAL_PCT', Decimal('0.005'))
+    assert pipeline.min_notional_usd(Decimal(483_000)) == Decimal(2415)
+    assert pipeline.min_notional_usd(Decimal(79_400)) == Decimal(397)
+    assert pipeline.min_notional_usd(Decimal(5_000)) == Decimal(100)
+    assert pipeline.min_notional_usd(None) == Decimal(100)          # no snapshot yet: the floor
+
+
+async def test_notional_threshold_uses_the_snapshot_account_value(repo, clock, monkeypatch):
+    """A $483k account (smb): a $999.99 clip and a $2,000 order are filtered, a $3,000 one is sent."""
+    monkeypatch.setattr(Config, 'MIN_NOTIONAL_FLOOR_USD', 100)
+    monkeypatch.setattr(Config, 'MIN_NOTIONAL_PCT', Decimal('0.005'))
+    await repo.add_subscription(7, W, 'smb', T0)
+    hl, bot = FakeHLClient(), FakeBot()
+    from tests.helpers import clearinghouse
+    hl.clearinghouse[W] = clearinghouse(account_value='483000')
+    hl.fills[W] = [fill('LINK', 'Open Long', '50', '19.9998', T0 + 1000, '0', oid=1),        # $999.99
+                   fill('ETH', 'Open Long', '0.5', '4000', T0 + 2000, '0', oid=2),           # $2,000
+                   fill('BTC', 'Open Long', '0.05', '60000', T0 + 3000, '0', oid=3)]         # $3,000
+    hl.now = clock
+    await pipeline.monitor_positions_job(make_context({'repo': repo, 'hl': hl}, bot=bot))   # snapshot: $483k
+    await run_cycles(repo, hl, bot, clock, T0 + CYCLE_MS)
+    texts = [m['text'] for m in bot.sent]
+    assert len(texts) == 1 and '$BTC' in texts[0]
+    (va, _), = await repo.tracked_accounts()
+    rows = {e['payload']['coin']: e['delivery'] for e in await repo.events_since(va, 0)}
+    assert rows == {'LINK': 'filtered_threshold', 'ETH': 'filtered_threshold', 'BTC': 'sent'}

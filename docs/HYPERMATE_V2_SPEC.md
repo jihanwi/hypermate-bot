@@ -715,7 +715,7 @@ Arbitrum 브릿지 (선택, `ARBISCAN_API_KEY` 있을 때만): 레거시 브릿�
 }
 ```
 
-`min_notional_usd` 는 포지션/spot 이벤트의 `notional_usd` 가 그 미만이면 알림 skip (events 에는 `delivery='filtered_threshold'` 로 기록, `/recent` 에 흐리게 표시, algo 감지 집계에는 포함, 청산과 전량 종료 `POSITION_CLOSE` 는 예외, 부분 감소는 필터). 버튼으로 0 / 1k / 10k / 100k 선택. 전역 기본값 변경은 `/settings default`. 선행 구현 (2026-10-05): 전역 기본값 `MIN_NOTIONAL_USD` 환경변수, 기본 $1,000. 유저별 UI 는 미구현.
+`min_notional_usd` 는 포지션/spot 이벤트의 `notional_usd` 가 그 미만이면 알림 skip (events 에는 `delivery='filtered_threshold'` 로 기록, `/recent` 에 흐리게 표시, algo 감지 집계에는 포함, 청산과 전량 종료 `POSITION_CLOSE` 는 예외, 부분 감소는 필터). 버튼으로 0 / 1k / 10k / 100k 선택. 전역 기본값 변경은 `/settings default`. 선행 구현 (2026-10-05): 전역 기본값 환경변수, 임계값 = max(`MIN_NOTIONAL_FLOOR_USD` 기본 $100, 계좌 가치 x `MIN_NOTIONAL_PCT` 기본 0.5%). 계좌 가치는 마지막 스냅샷 값, 없으면 floor. 유저별 UI 는 미구현.
 
 ### 9.5 `/mute <alias> [duration]`
 

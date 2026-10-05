@@ -54,7 +54,8 @@ python -m hypermate.main
 | `LOG_LEVEL` | no | `INFO` | Python log level |
 | `HYPERLIQUID_API_URL` | no | `https://api.hyperliquid.xyz` | Hyperliquid API base URL |
 | `ADMIN_USER_IDS` | no | | Telegram user ids allowed to run `/health`, comma or space separated |
-| `MIN_NOTIONAL_USD` | no | `1000` | Position and spot alerts under this notional are recorded but not sent (full closes and liquidations always go out) |
+| `MIN_NOTIONAL_FLOOR_USD` | no | `100` | Alert threshold floor. The threshold per account is `max(floor, account value x MIN_NOTIONAL_PCT)`; position and spot alerts under it are recorded but not sent (full closes and liquidations always go out) |
+| `MIN_NOTIONAL_PCT` | no | `0.005` | Share of the account value (from the last snapshot) used for the threshold: a $483k account filters under $2,415, a $79k one under $397, a $5k one at the floor |
 | `HL_WEIGHT_BUDGET` | no | `1020` | Hyperliquid info API weight per minute the bot allows itself (HL limit 1200) |
 | `POLL_FAST_SEC` | no | `20` | Floor for the position poll interval. Raised automatically when polling would need over 40% of the budget |
 | `POLL_LEDGER_SEC` | no | `180` | Ledger (deposits, withdrawals, transfers) poll interval, stretched up to 600 s when the budget is short |

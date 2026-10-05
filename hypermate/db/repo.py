@@ -620,6 +620,12 @@ class Repo:
                               (json.dumps(sorted(set(dexs))), venue_account_id))
         await self.db.commit()
 
+    async def account_value(self, venue_account_id: int) -> Optional[str]:
+        """Last polled account value of one venue account (Decimal string), or None."""
+        row = await self._row(await self.db.execute(
+            "SELECT account_value FROM snapshots WHERE venue_account_id = ?", (venue_account_id,)))
+        return row[0] if row else None
+
     async def hl_account_value(self, address: str) -> Optional[str]:
         """Last polled HL account value for the address, or None if not polled yet."""
         cur = await self.db.execute(

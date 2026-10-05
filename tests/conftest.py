@@ -1,3 +1,4 @@
+from decimal import Decimal
 import pytest
 
 from hypermate.config import Config
@@ -8,7 +9,8 @@ from hypermate.db.repo import Repo
 def no_min_notional(monkeypatch):
     """Phase 0 to 2 tests use small synthetic fills; the $1,000 floor (deploy review 2026-10-05) is
     exercised by its own tests, which set it explicitly."""
-    monkeypatch.setattr(Config, 'MIN_NOTIONAL_USD', 0)
+    monkeypatch.setattr(Config, 'MIN_NOTIONAL_FLOOR_USD', 0)
+    monkeypatch.setattr(Config, 'MIN_NOTIONAL_PCT', Decimal(0))
 
 
 @pytest.fixture

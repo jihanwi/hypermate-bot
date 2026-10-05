@@ -1,6 +1,7 @@
 """Configuration: environment variables and constants."""
 
 import os
+from decimal import Decimal
 
 
 def _load_dotenv() -> None:
@@ -35,7 +36,10 @@ class Config:
     HL_WEIGHT_BUDGET: int = int(os.getenv("HL_WEIGHT_BUDGET", "1020"))   # 1200/min with a 15% margin
     DORMANT_AFTER_MS: int = 7 * 24 * 3600 * 1000     # no activity for 7 days -> polled every 3rd cycle
     # Alert hygiene (deploy review 2026-10-05)
-    MIN_NOTIONAL_USD: int = int(os.getenv("MIN_NOTIONAL_USD", "1000"))   # spec 9.4 min_notional, global for now
+    # spec 9.4 min_notional, global for now: threshold = max(floor, account_value x pct). A fixed $1,000 let
+    # loracle-2's $999.99 clips through by one cent (789 events in 6 h); 0.5% of a $483k account is $2,415.
+    MIN_NOTIONAL_FLOOR_USD: int = int(os.getenv("MIN_NOTIONAL_FLOOR_USD", "100"))
+    MIN_NOTIONAL_PCT: Decimal = Decimal(os.getenv("MIN_NOTIONAL_PCT", "0.005"))
     ALGO_STALE_SEC: int = 2 * 3600       # on /add, algos idle longer than this end silently
     ALGO_REARM_SEC: int = 600            # after an ALGO_END, fills on that coin wait for re-detection this long
     ADMIN_USER_IDS: frozenset = frozenset(
