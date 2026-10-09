@@ -143,6 +143,24 @@ def mute_all_keyboard() -> InlineKeyboardMarkup:
                                   InlineKeyboardButton(texts.MUTE_ALL_NO, callback_data=f"{MUTE_CALLBACK}all:0")]])
 
 
+async def mute_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """m:all:1 mutes every wallet of the user who pressed it (no end); m:all:0 cancels."""
+    query = update.callback_query
+    repo: Repo = context.bot_data['repo']
+    await query.answer()
+    if (query.data or '') == f"{MUTE_CALLBACK}all:1":
+        from hypermate.core.pipeline import MUTE_FOREVER_MS
+        count = await repo.mute_all(query.from_user.id, MUTE_FOREVER_MS, now_ms())
+        text = texts.MUTE_ALL_DONE.format(count=count)
+    else:
+        text = texts.MUTE_ALL_CANCELLED
+    try:
+        await query.edit_message_text(text=text, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.warning(f"mute_all edit failed: {e}")
+        await query.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+
 def did_you_mean_keyboard(command: str, alias: str) -> Optional[InlineKeyboardMarkup]:
     data = f"{DYM_CALLBACK}{command}:{alias}"
     if len(data.encode()) > 64:

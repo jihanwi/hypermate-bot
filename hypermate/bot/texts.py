@@ -83,4 +83,19 @@ SETTINGS_HEADER = ("⚙️ <b>Settings for {alias}</b>\nTap to toggle. Venues, a
 SETTINGS_DEFAULT_HEADER = ("⚙️ <b>Default settings</b> for wallets you add\nA wallet's own /settings override these. "
                            "Auto = $100 or 0.5% of the account value, whichever is higher.")
 SETTINGS_STALE = "This keyboard is stale. Run /settings again."
+
+# /mute, /unmute (spec 9.5)
+MUTE_USAGE = "Usage: /mute alias [1h|6h|1d|7d] (no duration = until /unmute)\nExample: <code>/mute whale1 1d</code>"
+UNMUTE_USAGE = "Usage: /unmute alias\nExample: <code>/unmute whale1</code>"
+MUTED = "🔇 <b>{alias}</b> muted {until}."
+MUTED_UNTIL_FOREVER = "until /unmute"
+MUTED_UNTIL_FOR = "for {duration}"
+MUTE_BAD_DURATION = "Duration must be one of 1h, 6h, 1d, 7d."
+MUTE_ALL_CONFIRM = "Mute alerts for all your wallets until /unmute?"
+MUTE_ALL_YES = "Mute all"
+MUTE_ALL_NO = "Cancel"
+MUTE_ALL_DONE = "🔇 Muted {count} wallets until /unmute."
+MUTE_ALL_CANCELLED = "Not muted."
+UNMUTED = "🔔 <b>{alias}</b> unmuted. {count} events while muted, see /recent {alias}."
+NOT_MUTED = "<b>{alias}</b> is not muted."
 NOT_YOURS = "Not your settings."

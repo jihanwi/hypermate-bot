@@ -120,9 +120,12 @@ async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await reply(update, texts.NO_WALLETS)
         return
     lines = []
+    now = now_ms()
     for alias, address in wallets:
         active = [r['venue'] for r in await _repo(context).venue_accounts_of(address) if r['active']]
-        lines.append(formatter.format_list_line(alias, address, await _account_value(context, address), active))
+        row = await _repo(context).subscription_of(user_id, address)
+        lines.append(formatter.format_list_line(alias, address, await _account_value(context, address), active,
+                                                mute_suffix(row['muted_until_ms'] if row else None, now)))
     await reply(update, texts.LIST_HEADER + "\n" + "\n".join(lines))
 
 
@@ -431,6 +434,78 @@ async def track_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.message.reply_text(texts.INTERNAL_ERROR.format(error_id='track'), parse_mode=ParseMode.HTML)
         return
     await query.message.reply_text(message, parse_mode=ParseMode.HTML)
+
+
+MUTE_DURATIONS = {'1h': 3600_000, '6h': 6 * 3600_000, '1d': 86_400_000, '7d': 7 * 86_400_000}
+
+
+def mute_suffix(muted_until_ms: Optional[int], now: int) -> str:
+    """/list marker: '🔇' for a mute without an end, '🔇 5h' with the time left, '' when not muted."""
+    if not pipeline.is_muted(muted_until_ms, now):
+        return ''
+    if int(muted_until_ms) >= pipeline.MUTE_FOREVER_MS:
+        return '🔇'
+    return f"🔇 {formatter.humanize_ms(int(muted_until_ms) - now + 59_999)}"      # rounded up: 1h, not 59m
+
+
+async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/mute alias [1h|6h|1d|7d] (spec 9.5); without an alias, a confirmation button mutes every wallet."""
+    user_id = update.effective_user.id
+    if not context.args:
+        if not await _repo(context).list_subscriptions(user_id):
+            await reply(update, texts.MUTE_USAGE)
+            return
+        await callbacks.answer_markup(update, texts.MUTE_ALL_CONFIRM, callbacks.mute_all_keyboard())
+        return
+    args = list(context.args)
+    duration_ms = None
+    if len(args) > 1 and args[-1].lower() in MUTE_DURATIONS:
+        duration_ms = MUTE_DURATIONS[args.pop().lower()]
+    elif len(args) > 1 and re.fullmatch(r'\d+[hdHD]', args[-1]):
+        await reply(update, texts.MUTE_BAD_DURATION)
+        return
+    try:
+        subscription = await _subscription_or_reply(update, context, " ".join(args).strip(), command='mute')
+        if subscription is None:
+            return
+        alias, address = subscription
+        row = await _repo(context).subscription_of(user_id, address)
+        now = now_ms()
+        until = now + duration_ms if duration_ms else pipeline.MUTE_FOREVER_MS
+        since = row['muted_since_ms'] if pipeline.is_muted(row['muted_until_ms'], now) else now
+        await _repo(context).set_mute(row['rowid'], until, since)
+    except Exception as e:
+        await reply_internal_error(update, f"mute_command user={user_id}", e)
+        return
+    logger.info(f"User {user_id} muted '{alias}' until {until}")
+    until_text = (texts.MUTED_UNTIL_FOR.format(duration=formatter.humanize_ms(duration_ms)) if duration_ms
+                  else texts.MUTED_UNTIL_FOREVER)
+    await reply(update, texts.MUTED.format(alias=h(alias), until=until_text))
+
+
+async def unmute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/unmute alias: alerts resume; the events recorded meanwhile are not re-sent, only counted."""
+    if not context.args:
+        await reply(update, texts.UNMUTE_USAGE)
+        return
+    user_id = update.effective_user.id
+    try:
+        subscription = await _subscription_or_reply(update, context, " ".join(context.args).strip(), command='unmute')
+        if subscription is None:
+            return
+        alias, address = subscription
+        row = await _repo(context).subscription_of(user_id, address)
+        now = now_ms()
+        if not pipeline.is_muted(row['muted_until_ms'], now):
+            await reply(update, texts.NOT_MUTED.format(alias=h(alias)))
+            return
+        count = await _repo(context).events_count_for_wallet(address, int(row['muted_since_ms'] or now))
+        await _repo(context).set_mute(row['rowid'], None, None)
+    except Exception as e:
+        await reply_internal_error(update, f"unmute_command user={user_id}", e)
+        return
+    logger.info(f"User {user_id} unmuted '{alias}' ({count} events while muted)")
+    await reply(update, texts.UNMUTED.format(alias=h(alias), count=count))
 
 
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
