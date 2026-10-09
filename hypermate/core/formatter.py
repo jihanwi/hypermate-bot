@@ -533,7 +533,7 @@ def algo_label(sign: int, position_after: Optional[Decimal], start_position: Opt
 
 
 def format_algo_progress(wallet_address: str, alias: str, state: dict, verb: str, side: str,
-                         position_after: Optional[Decimal], venue: str = HYPERLIQUID) -> str:
+                         position_after: Optional[Decimal], venue: str = HYPERLIQUID, earlier_fills: int = 0) -> str:
     """ALGO_START text; the same message is edited with fresh numbers every algo_progress_sec.
 
     Elapsed time runs from the first to the last fill (not to now), so it matches ALGO_END.
@@ -550,8 +550,9 @@ def format_algo_progress(wallet_address: str, alias: str, state: dict, verb: str
         line += f" · pos {compact_usd(abs(position_after) * vwap)}"
     if vwap is not None:
         line += f" avg {plain_price(vwap)}"
+    earlier = f"\nincl. {earlier_fills} earlier fills" if earlier_fills else ""
     return (f"{badge(venue)} 🤖 <b>{alias_link(wallet_address, alias, venue)}</b> algo {verb} {side} "
-            f"{coin_label(state['coin'])}\n{line}")
+            f"{coin_label(state['coin'])}\n{line}{earlier}")
 
 
 def format_algo_end(wallet_address: str, alias: str, state: dict, verb: str, side: str,
