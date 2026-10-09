@@ -201,7 +201,7 @@ async def test_hip3_fill_adds_dex_and_positions_poll_it(repo, clock):
     hl.fills[A] = [fill('xyz:MU', 'Open Short', '100', '95', T0 + 500, '0', oid=1)]
     clock.ms = T0 + 30_000
     await fills_cycle(repo, hl, bot)
-    assert 'opened SHORT $MU (xyz)' in bot.sent[0]['text']
+    assert 'opened SHORT $MU · xyz' in bot.sent[0]['text']
     (va, _), = await repo.tracked_accounts()
     assert await repo.get_dexs(va) == ['xyz']
     hl.clearinghouse[(A, 'xyz')] = clearinghouse(position('xyz:MU', '-100'), account_value='900')

@@ -166,7 +166,7 @@ def test_open_increase_reduce_close_flip_liquidation_texts():
 
 def test_hip3_coin_label_and_spot_display_name():
     text = formatter.format_fill_message(ADDR, 'w', chain_of(fill('xyz:MU', 'Open Short', '100', '95.5', 1, '0')))
-    assert 'opened SHORT $MU (xyz)\n$9.55k (100 MU) @ 95.50' in text
+    assert 'opened SHORT $MU · xyz\n$9.55k (100 MU) @ 95.50' in text
     chain = chain_of(fill('@107', 'Buy', '10', '41.5', 1, '0', side='B'))
     chain['meta']['display_coin'] = 'HYPE'
     text = formatter.format_fill_message(ADDR, 'w', chain)

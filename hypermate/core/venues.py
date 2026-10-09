@@ -72,7 +72,7 @@ def split_venue_prefix(text: str) -> tuple[Optional[str], str]:
 
 
 def resolve_summary(results: dict[str, Optional[list[VenueAccount]]], hl_dexs: Optional[list[str]] = None) -> str:
-    """'HL ✅ (xyz) · Lighter ✅ (2 sub-accounts) · RISEx ✗ · Aster ✗' for the venues that were tried."""
+    """'HL ✅ · dex: xyz · Lighter ✅ (2 sub-accounts) · RISEx ✗ · Aster ✗' for the venues that were tried."""
     parts = []
     for venue in VENUE_ORDER:
         if venue not in results:

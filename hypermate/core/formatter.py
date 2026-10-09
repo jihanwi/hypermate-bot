@@ -435,12 +435,13 @@ def base_coin(coin: str) -> str:
 
 
 def coin_label(coin: str, display: Optional[str] = None) -> str:
-    """$BTC, HIP-3 "xyz:MU" -> $MU (xyz) (spec 5.2), spot uses its display name."""
+    """$BTC, HIP-3 "xyz:MU" -> $MU · xyz (same family as the /add summary's 'dex: xyz', 2026-10-09
+    review; every event type alike), spot uses its display name."""
     if display:
         return f"${h(display)}"
     if ':' in coin:
         dex, name = coin.split(':', 1)
-        return f"${h(name)} ({h(dex)})"
+        return f"${h(name)} · {h(dex)}"
     return f"${h(coin)}"
 
 
