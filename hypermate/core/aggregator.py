@@ -59,13 +59,20 @@ def chain_meta(meta: dict) -> dict:
 
 
 def merge_into_chain(chain: dict, payload: dict) -> dict:
-    """Add one order to the chain. The header type stays the first order's (e.g. OPEN then adds)."""
+    """Add one order to the chain. The header type stays the first order's (e.g. OPEN then adds), except
+    that a reduce chain whose latest order brings the position to 0 becomes a close (2026-10-09 review:
+    'reduced LONG $HYPE … now $0' was a full close)."""
+    chain_type = chain['type']
+    after = to_decimal(payload.get('position_after'))
+    if chain_type == EventType.POSITION_DECREASE.value and (
+            payload.get('type') == EventType.POSITION_CLOSE.value or (after is not None and after == 0)):
+        chain_type = EventType.POSITION_CLOSE.value
     size = (to_decimal(chain['size']) or ZERO) + (to_decimal(payload.get('size')) or ZERO)
     notional = (to_decimal(chain['notional_usd']) or ZERO) + (to_decimal(payload.get('notional_usd')) or ZERO)
     pnl = chain.get('realized_pnl')
     if payload.get('realized_pnl') is not None:
         pnl = str((to_decimal(pnl) or ZERO) + (to_decimal(payload['realized_pnl']) or ZERO))
-    return {**chain,
+    return {**chain, 'type': chain_type,
             'size': str(size), 'notional_usd': str(notional), 'realized_pnl': pnl,
             'position_after': payload.get('position_after'),
             'fills': int(chain['fills']) + int((payload.get('meta') or {}).get('fills', 1)),

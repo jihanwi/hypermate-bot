@@ -303,3 +303,29 @@ async def test_deliver_sleeps_only_between_subscribers(repo, monkeypatch):
     sleeps.clear()
     await pipeline.deliver(bot, repo, va, lambda alias: f'hi {alias}')
     assert sleeps == []
+
+
+async def test_reduce_chain_that_reaches_zero_becomes_a_close(repo, clock):
+    """2026-10-09 review: 'cl reduced LONG $HYPE -$5.09M … now $0' was a full close. A reduce chain is
+    promoted to 🔒 closed with the held time when its latest order brings the position to 0; the
+    intermediate edits still say reduced."""
+    await repo.add_subscription(1, A, 'w', T0 - 4 * 3600_000)
+    hl, bot = FakeHLClient(), FakeBot()
+    hl.fills[A] = [fill('HYPE', 'Open Long', '60000', '80', T0 - 3 * 3600_000, '0', oid=1)]
+    clock.ms = T0 - 3 * 3600_000 + 20_000
+    await fills_cycle(repo, hl, bot)
+    assert len(bot.sent) == 1 and 'opened LONG $HYPE' in bot.sent[0]['text']
+    steps = [('20000', '60000'), ('20000', '40000'), ('20000', '20000')]           # three reduces to 0
+    for i, (size, start) in enumerate(steps):
+        hl.fills[A].append(fill('HYPE', 'Close Long', size, '84.84', T0 + 1000 + 20_000 * i, start, oid=10 + i,
+                                closed_pnl='-17435'))
+        clock.ms = T0 + 20_000 * i + 10_000
+        await fills_cycle(repo, hl, bot)
+        text = bot.sent[1]['text']
+        check_telegram_html(text)
+        if i < 2:
+            assert 'reduced LONG $HYPE' in text and 'now $' in text and 'closed' not in text
+    assert len(bot.sent) == 2 and len(bot.edits) == 2
+    assert text.startswith('[HL] 🔒 ') and 'closed LONG $HYPE' in text
+    assert '$5.09M (60,000 HYPE) @ 84.84' in text and 'realized 🔴 -$52,305' in text and '· 3 fills' in text
+    assert 'held 3h' in text and 'now $0' not in text
