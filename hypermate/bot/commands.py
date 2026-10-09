@@ -343,9 +343,7 @@ async def twap_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             start = await repo.get_event_by_key(dedupe_key(
                 HYPERLIQUID, va, EventType.ALGO_START,
                 algo_source(state['coin'], int(state['sign']), int(state['started_ms']))))
-            verb, side = formatter.algo_label(int(state['sign']), None)
-            if start is not None:
-                verb, side = start['payload'].get('verb', verb), start['payload'].get('side', side)
+            verb, side = pipeline.current_algo_label({'sign': int(state['sign']), **(start['payload'] if start else {})})
             rows.append({'kind': 'algo', 'alias': alias, 'address': address, 'state': state,
                          'verb': verb, 'side': side})
     await reply(update, formatter.format_twap_list(rows, now_ms()))

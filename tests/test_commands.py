@@ -148,7 +148,7 @@ async def test_twap_lists_native_twaps_and_algos(repo):
                                 'last_fill_ms': 1_790_000_100_000, 'fills_count': 40,
                                 'total_sz': '50000', 'total_ntl': '8500'})
     await repo.record_event('hyperliquid:%d:algo_start:CASHCAT:1:1790000000000' % va, va, 'algo_start',
-                            1_790_000_000_000, {'verb': 'reducing', 'side': 'SHORT'}, 'sent', 1)
+                            1_790_000_000_000, {'verb': 'closing', 'side': 'SHORT'}, 'sent', 1)
     out = (await call(commands.twap_command, repo, hl, 5, 'loracle'))[0]
     assert 'BUY $BTC · 45% (0.45/1)' in out
-    assert 'algo reducing SHORT $CASHCAT · 40 fills $8.5k' in out
+    assert 'algo closing SHORT $CASHCAT · 40 fills $8.5k' in out

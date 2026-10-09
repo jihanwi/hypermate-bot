@@ -196,11 +196,11 @@ def test_algo_messages():
     text = formatter.format_algo_progress(ADDR, 'loracle', state, verb, side, Decimal('416.5'))
     check_telegram_html(text)
     assert '🤖' in text and 'algo accumulating LONG $BTC\n12 fills +$41k in 5m · pos $35.9M avg 86,189' in text
-    assert formatter.algo_label(1, Decimal('-5000')) == ('reducing', 'SHORT')
+    assert formatter.algo_label(1, Decimal('-5000')) == ('closing', 'SHORT')
     end = formatter.format_algo_end(ADDR, 'loracle', {**state, 'last_fill_ms': 58 * 60_000}, verb, side)
     assert 'algo done accumulating LONG $BTC\n+$41k (0.4757 BTC) avg 86,189 · 12 fills · 58m' in end
-    end = formatter.format_algo_end(ADDR, 'x', {**state, 'coin': 'CASHCAT'}, 'reducing', 'SHORT')
-    assert 'algo done reducing SHORT $CASHCAT' in end
+    end = formatter.format_algo_end(ADDR, 'x', {**state, 'coin': 'CASHCAT'}, 'closing', 'SHORT')
+    assert 'algo done closing SHORT $CASHCAT' in end
 
 
 def test_recent_view_marks_unsent_events():

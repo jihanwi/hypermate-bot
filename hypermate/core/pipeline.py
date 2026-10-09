@@ -339,10 +339,12 @@ async def _start_algo(bot: Bot, repo: Repo, key: int, address: str, algo_key: tu
     coin, sign = algo_key
     state = aggregator.new_algo_state(coin, sign, orders)
     position_after = to_decimal(orders[-1].get('position_after'))
-    verb, side = algo_label(sign, position_after)
+    start_position = to_decimal((orders[0].get('meta') or {}).get('start_position'))
+    verb, side = algo_label(sign, position_after, start_position)
     await repo.upsert_algo(key, state)
     payload = {'coin': coin, 'sign': sign, 'verb': verb, 'side': side,
                'position_after': str(position_after) if position_after is not None else None,
+               'start_position': str(start_position) if start_position is not None else None,
                'started_ms': state['started_ms'], 'last_progress_ms': now}
     source = algo_source(coin, sign, state['started_ms'])
     delivery = events.SUMMARIZED if summarized else events.SENT
@@ -357,11 +359,24 @@ async def _start_algo(bot: Bot, repo: Repo, key: int, address: str, algo_key: tu
 
 
 async def _update_algo_position(repo: Repo, key: int, k: tuple, state: dict, payload: dict) -> None:
+    """Every absorbed order moves the START payload's position_after; the label follows it (closing LONG
+    becomes accumulating SHORT once the position crosses 0, 2026-10-09 review)."""
     start = await repo.get_event_by_key(events.dedupe_key(
         events.HYPERLIQUID, key, EventType.ALGO_START, algo_source(k[0], k[1], int(state['started_ms']))))
     if start is not None:
-        await repo.update_event_payload(start['event_id'],
-                                        {**start['payload'], 'position_after': payload.get('position_after')})
+        meta = {**start['payload'], 'position_after': payload.get('position_after')}
+        meta['verb'], meta['side'] = current_algo_label(meta)
+        await repo.update_event_payload(start['event_id'], meta)
+
+
+def current_algo_label(meta: dict) -> tuple[str, str]:
+    """(verb, side) of an algo from its START payload: recomputed from start_position and the latest
+    position_after when both are stored, else the stored words (older rows)."""
+    start_position = to_decimal(meta.get('start_position'))
+    position_after = to_decimal(meta.get('position_after'))
+    if start_position is not None and position_after is not None:
+        return algo_label(int(meta.get('sign', 0)), position_after, start_position)
+    return meta.get('verb', 'accumulating'), meta.get('side', 'LONG' if int(meta.get('sign', 0)) > 0 else 'SHORT')
 
 
 def min_notional_usd(account_value: Optional[Decimal]) -> Decimal:
@@ -542,9 +557,8 @@ async def maintain_algos(bot: Bot, repo: Repo, key: int, address: str, now: int)
     for (coin, sign), state in (await repo.active_algos(key)).items():
         source = algo_source(coin, sign, int(state['started_ms']))
         start = await repo.get_event_by_key(events.dedupe_key(events.HYPERLIQUID, key, EventType.ALGO_START, source))
-        meta = start['payload'] if start else {}
-        verb = meta.get('verb', 'accumulating')
-        side = meta.get('side', 'LONG' if sign > 0 else 'SHORT')
+        meta = start['payload'] if start else {'sign': sign}
+        verb, side = current_algo_label({'sign': sign, **meta})
         if aggregator.algo_is_idle(state, now, st):
             logger.info(f"Algo ended: {verb} {side} {coin} for {address}")
             await emit(bot, repo, key, EventType.ALGO_END, source, now,
@@ -654,9 +668,8 @@ async def _algo_groups(repo: Repo, key: int, now: int) -> tuple[list[dict], Deci
     for (coin, sign), state in (await repo.active_algos(key)).items():
         start = await repo.get_event_by_key(events.dedupe_key(
             events.HYPERLIQUID, key, EventType.ALGO_START, algo_source(coin, sign, int(state['started_ms']))))
-        meta = start['payload'] if start else {}
-        verb, side = algo_label(sign, to_decimal(meta.get('position_after')))
-        verb, side = meta.get('verb', verb), meta.get('side', side)
+        meta = start['payload'] if start else {'sign': sign}
+        verb, side = current_algo_label({'sign': sign, **meta})
         group = groups.setdefault((verb, side), {'verb': verb, 'side': side, 'coins': [], 'notional': Decimal(0)})
         notional = to_decimal(state.get('total_ntl')) or Decimal(0)
         group['coins'].append((coin, notional))
