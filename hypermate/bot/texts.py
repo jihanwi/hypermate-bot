@@ -84,6 +84,12 @@ SETTINGS_DEFAULT_HEADER = ("⚙️ <b>Default settings</b> for wallets you add\n
                            "Auto = $100 or 0.5% of the account value, whichever is higher.")
 SETTINGS_STALE = "This keyboard is stale. Run /settings again."
 
+# /rename (spec 9.1)
+RENAME_USAGE = "Usage: /rename old new\nExample: <code>/rename whale1 jez</code>"
+RENAME_INVALID = "An alias is 1 to 32 characters without spaces."
+RENAME_EXISTS = "You already have a wallet named <b>{alias}</b>."
+RENAMED = "✅ Renamed <b>{old}</b> → <b>{new}</b>."
+
 # /mute, /unmute (spec 9.5)
 MUTE_USAGE = "Usage: /mute alias [1h|6h|1d|7d] (no duration = until /unmute)\nExample: <code>/mute whale1 1d</code>"
 UNMUTE_USAGE = "Usage: /unmute alias\nExample: <code>/unmute whale1</code>"

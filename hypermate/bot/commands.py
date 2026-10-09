@@ -508,6 +508,37 @@ async def unmute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await reply(update, texts.UNMUTED.format(alias=h(alias), count=count))
 
 
+ALIAS_RE = re.compile(r'\S{1,32}')
+
+
+async def rename_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/rename old new: unique per user (case-insensitive), 1 to 32 characters, no spaces. Aliases that
+    /related derived from the old one (<alias>-N) are left as they are."""
+    if len(context.args) != 2:
+        await reply(update, texts.RENAME_USAGE)
+        return
+    old, new = context.args
+    user_id = update.effective_user.id
+    if not ALIAS_RE.fullmatch(new):
+        await reply(update, texts.RENAME_INVALID)
+        return
+    try:
+        subscription = await _subscription_or_reply(update, context, old, command='rename')
+        if subscription is None:
+            return
+        stored_old, _ = subscription
+        clash = await _repo(context).find_subscription(user_id, new)
+        if clash is not None and clash[0].lower() != stored_old.lower():
+            await reply(update, texts.RENAME_EXISTS.format(alias=h(clash[0])))
+            return
+        await _repo(context).rename_subscription(user_id, stored_old, new)
+    except Exception as e:
+        await reply_internal_error(update, f"rename_command user={user_id}", e)
+        return
+    logger.info(f"User {user_id} renamed '{stored_old}' to '{new}'")
+    await reply(update, texts.RENAMED.format(old=h(stored_old), new=h(new)))
+
+
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/settings alias: one message with toggle buttons (spec 9.4); /settings default edits the user's defaults."""
     if not context.args:
