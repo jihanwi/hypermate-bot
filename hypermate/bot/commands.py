@@ -120,14 +120,21 @@ async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not wallets:
         await reply(update, texts.NO_WALLETS)
         return
-    lines = []
+    rows = []
     now = now_ms()
     for alias, address in wallets:
-        active = [r['venue'] for r in await _repo(context).venue_accounts_of(address) if r['active']]
-        row = await _repo(context).subscription_of(user_id, address)
-        lines.append(formatter.format_list_line(alias, address, await _account_value(context, address), active,
-                                                mute_suffix(row['muted_until_ms'] if row else None, now)))
-    await reply(update, texts.LIST_HEADER + "\n" + "\n".join(lines))
+        accounts = [r for r in await _repo(context).venue_accounts_of(address) if r['active']]
+        positions = 0
+        for account in accounts:
+            snapshot = await _repo(context).get_snapshot(account['key']) or {}
+            positions += sum(1 for dex in snapshot.values() for p in (dex or {}).values()
+                             if (to_decimal((p or {}).get('szi')) or 0) != 0)
+        subscription = await _repo(context).subscription_of(user_id, address)
+        rows.append({'alias': alias, 'address': address, 'value': await _account_value(context, address),
+                     'venues': [r['venue'] for r in accounts], 'positions': positions,
+                     'mute': mute_suffix(subscription['muted_until_ms'] if subscription else None, now)})
+    for chunk in formatter.format_list(rows):
+        await reply(update, chunk)
 
 
 async def _account_value(context: ContextTypes.DEFAULT_TYPE, address: str):

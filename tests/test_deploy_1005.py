@@ -306,7 +306,7 @@ async def test_add_with_venue_prefix_pins_one_venue_and_list_shows_badges(repo, 
     assert RISEX_ADDR not in {a for _, a in await repo.tracked_accounts()}
     update = make_update(5)
     await commands.list_wallets(update, make_context(bot_data))
-    assert '· [RISE]' in update.message.replies[0]['text'] and '[HL]' not in update.message.replies[0]['text']
+    assert '· RISE' in update.message.replies[0]['text'] and ' HL' not in update.message.replies[0]['text']
     update = make_update(5)
     await commands.add_wallet(update, make_context(bot_data, args=['bogus:0x12', 'x']))
     assert 'Usage: /add' in update.message.replies[0]['text'] and 'risex:' in update.message.replies[0]['text']

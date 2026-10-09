@@ -44,7 +44,7 @@ async def test_list_remove_and_summary(repo):
     assert await call(commands.list_wallets, repo, hl, 9) == [texts.NO_WALLETS]
     await call(commands.add_wallet, repo, hl, 9, A, '<evil>_alias')
     listed = await call(commands.list_wallets, repo, hl, 9)
-    assert '&lt;evil&gt;_alias' in listed[0] and '$777.00' in listed[0]
+    assert '&lt;evil&gt;_alias' in listed[0] and '· $777 · HL' in listed[0] and 'Tracked wallets (1)</b> · total $777' in listed[0]
     summary = await call(commands.positions_command, repo, hl, 9)
     assert '1 positions · largest SHORT $ETH $9,000' in summary[0]
     assert await call(commands.remove_wallet, repo, hl, 9, '<EVIL>_ALIAS') == \
@@ -86,13 +86,13 @@ async def test_list_uses_stored_account_value_after_poll(repo, monkeypatch):
     hl.clearinghouse[A] = clearinghouse(account_value='1234.5678')
     await call(commands.add_wallet, repo, hl, 3, A, 'w')
     # not polled yet: falls back to a live call
-    assert '$1,234.57' in (await call(commands.list_wallets, repo, hl, 3))[0]
+    assert '$1.23k' in (await call(commands.list_wallets, repo, hl, 3))[0]
     assert ('clearinghouseState', A) in hl.calls
 
     await pipeline.monitor_positions_job(make_context({'repo': repo, 'hl': hl}, bot=FakeBot()))
     hl.clearinghouse[A] = clearinghouse(account_value='99')   # live value now differs
     hl.calls.clear()
-    assert '$1,234.57' in (await call(commands.list_wallets, repo, hl, 3))[0]
+    assert '$1.23k' in (await call(commands.list_wallets, repo, hl, 3))[0]
     assert hl.calls == []
 
 

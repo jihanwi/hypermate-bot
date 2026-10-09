@@ -66,7 +66,6 @@ ALIAS_NOT_FOUND = "Alias <b>{alias}</b> not found. Use /list to see your tracked
 DID_YOU_MEAN = "Alias <b>{alias}</b> not found. Did you mean <code>{suggestion}</code>?"
 DYM_BUTTON = "/{command} {alias}"
 NO_WALLETS = "You're not tracking any wallets yet. Use /add to start."
-LIST_HEADER = "Here are your tracked wallets:"
 POSITIONS_SUMMARY_HEADER = "📊 <b>Positions summary</b>"
 
 HL_API_ERROR = "Hyperliquid API error: the venue did not answer."
