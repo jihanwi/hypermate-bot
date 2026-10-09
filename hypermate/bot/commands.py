@@ -1,5 +1,6 @@
 """Telegram command handlers. Wallet lookups go through the DB only (B1)."""
 
+import difflib
 import logging
 import re
 import uuid
@@ -181,9 +182,8 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not context.args:
         await positions_summary(update, context)
         return
-    subscription = await _repo(context).find_subscription(user_id, " ".join(context.args).strip())
+    subscription = await _subscription_or_reply(update, context, " ".join(context.args).strip(), command='positions')
     if subscription is None:
-        await reply(update, texts.ALIAS_NOT_FOUND.format(alias=h(" ".join(context.args))))
         return
     alias, address = subscription
     rows = await _repo(context).venue_accounts_of(address)
@@ -236,9 +236,8 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await reply(update, texts.STATS_USAGE)
         return
     user_id = update.effective_user.id
-    subscription = await _repo(context).find_subscription(user_id, " ".join(context.args).strip())
+    subscription = await _subscription_or_reply(update, context, " ".join(context.args).strip(), command='stats')
     if subscription is None:
-        await reply(update, texts.ALIAS_NOT_FOUND.format(alias=h(" ".join(context.args))))
         return
     alias, address = subscription
     try:
@@ -287,10 +286,21 @@ async def _scan_dexs(context: ContextTypes.DEFAULT_TYPE, address: str) -> list[s
 
 async def _subscription_or_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, alias_text: str,
                                  command: Optional[str] = None):
-    subscription = await _repo(context).find_subscription(update.effective_user.id, alias_text)
-    if subscription is None:
+    """(alias, address) or None after replying. Unknown alias: the closest of the user's aliases
+    (difflib, cutoff 0.6) as "Did you mean" with a button that re-runs the command (spec 9.1)."""
+    user_id = update.effective_user.id
+    subscription = await _repo(context).find_subscription(user_id, alias_text)
+    if subscription is not None:
+        return subscription
+    aliases = [alias for alias, _ in await _repo(context).list_subscriptions(user_id)]
+    close = difflib.get_close_matches(alias_text.lower(), [a.lower() for a in aliases], n=1, cutoff=0.6)
+    if not close:
         await reply(update, texts.ALIAS_NOT_FOUND.format(alias=h(alias_text)))
-    return subscription
+        return None
+    suggestion = next(a for a in aliases if a.lower() == close[0])
+    markup = callbacks.did_you_mean_keyboard(command, suggestion) if command else None
+    await callbacks.answer_markup(update, texts.DID_YOU_MEAN.format(alias=h(alias_text), suggestion=h(suggestion)), markup)
+    return None
 
 
 async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -302,7 +312,7 @@ async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     count = 10
     if len(args) > 1 and args[-1].isdigit():
         count = max(1, min(30, int(args.pop())))
-    subscription = await _subscription_or_reply(update, context, " ".join(args).strip())
+    subscription = await _subscription_or_reply(update, context, " ".join(args).strip(), command='recent')
     if subscription is None:
         return
     alias, address = subscription
@@ -316,7 +326,7 @@ async def twap_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """/twap [alias] (spec 9.2a): active native TWAPs, plus synthetic (algo) executions."""
     repo = _repo(context)
     if context.args:
-        subscription = await _subscription_or_reply(update, context, " ".join(context.args).strip())
+        subscription = await _subscription_or_reply(update, context, " ".join(context.args).strip(), command='twap')
         if subscription is None:
             return
         wallets = [subscription]
@@ -346,7 +356,7 @@ async def rescan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not context.args:
         await reply(update, texts.RESCAN_USAGE)
         return
-    subscription = await _subscription_or_reply(update, context, " ".join(context.args).strip())
+    subscription = await _subscription_or_reply(update, context, " ".join(context.args).strip(), command='rescan')
     if subscription is None:
         return
     alias, address = subscription
@@ -380,7 +390,7 @@ async def related_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not args:
         await reply(update, texts.RELATED_USAGE)
         return
-    subscription = await _subscription_or_reply(update, context, " ".join(args).strip())
+    subscription = await _subscription_or_reply(update, context, " ".join(args).strip(), command='related')
     if subscription is None:
         return
     alias, address = subscription
@@ -588,5 +598,18 @@ async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await reply(update, formatter.format_health(report, now_ms()))
 
 
+RERUNNABLE = {'positions': positions_command, 'stats': stats_command, 'recent': recent_command,
+              'twap': twap_command, 'rescan': rescan_command, 'related': related_command,
+              'settings': settings_command, 'mute': mute_command, 'unmute': unmute_command}
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error("Exception while handling an update:", exc_info=context.error)
+    """Uncaught handler exceptions (spec 9.7): one id in the log and in the reply, nothing else."""
+    error_id = uuid.uuid4().hex[:6]
+    logger.error(f"[{error_id}] Exception while handling an update:", exc_info=context.error)
+    message = getattr(update, 'message', None) or getattr(getattr(update, 'callback_query', None), 'message', None)
+    if message is not None:
+        try:
+            await message.reply_text(texts.INTERNAL_ERROR.format(error_id=error_id), parse_mode=ParseMode.HTML)
+        except Exception as e:
+            logger.warning(f"[{error_id}] could not reply: {e}")

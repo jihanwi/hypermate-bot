@@ -10,6 +10,7 @@ callback_data stays under Telegram's 64 bytes:
 """
 
 import logging
+from types import SimpleNamespace
 from typing import Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -167,6 +168,20 @@ def did_you_mean_keyboard(command: str, alias: str) -> Optional[InlineKeyboardMa
         return None
     return InlineKeyboardMarkup([[InlineKeyboardButton(texts.DYM_BUTTON.format(command=command, alias=alias),
                                                        callback_data=data)]])
+
+
+async def did_you_mean_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """d:<command>:<alias>: run that command for the user who pressed, replying under the button message."""
+    from hypermate.bot import commands
+    query = update.callback_query
+    await query.answer()
+    parts = (query.data or '')[len(DYM_CALLBACK):].split(':', 1)
+    handler = commands.RERUNNABLE.get(parts[0]) if len(parts) == 2 else None
+    if handler is None:
+        return
+    shim = SimpleNamespace(effective_user=query.from_user, message=query.message, callback_query=query)
+    context.args = [parts[1]]
+    await handler(shim, context)
 
 
 async def answer_markup(update: Update, text: str, markup: Optional[InlineKeyboardMarkup]) -> None:

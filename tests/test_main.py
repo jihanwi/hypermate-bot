@@ -31,11 +31,15 @@ async def test_post_init_registers_menu_and_creates_db(tmp_path, monkeypatch):
             ('positions', 'Open positions: /positions alias (no alias = all)'),
             ('twap', 'Active TWAPs: /twap [alias]'),
             ('recent', 'Recent events: /recent alias [n]'),
-            ('stats', 'PnL and volume: /stats alias'),
-            ('rescan', 'Re-detect venues for a wallet: /rescan alias'),
             ('related', 'Find linked wallets: /related alias'),
+            ('stats', 'PnL and volume: /stats alias'),
+            ('settings', 'Notification settings: /settings alias'),
+            ('mute', 'Mute alerts: /mute alias [1h/1d]'),
+            ('unmute', 'Unmute alerts: /unmute alias'),
+            ('rename', 'Rename alias: /rename old new'),
+            ('rescan', 'Re-detect venues for a wallet: /rescan alias'),
             ('help', 'Commands and examples'),
-        ]
+        ]                                                   # spec 9.1 table; /health stays out of the menu
         assert all(len(c.description) <= 256 for c in commands_arg)
         assert isinstance(set_my_commands.await_args.kwargs['scope'], BotCommandScopeAllPrivateChats)
         assert (tmp_path / 'new_dir' / 'hypermate.db').exists()
