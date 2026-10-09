@@ -297,7 +297,10 @@ async def _latest_chain(repo: Repo, key: int, event_id: int, payload: dict, debo
         return None
     latest = candidates[-1]
     base_id = latest['payload'].get('chain_base', latest['event_id'])
-    return await repo.get_event(base_id)
+    base = await repo.get_event(base_id)
+    if base is not None and base['payload'].get('frozen'):
+        return None                      # absorbed into an algo: later orders start a new message
+    return base
 
 
 async def _held_ms(repo: Repo, key: int, payload: dict) -> Optional[int]:
@@ -332,17 +335,52 @@ async def _liquidation_already_alerted(repo: Repo, key: int, coins: list[str], t
     return any(c and c in (e['payload'].get('coin') or '').split(',') for e in recent for c in coins)
 
 
+async def _open_chain(repo: Repo, key: int, orders: list[dict]) -> Optional[dict]:
+    """The debounce chain (base event) the newest of these orders would still merge into, if any."""
+    debounce_sec = int(settings()['debounce_sec'])
+    last = orders[-1]
+    base = await _latest_chain(repo, key, int(last.get('_event_id') or -1), last, debounce_sec)
+    if base is None or 'chain' not in base['payload']:
+        return None
+    return base if aggregator.can_merge(base['payload']['chain'], last, debounce_sec) else None
+
+
 async def _start_algo(bot: Bot, repo: Repo, key: int, address: str, algo_key: tuple[str, int],
                       orders: list[dict], now: int, summarized: bool = False) -> dict:
     """ALGO_START as a new message (owner decision, PR C): the fill messages sent before detection
-    stay as they are; progress edits go to the START message."""
+    stay as they are; progress edits go to the START message.
+
+    2026-10-09 review: when the same flow was already running as a debounce chain (172 fills sent as
+    'reduced', then 11 more as an algo), the chain's fills are absorbed into the algo totals ('incl. N
+    earlier fills') and the chain message is frozen: no further edits, later orders start a new one."""
     coin, sign = algo_key
     state = aggregator.new_algo_state(coin, sign, orders)
     position_after = to_decimal(orders[-1].get('position_after'))
-    verb, side = algo_label(sign, position_after)
+    start_position = to_decimal((orders[0].get('meta') or {}).get('start_position'))
+    earlier_fills = 0
+    base = await _open_chain(repo, key, orders)
+    if base is not None:
+        chain = base['payload']['chain']
+        in_chain = [o for o in orders if o.get('_event_id') == base['event_id'] or o.get('chain_base') == base['event_id']]
+        earlier_fills = int(chain.get('fills') or 0) - sum(int((o.get('meta') or {}).get('fills', 1)) for o in in_chain)
+        earlier_sz = (to_decimal(chain.get('size')) or Decimal(0)) - sum((to_decimal(o.get('size')) or Decimal(0) for o in in_chain), Decimal(0))
+        earlier_ntl = (to_decimal(chain.get('notional_usd')) or Decimal(0)) - sum((to_decimal(o.get('notional_usd')) or Decimal(0) for o in in_chain), Decimal(0))
+        if earlier_fills > 0:
+            state = {**state, 'fills_count': int(state['fills_count']) + earlier_fills,
+                     'total_sz': (to_decimal(state['total_sz']) or Decimal(0)) + max(earlier_sz, Decimal(0)),
+                     'total_ntl': (to_decimal(state['total_ntl']) or Decimal(0)) + max(earlier_ntl, Decimal(0)),
+                     'started_ms': min(int(state['started_ms']), int(chain.get('first_ms') or state['started_ms']))}
+            start_position = to_decimal((base['payload'].get('meta') or {}).get('start_position')) or start_position
+        else:
+            earlier_fills = 0
+        await repo.update_event_payload(base['event_id'], {**base['payload'], 'frozen': True})
+        logger.info(f"Algo on {coin} absorbs the open chain (event {base['event_id']}, {earlier_fills} earlier fills)")
+    verb, side = algo_label(sign, position_after, start_position)
     await repo.upsert_algo(key, state)
     payload = {'coin': coin, 'sign': sign, 'verb': verb, 'side': side,
                'position_after': str(position_after) if position_after is not None else None,
+               'start_position': str(start_position) if start_position is not None else None,
+               'earlier_fills': earlier_fills,
                'started_ms': state['started_ms'], 'last_progress_ms': now}
     source = algo_source(coin, sign, state['started_ms'])
     delivery = events.SUMMARIZED if summarized else events.SENT
@@ -351,17 +389,31 @@ async def _start_algo(bot: Bot, repo: Repo, key: int, address: str, algo_key: tu
     logger.info(f"Algo started: {verb} {side} {coin} for {address} ({len(orders)} orders, {delivery})")
     if event_id is not None and not summarized:
         await deliver(bot, repo, key,
-                      lambda alias: format_algo_progress(address, alias, state, verb, side, position_after, venue_of(key)),
+                      lambda alias: format_algo_progress(address, alias, state, verb, side, position_after, venue_of(key),
+                                                         earlier_fills),
                       event_id)
     return state
 
 
 async def _update_algo_position(repo: Repo, key: int, k: tuple, state: dict, payload: dict) -> None:
+    """Every absorbed order moves the START payload's position_after; the label follows it (closing LONG
+    becomes accumulating SHORT once the position crosses 0, 2026-10-09 review)."""
     start = await repo.get_event_by_key(events.dedupe_key(
         events.HYPERLIQUID, key, EventType.ALGO_START, algo_source(k[0], k[1], int(state['started_ms']))))
     if start is not None:
-        await repo.update_event_payload(start['event_id'],
-                                        {**start['payload'], 'position_after': payload.get('position_after')})
+        meta = {**start['payload'], 'position_after': payload.get('position_after')}
+        meta['verb'], meta['side'] = current_algo_label(meta)
+        await repo.update_event_payload(start['event_id'], meta)
+
+
+def current_algo_label(meta: dict) -> tuple[str, str]:
+    """(verb, side) of an algo from its START payload: recomputed from start_position and the latest
+    position_after when both are stored, else the stored words (older rows)."""
+    start_position = to_decimal(meta.get('start_position'))
+    position_after = to_decimal(meta.get('position_after'))
+    if start_position is not None and position_after is not None:
+        return algo_label(int(meta.get('sign', 0)), position_after, start_position)
+    return meta.get('verb', 'accumulating'), meta.get('side', 'LONG' if int(meta.get('sign', 0)) > 0 else 'SHORT')
 
 
 def min_notional_usd(account_value: Optional[Decimal]) -> Decimal:
@@ -542,9 +594,8 @@ async def maintain_algos(bot: Bot, repo: Repo, key: int, address: str, now: int)
     for (coin, sign), state in (await repo.active_algos(key)).items():
         source = algo_source(coin, sign, int(state['started_ms']))
         start = await repo.get_event_by_key(events.dedupe_key(events.HYPERLIQUID, key, EventType.ALGO_START, source))
-        meta = start['payload'] if start else {}
-        verb = meta.get('verb', 'accumulating')
-        side = meta.get('side', 'LONG' if sign > 0 else 'SHORT')
+        meta = start['payload'] if start else {'sign': sign}
+        verb, side = current_algo_label({'sign': sign, **meta})
         if aggregator.algo_is_idle(state, now, st):
             logger.info(f"Algo ended: {verb} {side} {coin} for {address}")
             await emit(bot, repo, key, EventType.ALGO_END, source, now,
@@ -560,7 +611,8 @@ async def maintain_algos(bot: Bot, repo: Repo, key: int, address: str, now: int)
             await repo.update_event_payload(start['event_id'], {**meta, 'last_progress_ms': now})
             await edit_or_send(bot, repo, key, start['event_id'],
                                lambda alias, s=state, v=verb, sd=side, pa=position_after:
-                                   format_algo_progress(address, alias, s, v, sd, pa, venue_of(key)))
+                                   format_algo_progress(address, alias, s, v, sd, pa, venue_of(key),
+                                                        int(meta.get('earlier_fills') or 0)))
 
 
 # Other venues (spec 6.1): snapshot, then fills through the shared pipeline, or a snapshot diff ---------
@@ -654,9 +706,8 @@ async def _algo_groups(repo: Repo, key: int, now: int) -> tuple[list[dict], Deci
     for (coin, sign), state in (await repo.active_algos(key)).items():
         start = await repo.get_event_by_key(events.dedupe_key(
             events.HYPERLIQUID, key, EventType.ALGO_START, algo_source(coin, sign, int(state['started_ms']))))
-        meta = start['payload'] if start else {}
-        verb, side = algo_label(sign, to_decimal(meta.get('position_after')))
-        verb, side = meta.get('verb', verb), meta.get('side', side)
+        meta = start['payload'] if start else {'sign': sign}
+        verb, side = current_algo_label({'sign': sign, **meta})
         group = groups.setdefault((verb, side), {'verb': verb, 'side': side, 'coins': [], 'notional': Decimal(0)})
         notional = to_decimal(state.get('total_ntl')) or Decimal(0)
         group['coins'].append((coin, notional))

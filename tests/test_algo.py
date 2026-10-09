@@ -79,14 +79,14 @@ async def test_loracle_hour_gives_two_algo_starts_and_two_ends(repo, clock):
     starts = [e for e in events if e['type'] == 'algo_start']
     assert sorted((e['payload']['coin'], e['payload']['sign']) for e in starts) == [('BTC', 1), ('CASHCAT', 1)]
     assert {e['payload']['coin']: (e['payload']['verb'], e['payload']['side']) for e in starts} == {
-        'BTC': ('accumulating', 'LONG'), 'CASHCAT': ('reducing', 'SHORT')}
+        'BTC': ('accumulating', 'LONG'), 'CASHCAT': ('closing', 'SHORT')}
 
     # Per algo: the debounced fill message of the cycles before detection, then the START as a new
     # message (owner decision); every later order is suppressed_algo
     assert len(bot.sent) == 4
     texts = [m['text'] for m in bot.sent]
     assert sum('algo accumulating LONG $BTC' in t for t in texts) == 1
-    assert sum('algo reducing SHORT $CASHCAT' in t for t in texts) == 1
+    assert sum('algo closing SHORT $CASHCAT' in t for t in texts) == 1
     assert sum('added to LONG $BTC' in t for t in texts) == 1
     assert sum('reduced SHORT $CASHCAT' in t for t in texts) == 1
     for text in texts:
@@ -102,7 +102,7 @@ async def test_loracle_hour_gives_two_algo_starts_and_two_ends(repo, clock):
     ends = [m['text'] for m in bot.sent[4:]]
     assert len(ends) == 2
     assert any('algo done accumulating LONG $BTC' in t for t in ends)
-    assert any('algo done reducing SHORT $CASHCAT' in t for t in ends)
+    assert any('algo done closing SHORT $CASHCAT' in t for t in ends)
     assert await repo.active_algos(va) == {}
     end_btc = next(e for e in await repo.events_since(va, 0, ['algo_end']) if e['payload']['coin'] == 'BTC')
     btc_orders = [f for f in hl.fills[W] if f['coin'] == 'BTC']
@@ -179,9 +179,9 @@ async def test_recorded_algo_fixture_sends_two_starts_and_two_ends(repo, clock):
     assert sum('added to LONG $BTC' in t for t in texts) == 1
     assert sum('reduced SHORT $CASHCAT' in t for t in texts) == 1
     assert sum('algo accumulating LONG $BTC' in t for t in texts) == 1
-    assert sum('algo reducing SHORT $CASHCAT' in t for t in texts) == 1
+    assert sum('algo closing SHORT $CASHCAT' in t for t in texts) == 1
     assert sum('algo done accumulating LONG $BTC' in t for t in texts) == 1
-    assert sum('algo done reducing SHORT $CASHCAT' in t for t in texts) == 1
+    assert sum('algo done closing SHORT $CASHCAT' in t for t in texts) == 1
     for text in texts:
         check_telegram_html(text)
     events = await repo.events_since(va, 0)
@@ -264,3 +264,96 @@ async def test_algo_key_is_never_duplicated_and_ends_on_idle(repo, clock):
     await run_cycles(repo, hl, bot, clock, last_fill + 600_000 + CYCLE_MS)
     assert len(await repo.events_since(va, 0, ['algo_end'])) == 1
     assert await repo.active_algos(va) == {}
+
+
+async def test_algo_label_follows_the_position_effect(repo, clock):
+    """2026-10-09 review: 'algo accumulating SHORT $IREN … pos $0' was a long being sold down. A sell algo on
+    a long is 'closing LONG' until the position crosses 0, 'accumulating SHORT' from then on; the START
+    message shows 'closed' instead of 'pos $0' at the crossing."""
+    await repo.add_subscription(7, W, 'iroh', T0)
+    hl, bot = FakeHLClient(), FakeBot()
+    (va, _), = await repo.tracked_accounts()
+    fills, position, t, oid = [], Decimal(100), T0 + 1000, 1
+    while position > 0:                                                   # 100 x 1 BTC sells: 1% slices
+        fills.append(fill('BTC', 'Close Long', '1', '86000', t, str(position), oid=oid, closed_pnl='5'))
+        position -= 1
+        t += 5000
+        oid += 1
+    hl.fills[W] = fills
+    await run_cycles(repo, hl, bot, clock, T0 + 3 * 60_000)              # detected while still long
+    start = next(e for e in await repo.events_since(va, 0, ['algo_start']))
+    assert (start['payload']['verb'], start['payload']['side']) == ('closing', 'LONG')
+    assert any('algo closing LONG $BTC' in m['text'] for m in bot.sent)
+    await run_cycles(repo, hl, bot, clock, t)                              # position reached 0
+    start = await repo.get_event(start['event_id'])
+    assert (start['payload']['verb'], start['payload']['side']) == ('closing', 'LONG')
+    assert Decimal(start['payload']['position_after']) == 0
+    for _ in range(20):                                                    # keeps selling: now a short
+        fills.append(fill('BTC', 'Open Short', '1', '86000', t, str(-(oid - 101)), oid=oid))
+        t += 5000
+        oid += 1
+    await run_cycles(repo, hl, bot, clock, t + 11 * 60_000)                # progress edit after 10 min
+    start = await repo.get_event(start['event_id'])
+    assert (start['payload']['verb'], start['payload']['side']) == ('accumulating', 'SHORT')
+    algo_edits = [e['text'] for e in bot.edits if 'algo' in e['text']]
+    from hypermate.core import formatter
+    at_zero = formatter.format_algo_progress(W, 'iroh', {'coin': 'BTC', 'sign': -1, 'started_ms': 0, 'last_fill_ms': 60_000,
+                                                          'fills_count': 100, 'total_sz': '100', 'total_ntl': '8600000'},
+                                             'closing', 'LONG', Decimal(0))
+    assert '· closed' in at_zero and 'pos $0' not in at_zero
+    assert 'algo accumulating SHORT $BTC' in algo_edits[-1] and 'pos $1.72M' in algo_edits[-1]
+    assert algo_edits[-1].count('pos $0') == 0
+    # the END keeps the final label
+    await run_cycles(repo, hl, bot, clock, t + 25 * 60_000)
+    assert any('algo done accumulating SHORT $BTC' in m['text'] for m in bot.sent)
+
+
+async def test_algo_absorbs_the_open_chain_and_freezes_it(repo, clock, monkeypatch):
+    """2026-10-09 review: a 172-fill reduce chain was sent, then the same flow's last 11 fills went out again
+    as an algo. The algo now counts the chain's fills ('incl. N earlier fills') and the chain message is
+    frozen: two messages, the chain edits stop, nothing is reported twice."""
+    monkeypatch.setitem(pipeline.Config.DEFAULT_SETTINGS, 'algo_window_sec', 60)
+    await repo.add_subscription(7, W, 'iroh', T0)
+    hl, bot = FakeHLClient(), FakeBot()
+    (va, _), = await repo.tracked_accounts()
+    fills, position, t, oid = [], Decimal(1000), T0 + 1000, 1
+    for _ in range(24):                                                    # slow: one 1 BTC sell per 25 s
+        fills.append(fill('BTC', 'Close Long', '1', '86000', t, str(position), oid=oid, closed_pnl='5'))
+        position -= 1
+        t += 25_000
+        oid += 1
+    hl.fills[W] = fills
+    hl.now = clock
+    context = make_context({'repo': repo, 'hl': hl}, bot=bot)
+    while clock.ms < t:
+        clock.ms += 20_000
+        await pipeline.monitor_transfers_job(context)
+    assert len(bot.sent) == 1 and 'reduced LONG $BTC' in bot.sent[0]['text'] and '24 fills' in bot.sent[0]['text']
+    assert await repo.active_algos(va) == {}                               # too sparse for the 60 s window
+    chain_edits = len(bot.edits)
+    for _ in range(30):                                                    # fast: one per 5 s -> an algo
+        fills.append(fill('BTC', 'Close Long', '1', '86000', t, str(position), oid=oid, closed_pnl='5'))
+        position -= 1
+        t += 5000
+        oid += 1
+    while clock.ms < t + 20_000:
+        clock.ms += 20_000
+        await pipeline.monitor_transfers_job(context)
+    assert len(bot.sent) == 2 and 'algo closing LONG $BTC' in bot.sent[1]['text']
+    (state,) = (await repo.active_algos(va)).values()
+    assert int(state['fills_count']) == 54                                 # 24 chain + 30 new, none twice
+    start = next(e for e in await repo.events_since(va, 0, ['algo_start']))
+    chain_event = await repo.get_event(next(e['event_id'] for e in await repo.events_since(va, 0, ['position_decrease'])
+                                            if 'chain' in e['payload']))
+    chain_fills = int(chain_event['payload']['chain']['fills'])
+    assert chain_event['payload'].get('frozen') is True
+    earlier = int(start['payload']['earlier_fills'])
+    assert earlier > 0 and chain_fills >= earlier                            # the chain's fills outside the window
+    assert f"incl. {earlier} earlier fills" in bot.sent[1]['text']
+    # the chain was edited while the fast orders arrived before detection, never after the algo START
+    assert not any(e['text'] == bot.sent[1]['text'] for e in bot.edits[chain_edits:])
+    bot.edits.clear()
+    fills.append(fill('BTC', 'Close Long', str(position), '86000', t + 1000, str(position), oid=oid, closed_pnl='5'))
+    await run_cycles(repo, hl, bot, clock, t + 40_000)                     # the full close: its own message
+    assert not any('reduced LONG' in e['text'] for e in bot.edits)          # the frozen chain is not edited
+    assert 'closed LONG $BTC' in bot.sent[-1]['text']

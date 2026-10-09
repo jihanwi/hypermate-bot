@@ -189,7 +189,7 @@ async def test_health_command_is_admin_only(repo, clock, monkeypatch):
     text = update.message.replies[0]['text']
     check_telegram_html(text)
     assert 'Events: 1 rows · last 24h: position_open 1' in text
-    assert 'algo_active:\n- 0xaaaa...aaaa $MU (xyz) + · 12 fills $41k · last fill 2m ago' in text
+    assert 'algo_active:\n- 0xaaaa...aaaa $MU · xyz + · 12 fills $41k · last fill 2m ago' in text
 
 
 # 50 addresses, 30 minutes, no 429 (spec 5.3) ------------------------------------------

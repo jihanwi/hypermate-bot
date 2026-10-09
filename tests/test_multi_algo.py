@@ -18,7 +18,7 @@ W = '0x' + 'c' * 40
 T0 = 1_790_000_000_000
 CYCLE_MS = 30_000
 COINS = ['LINK', 'DOGE', 'SUI', 'ONDO', 'UNI', 'ARB', 'OP', 'AVAX', 'NEAR', 'APT', 'SEI', 'TIA', 'INJ', 'WIF',
-         'PEPE', 'BTC', 'CASHCAT']           # 15 reducing SHORT, 2 accumulating LONG
+         'PEPE', 'BTC', 'CASHCAT']           # 15 closing SHORT, 2 accumulating LONG
 
 
 class Clock:
@@ -51,7 +51,7 @@ async def run_cycles(repo, hl, bot, clock, until_ms):
 
 
 def seventeen_coin_fills(minutes, start=T0 + 1000):
-    """Every 4 s one small order on each of 17 coins: 15 Close Short (reducing SHORT, +), BTC and CASHCAT
+    """Every 4 s one small order on each of 17 coins: 15 Close Short (closing SHORT, +), BTC and CASHCAT
     Open Long (accumulating LONG, +). Position sizes are large, so every order is far under 2%."""
     fills, oid, t, i = [], 1, start, 0
     while t < start + minutes * 60_000:
@@ -102,12 +102,12 @@ async def test_seventeen_coins_enter_summary_mode_edit_hourly_and_exit(repo, clo
     summary = summaries[0]
     check_telegram_html(summary)
     assert 'running TWAP-style algos on 17 coins' in summary
-    assert 'reducing SHORT ×15 (' in summary and '/24h): ' in summary and ' +10' in summary
+    assert 'closing SHORT ×15 (' in summary and '/24h): ' in summary and ' +10' in summary
     assert 'accumulating LONG ×2 (' in summary and 'BTC, CASHCAT' in summary
     assert await repo.multi_algo_mode(va) is not None
     assert len(await repo.active_algos(va)) == 17
     # no per-coin START went out: the threshold was crossed inside one cycle
-    assert not any('algo accumulating' in t or 'algo reducing' in t for t in texts)
+    assert not any('algo accumulating' in t or 'algo closing' in t for t in texts)
     starts = await repo.events_since(va, 0, ['algo_start'])
     assert len(starts) == 17 and {e['delivery'] for e in starts} == {'summarized'}
 

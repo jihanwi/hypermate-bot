@@ -247,7 +247,7 @@ def test_twap_formats():
                                     'finished', None, int(state['timestamp']) + 118 * 60_000)
     assert 'filled $1.98M (41,200 BTC) avg 48.06 · 1h 58m · status finished' in end
     hip3 = formatter.format_twap_start(W, 'x', {**state, 'coin': 'xyz:MSTR', 'minutes': 90}, None, 1790958929641)
-    assert 'started TWAP BUY $MSTR (xyz)' in hip3 and '0.00119 MSTR over 1h 30m' in hip3
+    assert 'started TWAP BUY $MSTR · xyz' in hip3 and '0.00119 MSTR over 1h 30m' in hip3
     assert 'nothing filled' in formatter.format_twap_end(W, 'x', {**state, 'executedSz': '0.0'}, 'terminated',
                                                          None, int(state['timestamp']))
 

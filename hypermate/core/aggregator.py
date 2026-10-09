@@ -59,13 +59,20 @@ def chain_meta(meta: dict) -> dict:
 
 
 def merge_into_chain(chain: dict, payload: dict) -> dict:
-    """Add one order to the chain. The header type stays the first order's (e.g. OPEN then adds)."""
+    """Add one order to the chain. The header type stays the first order's (e.g. OPEN then adds), except
+    that a reduce chain whose latest order brings the position to 0 becomes a close (2026-10-09 review:
+    'reduced LONG $HYPE … now $0' was a full close)."""
+    chain_type = chain['type']
+    after = to_decimal(payload.get('position_after'))
+    if chain_type == EventType.POSITION_DECREASE.value and (
+            payload.get('type') == EventType.POSITION_CLOSE.value or (after is not None and after == 0)):
+        chain_type = EventType.POSITION_CLOSE.value
     size = (to_decimal(chain['size']) or ZERO) + (to_decimal(payload.get('size')) or ZERO)
     notional = (to_decimal(chain['notional_usd']) or ZERO) + (to_decimal(payload.get('notional_usd')) or ZERO)
     pnl = chain.get('realized_pnl')
     if payload.get('realized_pnl') is not None:
         pnl = str((to_decimal(pnl) or ZERO) + (to_decimal(payload['realized_pnl']) or ZERO))
-    return {**chain,
+    return {**chain, 'type': chain_type,
             'size': str(size), 'notional_usd': str(notional), 'realized_pnl': pnl,
             'position_after': payload.get('position_after'),
             'fills': int(chain['fills']) + int((payload.get('meta') or {}).get('fills', 1)),
@@ -127,6 +134,30 @@ def add_to_algo(state: dict, payload: dict) -> dict:
             'fills_count': int(state['fills_count']) + 1,
             'total_sz': (to_decimal(state['total_sz']) or ZERO) + (to_decimal(payload.get('size')) or ZERO),
             'total_ntl': (to_decimal(state['total_ntl']) or ZERO) + (to_decimal(payload.get('notional_usd')) or ZERO)}
+
+
+def _side(position: Decimal) -> str:
+    return 'LONG' if position > 0 else 'SHORT'
+
+
+def algo_label(sign: int, position_after: Optional[Decimal], start_position: Optional[Decimal] = None) -> tuple[str, str]:
+    """(verb, side) from the position effect (2026-10-09 review): |position| shrinking is closing the side
+    held before, crossing 0 into the opposite sign is accumulating that new side from then on, growing is
+    accumulating. Without a start position the side comes from the position after, else from the fill sign."""
+    fill_side = 'LONG' if int(sign) > 0 else 'SHORT'
+    if start_position is None or position_after is None:
+        if position_after is None or position_after == 0:
+            return 'accumulating', fill_side
+        verb = 'accumulating' if (int(sign) > 0) == (position_after > 0) else 'closing'
+        return verb, (_side(position_after) if verb == 'accumulating' else _side(position_after))
+    before, after = start_position, position_after
+    if before != 0 and after == 0:
+        return 'closing', _side(before)
+    if before != 0 and after != 0 and (before > 0) != (after > 0):
+        return 'accumulating', _side(after)
+    if before != 0 and abs(after) < abs(before):
+        return 'closing', _side(before)
+    return 'accumulating', _side(after) if after != 0 else fill_side
 
 
 def algo_vwap(state: dict) -> Optional[Decimal]:

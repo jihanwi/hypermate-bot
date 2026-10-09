@@ -419,7 +419,7 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 **HIP-3 덱스 커버리지**
 - `venue_accounts.dexs_json` 에 활동이 확인된 HIP-3 덱스 목록을 둔다 (기본 `[]`). `/add` 와 `/rescan` 시 `perpDexs` 전체를 `clearinghouseState(dex=...)` 로 1회 스캔해서 포지션이 있는 덱스를 기록. 이후 fills 에 새 `<dex>:` 접두사가 보이면 자동 추가. Phase 1 의 `/rescan` 은 HL 덱스 스캔만 (다른 베뉴 resolve 는 Phase 2). 기존 추적 지갑은 배포 후 첫 폴링에서 1회 자동 스캔.
 - 1차 폴링은 메인 덱스 + `dexs_json` 의 덱스만 `clearinghouseState`. snapshot 은 `{dex: {coin: ...}}` 로 덱스별 저장 (메인 덱스 키는 `""`).
-- 알림 메시지에서 HIP-3 코인은 `$MU (xyz)` 로 표시 (접두사 대신 괄호로 덱스). `/positions` 는 덱스별 소제목과 덱스별 account value.
+- 알림 메시지에서 HIP-3 코인은 `$MU · xyz` 로 표시 (`/add` 요약의 `dex: xyz` 와 같은 계열, 2026-10-09). `/positions` 는 덱스별 소제목과 덱스별 account value.
 
 **포지션 (fills 기반)**
 - 1차 폴링에서 snapshot 대비 변화 감지된 계정만 `userFillsByTime(startTime=cursor.fills+1)`.

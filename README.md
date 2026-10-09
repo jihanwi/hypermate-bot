@@ -36,7 +36,7 @@ Aliases are matched case-insensitively. On startup the bot registers these comma
 - Bot-driven executions (repeated small orders from an external bot, no native TWAP) are detected after a few cycles. The fill alerts sent before detection stay; then one "algo" alert is sent and updated every 10 minutes, and an end alert follows after 10 idle minutes. The suppressed fills are not stored; `/recent` shows one "🤖 algo $DOGE · 18,423 fills $1.52M (active)" line per running algo instead.
 - When one wallet runs 5 or more algos at once (a custom TWAP bot across many coins) the bot switches to one summary message per wallet ("running TWAP-style algos on 17 coins", grouped by direction, edited hourly) instead of per-coin algo alerts. Position opens, closes, flips, liquidations and single orders of $100k or 10% of the position are still alerted. It ends with "algos wound down · 24h total …" after 30 minutes with 2 or fewer algos left.
 - Transfer counterparties seen in alerts are stored as weak links for `/related` in the background, without alerts.
-- HIP-3 dex coins are shown as `$MU (xyz)`. Collateral moves between the main account and a HIP-3 dex, spot/perp class transfers and vault deposits/withdrawals are recorded but not sent (off by default, spec 9.4).
+- HIP-3 dex coins are shown as `$MU · xyz` in every alert (same family as the `/add` summary's `dex: xyz`). Collateral moves between the main account and a HIP-3 dex, spot/perp class transfers and vault deposits/withdrawals are recorded but not sent (off by default, spec 9.4).
 
 ## Running locally
 

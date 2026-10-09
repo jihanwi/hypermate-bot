@@ -435,12 +435,13 @@ def base_coin(coin: str) -> str:
 
 
 def coin_label(coin: str, display: Optional[str] = None) -> str:
-    """$BTC, HIP-3 "xyz:MU" -> $MU (xyz) (spec 5.2), spot uses its display name."""
+    """$BTC, HIP-3 "xyz:MU" -> $MU · xyz (same family as the /add summary's 'dex: xyz', 2026-10-09
+    review; every event type alike), spot uses its display name."""
     if display:
         return f"${h(display)}"
     if ':' in coin:
         dex, name = coin.split(':', 1)
-        return f"${h(name)} ({h(dex)})"
+        return f"${h(name)} · {h(dex)}"
     return f"${h(coin)}"
 
 
@@ -526,18 +527,14 @@ def format_ledger_event(wallet_address: str, alias: str, payload: dict) -> Optio
 
 # Synthetic TWAP (algo) ---------------------------------------------------------------
 
-def algo_label(sign: int, position_after: Optional[Decimal]) -> tuple[str, str]:
-    """('accumulating', 'LONG') or ('reducing', 'SHORT') from the fill sign and the position side."""
-    if position_after is None or position_after == 0:
-        side = 'LONG' if sign > 0 else 'SHORT'
-    else:
-        side = 'LONG' if position_after > 0 else 'SHORT'
-    verb = 'accumulating' if (sign > 0) == (side == 'LONG') else 'reducing'
-    return verb, side
+def algo_label(sign: int, position_after: Optional[Decimal], start_position: Optional[Decimal] = None) -> tuple[str, str]:
+    """('accumulating', 'LONG') or ('closing', 'SHORT'): see aggregator.algo_label (position effect rule)."""
+    from hypermate.core.aggregator import algo_label as _label
+    return _label(sign, position_after, start_position)
 
 
 def format_algo_progress(wallet_address: str, alias: str, state: dict, verb: str, side: str,
-                         position_after: Optional[Decimal], venue: str = HYPERLIQUID) -> str:
+                         position_after: Optional[Decimal], venue: str = HYPERLIQUID, earlier_fills: int = 0) -> str:
     """ALGO_START text; the same message is edited with fresh numbers every algo_progress_sec.
 
     Elapsed time runs from the first to the last fill (not to now), so it matches ALGO_END.
@@ -548,12 +545,15 @@ def format_algo_progress(wallet_address: str, alias: str, state: dict, verb: str
     signed = f"{'+' if int(state['sign']) > 0 else '-'}{compact_usd(total)}"
     elapsed = humanize_ms(int(state['last_fill_ms']) - int(state['started_ms']))
     line = f"{int(state['fills_count'])} fills {signed} in {elapsed}"
-    if position_after is not None and vwap is not None:
+    if position_after is not None and position_after == 0:
+        line += " · closed"
+    elif position_after is not None and vwap is not None:
         line += f" · pos {compact_usd(abs(position_after) * vwap)}"
     if vwap is not None:
         line += f" avg {plain_price(vwap)}"
+    earlier = f"\nincl. {earlier_fills} earlier fills" if earlier_fills else ""
     return (f"{badge(venue)} 🤖 <b>{alias_link(wallet_address, alias, venue)}</b> algo {verb} {side} "
-            f"{coin_label(state['coin'])}\n{line}")
+            f"{coin_label(state['coin'])}\n{line}{earlier}")
 
 
 def format_algo_end(wallet_address: str, alias: str, state: dict, verb: str, side: str,
@@ -811,7 +811,7 @@ def format_privacy_on(wallet_address: str, alias: str, venue: str) -> str:
 def format_multi_algo_summary(wallet_address: str, alias: str, groups: list[dict], coins: int,
                               entered_ms: int, now_ms: int, venue: str = HYPERLIQUID) -> str:
     """[HL] 🤖 loracle running TWAP-style algos on 17 coins, then one line per (verb, side) group:
-    'reducing SHORT ×15 ($11.2M/24h): LINK, DOGE, SUI, ONDO, UNI +10'."""
+    'closing SHORT ×15 ($11.2M/24h): LINK, DOGE, SUI, ONDO, UNI +10'."""
     who = f"<b>{alias_link(wallet_address, alias, venue)}</b>"
     lines = [f"{badge(venue)} 🤖 {who} running TWAP-style algos on {coins} coin{'s' if coins != 1 else ''}"]
     for group in groups:
