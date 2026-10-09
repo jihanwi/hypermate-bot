@@ -75,6 +75,17 @@ class Repo:
         if 'spot_json' not in columns:
             await self.db.execute("ALTER TABLE snapshots ADD COLUMN spot_json TEXT")
             logger.info("Migrated snapshots: added spot_json")
+        # feat/ux-settings: /settings default lives on the user, mutes remember when they started
+        cur = await self.db.execute("PRAGMA table_info(users)")
+        columns = {row[1] for row in await self._rows(cur)}
+        if 'settings_json' not in columns:
+            await self.db.execute("ALTER TABLE users ADD COLUMN settings_json TEXT DEFAULT '{}'")
+            logger.info("Migrated users: added settings_json")
+        cur = await self.db.execute("PRAGMA table_info(subscriptions)")
+        columns = {row[1] for row in await self._rows(cur)}
+        if 'muted_since_ms' not in columns:
+            await self.db.execute("ALTER TABLE subscriptions ADD COLUMN muted_since_ms INTEGER")
+            logger.info("Migrated subscriptions: added muted_since_ms")
 
     # api_cache (spec 3.4): expensive calls such as userRole (weight 60) -----------------
 
@@ -575,6 +586,77 @@ class Repo:
             cur = await self.db.execute(f"SELECT COUNT(*) FROM {table}")
             (out[name],) = await cur.fetchone(); await cur.close()
         return out
+
+    # Settings and mutes (spec 9.4 / 9.5, feat/ux-settings) ----------------------------
+
+    async def subscription_by_rowid(self, rowid: int) -> Optional[dict]:
+        """{rowid, user_id, wallet_id, address, alias, settings, muted_until_ms, muted_since_ms} or None."""
+        row = await self._row(await self.db.execute(
+            "SELECT s.rowid, s.user_id, s.wallet_id, w.evm_address, s.alias, s.settings_json, s.muted_until_ms, "
+            "s.muted_since_ms FROM subscriptions s JOIN wallets w USING (wallet_id) WHERE s.rowid = ?", (rowid,)))
+        return self._subscription_row(row) if row else None
+
+    async def subscription_of(self, user_id: int, address: str) -> Optional[dict]:
+        row = await self._row(await self.db.execute(
+            "SELECT s.rowid, s.user_id, s.wallet_id, w.evm_address, s.alias, s.settings_json, s.muted_until_ms, "
+            "s.muted_since_ms FROM subscriptions s JOIN wallets w USING (wallet_id) "
+            "WHERE s.user_id = ? AND w.evm_address = ?", (user_id, address.lower())))
+        return self._subscription_row(row) if row else None
+
+    @staticmethod
+    def _subscription_row(r) -> dict:
+        return {'rowid': r[0], 'user_id': r[1], 'wallet_id': r[2], 'address': r[3], 'alias': r[4],
+                'settings': json.loads(r[5] or '{}'), 'muted_until_ms': r[6], 'muted_since_ms': r[7]}
+
+    async def set_subscription_settings(self, rowid: int, settings: dict) -> None:
+        await self.db.execute("UPDATE subscriptions SET settings_json = ? WHERE rowid = ?",
+                              (json.dumps(settings, sort_keys=True), rowid))
+        await self.db.commit()
+
+    async def user_settings(self, user_id: int) -> dict:
+        row = await self._row(await self.db.execute("SELECT settings_json FROM users WHERE user_id = ?", (user_id,)))
+        return json.loads((row[0] if row else None) or '{}')
+
+    async def set_user_settings(self, user_id: int, settings: dict, now_ms: int) -> None:
+        await self.db.execute("INSERT OR IGNORE INTO users (user_id, created_at) VALUES (?, ?)", (user_id, now_ms))
+        await self.db.execute("UPDATE users SET settings_json = ? WHERE user_id = ?",
+                              (json.dumps(settings, sort_keys=True), user_id))
+        await self.db.commit()
+
+    async def set_mute(self, rowid: int, until_ms: Optional[int], since_ms: Optional[int]) -> None:
+        await self.db.execute("UPDATE subscriptions SET muted_until_ms = ?, muted_since_ms = ? WHERE rowid = ?",
+                              (until_ms, since_ms, rowid))
+        await self.db.commit()
+
+    async def mute_all(self, user_id: int, until_ms: Optional[int], since_ms: int) -> int:
+        cur = await self.db.execute(
+            "UPDATE subscriptions SET muted_until_ms = ?, muted_since_ms = ? WHERE user_id = ?",
+            (until_ms, since_ms, user_id))
+        await self.db.commit()
+        return cur.rowcount
+
+    async def rename_subscription(self, user_id: int, old: str, new: str) -> bool:
+        cur = await self.db.execute(
+            "UPDATE subscriptions SET alias = ? WHERE user_id = ? AND alias = ? COLLATE NOCASE", (new, user_id, old))
+        await self.db.commit()
+        return cur.rowcount > 0
+
+    async def events_count_for_wallet(self, address: str, since_ms: int) -> int:
+        """Events recorded for any venue account of the wallet since since_ms (the /unmute line)."""
+        row = await self._row(await self.db.execute(
+            "SELECT COUNT(*) FROM events e JOIN venue_accounts va USING (venue_account_id) "
+            "JOIN wallets w USING (wallet_id) WHERE w.evm_address = ? AND e.ts_ms >= ?", (address.lower(), since_ms)))
+        return row[0] if row else 0
+
+    async def subscribers_detailed(self, venue_account_id: int) -> list[dict]:
+        """Subscribers of the venue account's wallet with their stored settings (subscription and user
+        level, unmerged) and mute state: {user_id, alias, settings, user_settings, muted_until_ms}."""
+        cur = await self.db.execute(
+            "SELECT s.user_id, s.alias, s.settings_json, u.settings_json, s.muted_until_ms FROM subscriptions s "
+            "JOIN venue_accounts va ON va.wallet_id = s.wallet_id "
+            "LEFT JOIN users u ON u.user_id = s.user_id WHERE va.venue_account_id = ?", (venue_account_id,))
+        return [{'user_id': r[0], 'alias': r[1], 'settings': json.loads(r[2] or '{}'),
+                 'user_settings': json.loads(r[3] or '{}'), 'muted_until_ms': r[4]} for r in await self._rows(cur)]
 
     async def subscribers(self, venue_account_id: int) -> list[tuple[int, str]]:
         """[(user_id, alias)] subscribed to the venue account's wallet."""
