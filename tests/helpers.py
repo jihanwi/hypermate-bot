@@ -169,8 +169,8 @@ class FakeMessage:
     def __init__(self):
         self.replies = []
 
-    async def reply_text(self, text, parse_mode=None, **kwargs):
-        self.replies.append({'text': text, 'parse_mode': parse_mode})
+    async def reply_text(self, text, parse_mode=None, reply_markup=None, **kwargs):
+        self.replies.append({'text': text, 'parse_mode': parse_mode, 'reply_markup': reply_markup})
 
 
 def make_update(user_id: int):
