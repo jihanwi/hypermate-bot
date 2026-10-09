@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
   user_id INTEGER PRIMARY KEY,               -- Telegram user id
   lang TEXT DEFAULT 'en',
   tz TEXT DEFAULT 'Asia/Seoul',
+  settings_json TEXT DEFAULT '{}',           -- /settings default (spec 9.4), under the subscription's own
   created_at INTEGER
 );
 
@@ -30,7 +31,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (                  -- 유저 x 지갑
   wallet_id INTEGER REFERENCES wallets,
   alias TEXT NOT NULL,
   settings_json TEXT DEFAULT '{}',            -- 섹션 9.4
-  muted_until_ms INTEGER,
+  muted_until_ms INTEGER,                     -- NULL = not muted, MUTE_FOREVER_MS = no end
+  muted_since_ms INTEGER,                     -- for "N events while muted" on /unmute
   created_at INTEGER,
   PRIMARY KEY (user_id, wallet_id),
   UNIQUE (user_id, alias COLLATE NOCASE)

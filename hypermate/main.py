@@ -8,7 +8,7 @@ import os
 from telegram import BotCommand, BotCommandScopeAllPrivateChats, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 
-from hypermate.bot import commands, texts
+from hypermate.bot import callbacks, commands, texts
 from hypermate.config import Config
 from hypermate.core import poller
 from hypermate.db import backup
@@ -138,7 +138,14 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("rescan", commands.rescan_command))
     application.add_handler(CommandHandler("health", commands.health_command))
     application.add_handler(CommandHandler("related", commands.related_command))
+    application.add_handler(CommandHandler("settings", commands.settings_command))
+    application.add_handler(CommandHandler("mute", commands.mute_command))
+    application.add_handler(CommandHandler("unmute", commands.unmute_command))
+    application.add_handler(CommandHandler("rename", commands.rename_command))
+    application.add_handler(CallbackQueryHandler(callbacks.mute_all_callback, pattern=f"^{callbacks.MUTE_CALLBACK}"))
+    application.add_handler(CallbackQueryHandler(callbacks.did_you_mean_callback, pattern=f"^{callbacks.DYM_CALLBACK}"))
     application.add_handler(CallbackQueryHandler(commands.track_callback, pattern=f"^{commands.TRACK_CALLBACK}"))
+    application.add_handler(CallbackQueryHandler(callbacks.settings_callback, pattern=f"^{callbacks.SETTINGS_CALLBACK}"))
     application.add_error_handler(commands.error_handler)
 
     job_queue = application.job_queue

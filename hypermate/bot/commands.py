@@ -1,5 +1,6 @@
 """Telegram command handlers. Wallet lookups go through the DB only (B1)."""
 
+import difflib
 import logging
 import re
 import uuid
@@ -9,7 +10,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
-from hypermate.bot import texts
+from hypermate.bot import callbacks, texts
 from hypermate.config import Config
 from hypermate.core import formatter, poller, related
 from hypermate.core.venues import resolve_summary, resolve_wallet, split_venue_prefix
@@ -120,9 +121,12 @@ async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await reply(update, texts.NO_WALLETS)
         return
     lines = []
+    now = now_ms()
     for alias, address in wallets:
         active = [r['venue'] for r in await _repo(context).venue_accounts_of(address) if r['active']]
-        lines.append(formatter.format_list_line(alias, address, await _account_value(context, address), active))
+        row = await _repo(context).subscription_of(user_id, address)
+        lines.append(formatter.format_list_line(alias, address, await _account_value(context, address), active,
+                                                mute_suffix(row['muted_until_ms'] if row else None, now)))
     await reply(update, texts.LIST_HEADER + "\n" + "\n".join(lines))
 
 
@@ -178,9 +182,8 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not context.args:
         await positions_summary(update, context)
         return
-    subscription = await _repo(context).find_subscription(user_id, " ".join(context.args).strip())
+    subscription = await _subscription_or_reply(update, context, " ".join(context.args).strip(), command='positions')
     if subscription is None:
-        await reply(update, texts.ALIAS_NOT_FOUND.format(alias=h(" ".join(context.args))))
         return
     alias, address = subscription
     rows = await _repo(context).venue_accounts_of(address)
@@ -233,9 +236,8 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await reply(update, texts.STATS_USAGE)
         return
     user_id = update.effective_user.id
-    subscription = await _repo(context).find_subscription(user_id, " ".join(context.args).strip())
+    subscription = await _subscription_or_reply(update, context, " ".join(context.args).strip(), command='stats')
     if subscription is None:
-        await reply(update, texts.ALIAS_NOT_FOUND.format(alias=h(" ".join(context.args))))
         return
     alias, address = subscription
     try:
@@ -282,11 +284,23 @@ async def _scan_dexs(context: ContextTypes.DEFAULT_TYPE, address: str) -> list[s
     return dexs
 
 
-async def _subscription_or_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, alias_text: str):
-    subscription = await _repo(context).find_subscription(update.effective_user.id, alias_text)
-    if subscription is None:
+async def _subscription_or_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, alias_text: str,
+                                 command: Optional[str] = None):
+    """(alias, address) or None after replying. Unknown alias: the closest of the user's aliases
+    (difflib, cutoff 0.6) as "Did you mean" with a button that re-runs the command (spec 9.1)."""
+    user_id = update.effective_user.id
+    subscription = await _repo(context).find_subscription(user_id, alias_text)
+    if subscription is not None:
+        return subscription
+    aliases = [alias for alias, _ in await _repo(context).list_subscriptions(user_id)]
+    close = difflib.get_close_matches(alias_text.lower(), [a.lower() for a in aliases], n=1, cutoff=0.6)
+    if not close:
         await reply(update, texts.ALIAS_NOT_FOUND.format(alias=h(alias_text)))
-    return subscription
+        return None
+    suggestion = next(a for a in aliases if a.lower() == close[0])
+    markup = callbacks.did_you_mean_keyboard(command, suggestion) if command else None
+    await callbacks.answer_markup(update, texts.DID_YOU_MEAN.format(alias=h(alias_text), suggestion=h(suggestion)), markup)
+    return None
 
 
 async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -298,7 +312,7 @@ async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     count = 10
     if len(args) > 1 and args[-1].isdigit():
         count = max(1, min(30, int(args.pop())))
-    subscription = await _subscription_or_reply(update, context, " ".join(args).strip())
+    subscription = await _subscription_or_reply(update, context, " ".join(args).strip(), command='recent')
     if subscription is None:
         return
     alias, address = subscription
@@ -312,7 +326,7 @@ async def twap_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """/twap [alias] (spec 9.2a): active native TWAPs, plus synthetic (algo) executions."""
     repo = _repo(context)
     if context.args:
-        subscription = await _subscription_or_reply(update, context, " ".join(context.args).strip())
+        subscription = await _subscription_or_reply(update, context, " ".join(context.args).strip(), command='twap')
         if subscription is None:
             return
         wallets = [subscription]
@@ -342,7 +356,7 @@ async def rescan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not context.args:
         await reply(update, texts.RESCAN_USAGE)
         return
-    subscription = await _subscription_or_reply(update, context, " ".join(context.args).strip())
+    subscription = await _subscription_or_reply(update, context, " ".join(context.args).strip(), command='rescan')
     if subscription is None:
         return
     alias, address = subscription
@@ -376,7 +390,7 @@ async def related_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not args:
         await reply(update, texts.RELATED_USAGE)
         return
-    subscription = await _subscription_or_reply(update, context, " ".join(args).strip())
+    subscription = await _subscription_or_reply(update, context, " ".join(args).strip(), command='related')
     if subscription is None:
         return
     alias, address = subscription
@@ -432,6 +446,135 @@ async def track_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await query.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
+MUTE_DURATIONS = {'1h': 3600_000, '6h': 6 * 3600_000, '1d': 86_400_000, '7d': 7 * 86_400_000}
+
+
+def mute_suffix(muted_until_ms: Optional[int], now: int) -> str:
+    """/list marker: '🔇' for a mute without an end, '🔇 5h' with the time left, '' when not muted."""
+    if not pipeline.is_muted(muted_until_ms, now):
+        return ''
+    if int(muted_until_ms) >= pipeline.MUTE_FOREVER_MS:
+        return '🔇'
+    return f"🔇 {formatter.humanize_ms(int(muted_until_ms) - now + 59_999)}"      # rounded up: 1h, not 59m
+
+
+async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/mute alias [1h|6h|1d|7d] (spec 9.5); without an alias, a confirmation button mutes every wallet."""
+    user_id = update.effective_user.id
+    if not context.args:
+        if not await _repo(context).list_subscriptions(user_id):
+            await reply(update, texts.MUTE_USAGE)
+            return
+        await callbacks.answer_markup(update, texts.MUTE_ALL_CONFIRM, callbacks.mute_all_keyboard())
+        return
+    args = list(context.args)
+    duration_ms = None
+    if len(args) > 1 and args[-1].lower() in MUTE_DURATIONS:
+        duration_ms = MUTE_DURATIONS[args.pop().lower()]
+    elif len(args) > 1 and re.fullmatch(r'\d+[hdHD]', args[-1]):
+        await reply(update, texts.MUTE_BAD_DURATION)
+        return
+    try:
+        subscription = await _subscription_or_reply(update, context, " ".join(args).strip(), command='mute')
+        if subscription is None:
+            return
+        alias, address = subscription
+        row = await _repo(context).subscription_of(user_id, address)
+        now = now_ms()
+        until = now + duration_ms if duration_ms else pipeline.MUTE_FOREVER_MS
+        since = row['muted_since_ms'] if pipeline.is_muted(row['muted_until_ms'], now) else now
+        await _repo(context).set_mute(row['rowid'], until, since)
+    except Exception as e:
+        await reply_internal_error(update, f"mute_command user={user_id}", e)
+        return
+    logger.info(f"User {user_id} muted '{alias}' until {until}")
+    until_text = (texts.MUTED_UNTIL_FOR.format(duration=formatter.humanize_ms(duration_ms)) if duration_ms
+                  else texts.MUTED_UNTIL_FOREVER)
+    await reply(update, texts.MUTED.format(alias=h(alias), until=until_text))
+
+
+async def unmute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/unmute alias: alerts resume; the events recorded meanwhile are not re-sent, only counted."""
+    if not context.args:
+        await reply(update, texts.UNMUTE_USAGE)
+        return
+    user_id = update.effective_user.id
+    try:
+        subscription = await _subscription_or_reply(update, context, " ".join(context.args).strip(), command='unmute')
+        if subscription is None:
+            return
+        alias, address = subscription
+        row = await _repo(context).subscription_of(user_id, address)
+        now = now_ms()
+        if not pipeline.is_muted(row['muted_until_ms'], now):
+            await reply(update, texts.NOT_MUTED.format(alias=h(alias)))
+            return
+        count = await _repo(context).events_count_for_wallet(address, int(row['muted_since_ms'] or now))
+        await _repo(context).set_mute(row['rowid'], None, None)
+    except Exception as e:
+        await reply_internal_error(update, f"unmute_command user={user_id}", e)
+        return
+    logger.info(f"User {user_id} unmuted '{alias}' ({count} events while muted)")
+    await reply(update, texts.UNMUTED.format(alias=h(alias), count=count))
+
+
+ALIAS_RE = re.compile(r'\S{1,32}')
+
+
+async def rename_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/rename old new: unique per user (case-insensitive), 1 to 32 characters, no spaces. Aliases that
+    /related derived from the old one (<alias>-N) are left as they are."""
+    if len(context.args) != 2:
+        await reply(update, texts.RENAME_USAGE)
+        return
+    old, new = context.args
+    user_id = update.effective_user.id
+    if not ALIAS_RE.fullmatch(new):
+        await reply(update, texts.RENAME_INVALID)
+        return
+    try:
+        subscription = await _subscription_or_reply(update, context, old, command='rename')
+        if subscription is None:
+            return
+        stored_old, _ = subscription
+        clash = await _repo(context).find_subscription(user_id, new)
+        if clash is not None and clash[0].lower() != stored_old.lower():
+            await reply(update, texts.RENAME_EXISTS.format(alias=h(clash[0])))
+            return
+        await _repo(context).rename_subscription(user_id, stored_old, new)
+    except Exception as e:
+        await reply_internal_error(update, f"rename_command user={user_id}", e)
+        return
+    logger.info(f"User {user_id} renamed '{stored_old}' to '{new}'")
+    await reply(update, texts.RENAMED.format(old=h(stored_old), new=h(new)))
+
+
+async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/settings alias: one message with toggle buttons (spec 9.4); /settings default edits the user's defaults."""
+    if not context.args:
+        await reply(update, texts.SETTINGS_USAGE)
+        return
+    user_id = update.effective_user.id
+    alias_text = " ".join(context.args).strip()
+    try:
+        if alias_text.lower() == 'default':
+            settings = await callbacks.effective_settings(_repo(context), user_id, None)
+            await callbacks.answer_markup(update, callbacks.settings_text(None),
+                                          callbacks.settings_keyboard(settings, callbacks.USER_TARGET))
+            return
+        subscription = await _subscription_or_reply(update, context, alias_text, command='settings')
+        if subscription is None:
+            return
+        alias, address = subscription
+        row = await _repo(context).subscription_of(user_id, address)
+        settings = await callbacks.effective_settings(_repo(context), user_id, row)
+        active = [r['venue'] for r in await _repo(context).venue_accounts_of(address) if r['active']]
+        await callbacks.answer_markup(update, callbacks.settings_text(alias),
+                                      callbacks.settings_keyboard(settings, str(row['rowid']), active))
+    except Exception as e:
+        await reply_internal_error(update, f"settings_command user={user_id}", e)
+
+
 async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/health (admins only, spec 11): polling state, weight budget, DB size, uptime."""
     if update.effective_user.id not in Config.ADMIN_USER_IDS:
@@ -455,5 +598,18 @@ async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await reply(update, formatter.format_health(report, now_ms()))
 
 
+RERUNNABLE = {'positions': positions_command, 'stats': stats_command, 'recent': recent_command,
+              'twap': twap_command, 'rescan': rescan_command, 'related': related_command,
+              'settings': settings_command, 'mute': mute_command, 'unmute': unmute_command}
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error("Exception while handling an update:", exc_info=context.error)
+    """Uncaught handler exceptions (spec 9.7): one id in the log and in the reply, nothing else."""
+    error_id = uuid.uuid4().hex[:6]
+    logger.error(f"[{error_id}] Exception while handling an update:", exc_info=context.error)
+    message = getattr(update, 'message', None) or getattr(getattr(update, 'callback_query', None), 'message', None)
+    if message is not None:
+        try:
+            await message.reply_text(texts.INTERNAL_ERROR.format(error_id=error_id), parse_mode=ParseMode.HTML)
+        except Exception as e:
+            logger.warning(f"[{error_id}] could not reply: {e}")

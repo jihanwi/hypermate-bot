@@ -16,6 +16,7 @@ from telegram.ext import ContextTypes
 
 from hypermate.config import Config
 from hypermate.core import aggregator, events, related
+from hypermate.core import settings as user_settings
 from hypermate.core.events import POSITION_TYPES, SPOT_TYPES, Event, EventType
 from hypermate.core.formatter import (algo_label, format_algo_end, format_algo_progress, format_fill_message,
                                       format_ledger_event, format_multi_algo_exit, format_multi_algo_summary,
@@ -63,9 +64,45 @@ def label_for(key: int, alias: str) -> str:
 
 # Delivery --------------------------------------------------------------------
 
+MUTE_FOREVER_MS = 9_999_999_999_999          # muted_until_ms of a mute without an end (year 2286)
+
+
+def is_muted(muted_until_ms: Optional[int], now_ms: int) -> bool:
+    return muted_until_ms is not None and int(muted_until_ms) > now_ms
+
+
+async def recipients(repo: Repo, account_key: int, event_id: Optional[int]) -> list[tuple[int, str]]:
+    """Subscribers who get this event after their own settings (spec 9.4) and mute (9.5): venue off,
+    event type off, under their notional floor, or muted. Filtered users are logged only: the event stays
+    delivery=sent and gets no sent_messages row for them. Without an event id only venue and mute apply."""
+    rows = await repo.subscribers_detailed(account_key)
+    if not rows:
+        return []
+    event = await repo.get_event(event_id) if event_id is not None else None
+    payload = (event or {}).get('payload') or {}
+    notional = to_decimal((payload.get('chain') or {}).get('notional_usd')) or to_decimal(payload.get('notional_usd'))
+    venue = venue_of(account_key)
+    now = adapter.now_ms()
+    account_value = None
+    out = []
+    for row in rows:
+        if is_muted(row['muted_until_ms'], now):
+            logger.info(f"Alert for user {row['user_id']} ({row['alias']}) skipped: muted")
+            continue
+        st = user_settings.resolve(row['settings'], row['user_settings'])
+        if account_value is None and (st.get('min_notional') or {}).get('mode', 'auto') == 'auto':
+            account_value = to_decimal(await repo.account_value(account_key)) or Decimal(0)
+        ok, reason = user_settings.allows(st, event['type'] if event else None, venue, notional, account_value)
+        if not ok:
+            logger.info(f"Alert for user {row['user_id']} ({row['alias']}) skipped: {reason} setting")
+            continue
+        out.append((row['user_id'], row['alias']))
+    return out
+
+
 async def deliver(bot: Bot, repo: Repo, account_key: int, render: Render, event_id: Optional[int] = None) -> None:
     """Send to every subscriber (rendered with their alias); remember message ids for later edits."""
-    subscribers = await repo.subscribers(account_key)
+    subscribers = await recipients(repo, account_key, event_id)
     for i, (user_id, alias) in enumerate(subscribers):
         text = render(label_for(account_key, alias))
         if text is None:
@@ -84,7 +121,7 @@ async def deliver(bot: Bot, repo: Repo, account_key: int, render: Render, event_
 async def edit_or_send(bot: Bot, repo: Repo, account_key: int, target_event_id: int, render: Render) -> None:
     """Edit the messages sent for target_event_id; users without one (or whose edit fails) get a new message."""
     sent = await repo.sent_messages(target_event_id)
-    subscribers = await repo.subscribers(account_key)
+    subscribers = await recipients(repo, account_key, target_event_id)
     for i, (user_id, alias) in enumerate(subscribers):
         text = render(label_for(account_key, alias))
         if text is None:

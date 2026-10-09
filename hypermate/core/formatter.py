@@ -281,11 +281,14 @@ def account_value(perp_state: dict) -> Optional[Decimal]:
     return to_decimal(perp_state.get('marginSummary', {}).get('accountValue'))
 
 
-def format_list_line(alias: str, address: str, value: Optional[Decimal], venues_active: Optional[list] = None) -> str:
-    """/list row with the badges of the venues the wallet is active on. value None means unknown."""
+def format_list_line(alias: str, address: str, value: Optional[Decimal], venues_active: Optional[list] = None,
+                     mute: str = '') -> str:
+    """/list row with the badges of the venues the wallet is active on and the mute marker ('🔇 5h').
+    value None means unknown."""
     value_str = usd(value) if value is not None else "n/a"
     badges = " ".join(badge(v) for v in venues_active or [])
-    return f"• {alias_link(address, alias)}: {h(address)} · {value_str}" + (f" · {badges}" if badges else "")
+    return (f"• {alias_link(address, alias)}: {h(address)} · {value_str}" + (f" · {badges}" if badges else "")
+            + (f" · {mute}" if mute else ""))
 
 
 def format_positions_summary_line(alias: str, address: str, perp_state: Optional[dict]) -> str:
