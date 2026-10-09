@@ -387,7 +387,7 @@ async def test_list_sums_account_values_over_venues(repo, clock):
     await repo.save_snapshot(rows[0]['key'], {'': {}}, T0, '2000')
     await repo.save_snapshot(rows[1]['key'], {'': {}}, T0, '2711105.03')
     out = (await call(commands.list_wallets, repo, bot_data, 5))[0]
-    assert '$2,713,105.03' in out
+    assert '🐳 <b>' in out and '· $2.71M · HL LTR' in out
 
 
 async def test_lighter_poll_sends_alerts_with_badge_and_sub_account_label(repo, clock):

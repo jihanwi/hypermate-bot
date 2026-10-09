@@ -281,14 +281,48 @@ def account_value(perp_state: dict) -> Optional[Decimal]:
     return to_decimal(perp_state.get('marginSummary', {}).get('accountValue'))
 
 
-def format_list_line(alias: str, address: str, value: Optional[Decimal], venues_active: Optional[list] = None,
-                     mute: str = '') -> str:
-    """/list row with the badges of the venues the wallet is active on and the mute marker ('🔇 5h').
-    value None means unknown."""
-    value_str = usd(value) if value is not None else "n/a"
-    badges = " ".join(badge(v) for v in venues_active or [])
-    return (f"• {alias_link(address, alias)}: {h(address)} · {value_str}" + (f" · {badges}" if badges else "")
-            + (f" · {mute}" if mute else ""))
+WHALE_USD = Decimal(1_000_000)
+
+
+def ellipsis_address(address: str) -> str:
+    """0xefe4…194b (first 6, ellipsis, last 4) for the /list address line."""
+    return f"{address[:6]}…{address[-4:]}" if len(address) > 10 else address
+
+
+def format_list_row(row: dict) -> str:
+    """One /list entry (fix/list-format, 2026-10-09): '{marker} <b>alias</b> · $1.2k · HL RISE · 🔇 5h' plus
+    an address line, or '(idle)' instead of the address when the value is $0 and nothing is open.
+    marker: 🐳 at $1M and above, • above $0, · at $0. row: {alias, address, value, venues, positions, mute}."""
+    value = row.get('value')
+    marker = '🐳' if value is not None and value >= WHALE_USD else '•' if value is not None and value > 0 else '·'
+    badges = " ".join(badge(v).strip('[]') for v in row.get('venues') or [])
+    parts = [f"<b>{alias_link(row['address'], row['alias'])}</b>", compact_usd(value) if value is not None else 'n/a']
+    if badges:
+        parts.append(badges)
+    if row.get('mute'):
+        parts.append(row['mute'])
+    first = f"{marker} {' · '.join(parts)}"
+    if (value is None or value == 0) and not row.get('positions'):
+        return f"{first} (idle)"
+    return f"{first}\n<code>{h(ellipsis_address(row['address']))}</code>"
+
+
+def format_list(rows: list[dict], limit: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
+    """/list messages: header 'Tracked wallets (N) · total $X' (account values summed over every venue),
+    rows by value descending then alias, split at row boundaries under the Telegram limit (spec 9.3)."""
+    ordered = sorted(rows, key=lambda r: (-(r.get('value') if r.get('value') is not None else Decimal(-1)),
+                                          r['alias'].lower()))
+    total = sum((r['value'] for r in rows if r.get('value') is not None), Decimal(0))
+    chunks, current = [], f"<b>Tracked wallets ({len(rows)})</b> · total {compact_usd(total)}"
+    for row in ordered:
+        text = format_list_row(row)
+        if len(current) + 1 + len(text) > limit:
+            chunks.append(current)
+            current = text
+        else:
+            current += "\n" + text
+    chunks.append(current)
+    return chunks
 
 
 def format_positions_summary_line(alias: str, address: str, perp_state: Optional[dict]) -> str:

@@ -9,7 +9,7 @@ The v2 upgrade plan is in [docs/HYPERMATE_V2_SPEC.md](docs/HYPERMATE_V2_SPEC.md)
 - `/start` - Short welcome
 - `/help` - Commands and alert types
 - `/add <wallet_address> <alias>` - Track a wallet. `/add risex:<address> <alias>` pins the address to that venue only (hl, lighter, risex, aster): no Hyperliquid row, no dex scan, used when the automatic mapping does not find the address there
-- `/list` - Your tracked wallets with account value (summed over venues) and the badges of the venues each is active on
+- `/list` - `Tracked wallets (N) · total $X`, then one entry per wallet sorted by account value (summed over venues): `🐳 alias · $47.4M · HL RISE · 🔇 5h` (🐳 from $1M, • above $0, · at $0) and the address on a second line, or `(idle)` instead of the address when nothing is open at $0. Over 20 wallets the reply is split at entry boundaries
 - `/remove <alias>` - Stop tracking a wallet
 - `/positions [alias]` - Positions and balances for one wallet (main dex and HIP-3 dexs), or a one-line summary per wallet without an alias
 - `/twap [alias]` - Active native TWAPs and detected bot (algo) executions

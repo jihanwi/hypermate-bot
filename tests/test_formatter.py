@@ -63,8 +63,11 @@ def test_stats_view():
 def test_list_and_summary_lines():
     perp = clearinghouse(position('BTC', '1', position_value='90000'), position('ETH', '-1', position_value='3000'),
                          account_value='5000')
-    assert formatter.format_list_line('w_1', ADDR, Decimal('5000')).endswith('· $5,000.00')
-    assert formatter.format_list_line('w_1', ADDR, None).endswith('· n/a')
+    row = formatter.format_list_row({'alias': 'w_1', 'address': ADDR, 'value': Decimal('5000'), 'venues': ['hyperliquid'],
+                                     'positions': 2, 'mute': ''})
+    assert row.startswith('• <b><a href=') and row.endswith('</a></b> · $5k · HL\n<code>0xaaaa…aaaa</code>')
+    assert formatter.format_list_row({'alias': 'w', 'address': ADDR, 'value': None, 'venues': [], 'positions': 0,
+                                      'mute': ''}).endswith('· n/a (idle)')
     summary = formatter.format_positions_summary_line('w_1', ADDR, perp)
     assert '$5,000.00 · 2 positions · largest LONG $BTC $90,000' in summary
     assert 'API error' in formatter.format_positions_summary_line('w_1', ADDR, None)
@@ -250,3 +253,35 @@ def test_price_keeps_the_venue_step_price_decimals_but_hl_logic_unchanged():
     assert price(Decimal('0.006268'), 6) == '$0.006268' and price(Decimal('1311.49'), 2) == '$1,311.49'
     assert price(Decimal('0.000000012345'), 12) == '$0.00000001'          # capped at 8
     assert price(Decimal('0.00631234')) == '$0.0063' and price(Decimal('60000')) == '$60,000'   # HL as before
+
+
+def test_list_sorts_abbreviates_folds_idle_and_splits():
+    """fix/list-format (2026-10-09): header with count and total, value descending then alias, $1.2k / $47.4M
+    amounts, 🐳 / • / · markers, '(idle)' instead of the address line at $0 with nothing open, 🔇 marker,
+    rows never split across messages."""
+    def row(alias, value, venues=('hyperliquid',), positions=1, mute='', address=ADDR):
+        return {'alias': alias, 'address': address, 'value': Decimal(value) if value is not None else None,
+                'venues': list(venues), 'positions': positions, 'mute': mute}
+
+    rows = [row('bob', '1234'), row('whale', '47400000', ('hyperliquid', 'risex')), row('amy', '1234'),
+            row('idle', '0', ('lighter',), positions=0), row('muted', '950000', mute='🔇 5h'),
+            row('unknown', None, (), positions=0), row('flat', '0', positions=1)]
+    (text,) = formatter.format_list(rows)
+    check_telegram_html(text)
+    lines = text.split('\n')
+    assert lines[0] == '<b>Tracked wallets (7)</b> · total $48.4M'
+    names = [line.split('</a></b>')[0].split('>')[-1] for line in lines if line.startswith(('🐳', '•', '·'))]
+    assert names == ['whale', 'muted', 'amy', 'bob', 'flat', 'idle', 'unknown']       # value desc, then alias
+    assert lines[1].startswith('🐳 ') and '· $47.4M · HL RISE' in lines[1] and lines[2] == f'<code>{formatter.ellipsis_address(ADDR)}</code>'
+    assert '• <b>' in lines[3] and '· $950k · HL · 🔇 5h' in lines[3]
+    assert any(l.startswith('· <b>') and l.endswith('· $0 · LTR (idle)') for l in lines)
+    assert any(l.startswith('· <b>') and l.endswith('· $0 · HL') for l in lines)       # $0 but a position: address shown
+    assert any(l.endswith('· n/a (idle)') for l in lines)
+    assert text.count('<code>') == 5 and formatter.ellipsis_address('0xefe41234567890abcdef1234567890abcdef194b') == '0xefe4…194b'
+    # 25 wallets: split under the limit at row boundaries, header once
+    many = [row(f'w{i:02d}', str(1000 + i)) for i in range(25)]
+    chunks = formatter.format_list(many, limit=700)
+    assert len(chunks) > 1 and all(len(c) <= 700 for c in chunks)
+    assert chunks[0].startswith('<b>Tracked wallets (25)</b>') and not any(c.startswith('<b>Tracked') for c in chunks[1:])
+    assert all(c.startswith(('•', '<b>Tracked')) and c.endswith('</code>') for c in chunks)
+    assert sum(c.count('<code>') for c in chunks) == 25
