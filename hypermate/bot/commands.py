@@ -9,7 +9,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
-from hypermate.bot import texts
+from hypermate.bot import callbacks, texts
 from hypermate.config import Config
 from hypermate.core import formatter, poller, related
 from hypermate.core.venues import resolve_summary, resolve_wallet, split_venue_prefix
@@ -282,7 +282,8 @@ async def _scan_dexs(context: ContextTypes.DEFAULT_TYPE, address: str) -> list[s
     return dexs
 
 
-async def _subscription_or_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, alias_text: str):
+async def _subscription_or_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, alias_text: str,
+                                 command: Optional[str] = None):
     subscription = await _repo(context).find_subscription(update.effective_user.id, alias_text)
     if subscription is None:
         await reply(update, texts.ALIAS_NOT_FOUND.format(alias=h(alias_text)))
@@ -430,6 +431,32 @@ async def track_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.message.reply_text(texts.INTERNAL_ERROR.format(error_id='track'), parse_mode=ParseMode.HTML)
         return
     await query.message.reply_text(message, parse_mode=ParseMode.HTML)
+
+
+async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/settings alias: one message with toggle buttons (spec 9.4); /settings default edits the user's defaults."""
+    if not context.args:
+        await reply(update, texts.SETTINGS_USAGE)
+        return
+    user_id = update.effective_user.id
+    alias_text = " ".join(context.args).strip()
+    try:
+        if alias_text.lower() == 'default':
+            settings = await callbacks.effective_settings(_repo(context), user_id, None)
+            await callbacks.answer_markup(update, callbacks.settings_text(None),
+                                          callbacks.settings_keyboard(settings, callbacks.USER_TARGET))
+            return
+        subscription = await _subscription_or_reply(update, context, alias_text, command='settings')
+        if subscription is None:
+            return
+        alias, address = subscription
+        row = await _repo(context).subscription_of(user_id, address)
+        settings = await callbacks.effective_settings(_repo(context), user_id, row)
+        active = [r['venue'] for r in await _repo(context).venue_accounts_of(address) if r['active']]
+        await callbacks.answer_markup(update, callbacks.settings_text(alias),
+                                      callbacks.settings_keyboard(settings, str(row['rowid']), active))
+    except Exception as e:
+        await reply_internal_error(update, f"settings_command user={user_id}", e)
 
 
 async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

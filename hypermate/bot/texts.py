@@ -74,3 +74,13 @@ POSITIONS_SUMMARY_HEADER = "📊 <b>Positions summary</b>"
 HL_API_ERROR = "Hyperliquid API error. Try the command again in a moment."
 INTERNAL_ERROR = "Something went wrong (id: {error_id})"
 STATS_NOT_AVAILABLE = "Stats not available for this wallet."
+
+# /settings (spec 9.4)
+SETTINGS_USAGE = "Usage: /settings alias (or /settings default)\nExample: <code>/settings whale1</code>"
+SETTINGS_HEADER = ("⚙️ <b>Settings for {alias}</b>\nTap to toggle. Venues, alert types and the minimum order size "
+                   "(Auto = $100 or 0.5% of the account value, whichever is higher). Full closes and liquidations "
+                   "always come through.")
+SETTINGS_DEFAULT_HEADER = ("⚙️ <b>Default settings</b> for wallets you add\nA wallet's own /settings override these. "
+                           "Auto = $100 or 0.5% of the account value, whichever is higher.")
+SETTINGS_STALE = "This keyboard is stale. Run /settings again."
+NOT_YOURS = "Not your settings."
