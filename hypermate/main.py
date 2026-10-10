@@ -26,6 +26,8 @@ from hypermate.venues.risex.client import RisexClient
 from hypermate.venues.risex.stream import RisexStream
 from hypermate.venues.aster.adapter import AsterAdapter
 from hypermate.venues.aster.client import AsterClient
+from hypermate.venues.arcus.adapter import ArcusAdapter
+from hypermate.venues.arcus.client import ArcusClient
 
 logger = logging.getLogger(__name__)
 
@@ -99,11 +101,15 @@ async def build_venues(application: Application, hl: HyperliquidClient) -> None:
     aster = AsterClient(Config.ASTER_RPC_URL, aster_budget)
     await aster.start()
     application.bot_data['aster'] = aster
+    arcus = ArcusClient(Config.ARCUS_API_URL, WeightBudget(Config.ARCUS_REQ_BUDGET))
+    await arcus.start()
+    application.bot_data['arcus'] = arcus
     application.bot_data['venues'] = {
         venues.HYPERLIQUID: HyperliquidVenue(hl),
         venues.LIGHTER: LighterAdapter(lighter, stream),
         venues.RISEX: RisexAdapter(risex, risex_stream),
         venues.ASTER: AsterAdapter(aster),
+        venues.ARCUS: ArcusAdapter(arcus),
     }
 
 
@@ -111,7 +117,7 @@ async def post_shutdown(application: Application) -> None:
     for name in ('lighter_stream', 'risex_stream'):
         if application.bot_data.get(name) is not None:
             await application.bot_data[name].stop()
-    for name in ('risex', 'aster'):
+    for name in ('risex', 'aster', 'arcus'):
         if name in application.bot_data:
             await application.bot_data[name].close()
     if 'lighter' in application.bot_data:

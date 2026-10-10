@@ -14,7 +14,7 @@ from hypermate.venues.base import NAMES, VenueAccount
 
 logger = logging.getLogger(__name__)
 
-VENUE_ORDER = (base.HYPERLIQUID, base.LIGHTER, base.RISEX, base.ASTER)
+VENUE_ORDER = (base.HYPERLIQUID, base.LIGHTER, base.RISEX, base.ASTER, base.ARCUS)
 
 
 async def resolve_wallet(repo: Repo, adapters: dict, address: str, now_ms: int,
@@ -41,7 +41,8 @@ async def resolve_wallet(repo: Repo, adapters: dict, address: str, now_ms: int,
             continue
         accounts: list[VenueAccount] = list(result)
         if only_venue is not None and not accounts and venue != base.LIGHTER:
-            accounts = [VenueAccount(venue, address, address, meta={'forced': True})]
+            ref = f"{address}:0" if venue == base.ARCUS else address   # Arcus: the main account
+            accounts = [VenueAccount(venue, ref, address, meta={'forced': True})]
         found = {a.account_ref for a in accounts}
         for account in accounts:
             key, created = await repo.ensure_venue_account(address, venue, account.account_ref, True, now_ms,
@@ -58,7 +59,8 @@ async def resolve_wallet(repo: Repo, adapters: dict, address: str, now_ms: int,
 
 
 VENUE_PREFIXES = {'hl': base.HYPERLIQUID, 'hyperliquid': base.HYPERLIQUID, 'lighter': base.LIGHTER,
-                  'ltr': base.LIGHTER, 'risex': base.RISEX, 'rise': base.RISEX, 'aster': base.ASTER}
+                  'ltr': base.LIGHTER, 'risex': base.RISEX, 'rise': base.RISEX, 'aster': base.ASTER,
+                  'arcus': base.ARCUS, 'arc': base.ARCUS}
 
 
 def split_venue_prefix(text: str) -> tuple[Optional[str], str]:
@@ -85,11 +87,11 @@ def resolve_summary(results: dict[str, Optional[list[VenueAccount]]], hl_dexs: O
             parts.append(f"{name} ✗")
         elif venue == base.HYPERLIQUID:
             parts.append(f"{name} ✅" + (f" · dex: {', '.join(hl_dexs)}" if hl_dexs else ""))
-        elif venue == base.LIGHTER:
-            n = len(accounts)
-            parts.append(f"{name} ✅ ({n} sub-account{'s' if n != 1 else ''})")
         elif (accounts[0].meta or {}).get('forced'):
             parts.append(f"{name} ✅ (added as given, no activity seen)")
+        elif venue in base.INDEXED:
+            n = len(accounts)
+            parts.append(f"{name} ✅ ({n} {'sub-account' if venue == base.LIGHTER else 'account'}{'s' if n != 1 else ''})")
         elif venue == base.ASTER:
             privacy = (accounts[0].meta or {}).get('privacy')
             parts.append(f"{name} ✅" + (f" (privacy: {'on' if privacy == 'enabled' else 'off'})" if privacy else ""))
