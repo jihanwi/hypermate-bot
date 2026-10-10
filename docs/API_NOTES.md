@@ -135,6 +135,22 @@ Shapes from the PM fixtures (master wallet 0x6aca…, 2026-10-03):
 - `aster_getBalance` for an address with no Aster account answers a JSON-RPC error `-32603` whose message wraps `BinanceApiError[code=-40000005, msg=The account does not exist …]` (loracle /add log, 2026-10-05; fixture `aster_getBalance_notfound.json`). The client raises `AsterNotFound` for `-32603` with `code=-40000005` or `The account does not exist` in the message and resolve answers ✗; any other `-32603` stays an error (`?`). Same pattern as Lighter 400 / 21100.
 - Explorer: Aster Chain explorer address URL format [?]; alerts link to `https://www.asterdex.com/`.
 
+## Arcus (Phase 2D, 2026-10-10)
+
+`api.arcus.xyz` and `docs.arcus.xyz` are not reachable from the Claude environment (proxy refuses the tunnel, DNS fails), so nothing below was called live by the bot's author. Sources: the PM's live calls of 2026-10-10 (base URL, 403 / 404 / 400 meanings, `/v1/markets` fields, pagination unit, weights) and the field names observed in a third-party integration that reads the same endpoints (github.com/MilstG/trading-journal PR #139, `app/venues.js`, `app/engine.js`). Items marked [?] need one live recording by the owner.
+
+- Base `https://api.arcus.xyz`, no auth for reads, CORS open. Testnet `api.testnet.arcus.xyz` with the same paths. Account = EVM address + `accountIndex` 0 to 9 (0 = main).
+- `GET /v1/account?address=0x…&accountIndex=N` → `{address, equity, positions[] {marketDisplayName, size, averageEntryPrice, unrealizedPnl, leverage, positionValueNotional}}` (observed). `markPrice` and `liquidationPrice` per position [?] (not observed; the adapter reads them when present). `positions` may be an object keyed by market or an array [?]: the adapter accepts both. 403 `{"error":"address not on access whitelist"}` = not an Arcus user (resolve ✗). 404 = no activity on that index. Missing `address` → 400 `missing address`.
+- `GET /v1/markets` → `markets[] {marketId, marketDisplayName "BTC-USD", baseAsset, tickSize, stepSize, tickTiers[], status}` (PM). The shape of one `tickTiers` entry [?]: the adapter reads `{minPrice|from|price, tickSize|tick}` leniently and falls back to `tickSize`. The top-level key (`markets` or a bare list) [?]: both accepted.
+- `GET /v1/fills?address=&accountIndex=&limit=1000&from=<µs>&to=<µs>` → `{fills[] {tradeId, orderId, marketDisplayName, side BUY|SELL, price, size, fee, closedPnl, liquidation {method}, role TAKER|MAKER, createdAt}}`, newest first, 1,000 per page; `createdAt` is epoch microseconds; paging back = `to = oldest createdAt - 1`. `closedPnl` is net of `fee` (liquidation rows: the fee is the penalty, older liquidation rows show `closedPnl` 0): the bot adds the fee back so `closedPnl` matches Hyperliquid's gross convention. `from` is clamped to at least `1e14` µs by the third-party client [?] (reason unknown; the bot does not clamp).
+- `GET /v1/funding` same parameters → `{fundingPayments[] {marketId, marketDisplayName, payment, time (µs)}}`. Not used in 2D.
+- `GET /v1/candles?market=BTC-USD&timeframe=&from=&to=` exists (`candles[] {openTime, open, high, low, close}`). Not used.
+- Weights: 1,500 per minute per IP, refilled at 25/s; fills and funding pages cost 20, account reads 2 (PM + observed client). The bot's bucket is `ARCUS_REQ_BUDGET` = 1,200 per minute and a 429 pauses the queue (no halving: the limit is published). 429 count over 24 h after deploy: owner check.
+- WebSocket for other users' accounts [?]: none found in the docs index or the observed client; polling only (`ARCUS_POLL_SEC` 20 s).
+- pTokens: positions also exist as ERC-20 pTokens on Robinhood Chain [?]; contract addresses not recorded (docs unreachable). On-chain fallback out of scope.
+- Explorer: Robinhood Chain explorer address URL format [?]; alerts link to `https://arcus.xyz/`.
+- Fixtures `tests/fixtures/arcus_*.json` are synthetic, built from the field names above (no public active address could be recorded from this environment): owner, please record `/v1/account` (one active index), `/v1/markets` (two markets with `tickTiers`) and one `/v1/fills` page for an active address and replace them.
+
 ## Telegram
 
 - `setMyCommands` is called once in `post_init` with `BotCommandScopeAllPrivateChats`. The request shape was checked against a local fake Bot API server. Whether the menu shows up in the Telegram client needs a check with the real bot token.
