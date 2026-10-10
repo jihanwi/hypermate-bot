@@ -38,6 +38,7 @@ EVENT_LABELS = {'position': 'Positions', 'liquidation': 'Liquidations', 'twap': 
                 'account_class_transfer': 'Perp <-> spot moves'}
 NOTIONAL_LABELS = {'auto': 'Auto', '100': '$100', '1000': '$1k', '10000': '$10k', '100000': '$100k', 'off': 'Off'}
 SHOW_TWAP_PROGRESS = False       # stored only: no per-user progress edit logic yet (spec 9.4)
+DIGEST_HOURS = (6, 9, 12, 18, 21)
 
 
 def _mark(on: bool) -> str:
@@ -66,6 +67,15 @@ def settings_keyboard(settings: dict, target: str, active_venues: Optional[list[
                     for choice in user_settings.MIN_NOTIONAL_CHOICES]
     rows.append(notional_row[:3])
     rows.append(notional_row[3:])
+    if target == USER_TARGET:
+        digest = settings.get('digest') or {}
+        enabled = bool(digest.get('enabled', True))
+        rows.append([InlineKeyboardButton(f"{_mark(enabled)} Daily digest",
+                                          callback_data=f"{SETTINGS_CALLBACK}{target}:g:{'off' if enabled else 'on'}")])
+        hour = int(digest.get('hour_kst', 9))
+        rows.append([InlineKeyboardButton(('✅ ' if hour == choice else '') + f"{choice:02d} KST",
+                                          callback_data=f"{SETTINGS_CALLBACK}{target}:g:{choice}")
+                     for choice in DIGEST_HOURS])
     if SHOW_TWAP_PROGRESS:
         on = bool(settings.get('twap_progress'))
         rows.append([InlineKeyboardButton(f"{_mark(on)} TWAP progress edits",
@@ -83,6 +93,11 @@ def apply_change(settings: dict, kind: str, parts: list[str]) -> Optional[dict]:
         return user_settings.set_path(settings, ('min_notional',), user_settings.min_notional_from_choice(parts[0]))
     if kind == 't' and len(parts) == 1 and parts[0] in ('0', '1'):
         return user_settings.set_path(settings, ('twap_progress',), parts[0] == '1')
+    if kind == 'g' and len(parts) == 1:
+        if parts[0] in ('on', 'off'):
+            return user_settings.set_path(settings, ('digest', 'enabled'), parts[0] == 'on')
+        if parts[0].isdigit() and int(parts[0]) in DIGEST_HOURS:
+            return user_settings.set_path(settings, ('digest', 'hour_kst'), int(parts[0]))
     return None
 
 

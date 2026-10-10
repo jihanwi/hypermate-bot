@@ -10,7 +10,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 
 from hypermate.bot import callbacks, commands, texts
 from hypermate.config import Config
-from hypermate.core import poller
+from hypermate.core import digest, poller
 from hypermate.db import backup
 from hypermate.db.repo import Repo
 from hypermate.venues import base as venues
@@ -128,6 +128,11 @@ async def post_shutdown(application: Application) -> None:
         await application.bot_data['repo'].close()
 
 
+def _seconds_to_next_hour() -> int:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    return 3600 - (now.minute * 60 + now.second)
+
+
 def build_application() -> Application:
     application = (Application.builder().token(Config.BOT_TOKEN)
                    .post_init(post_init).post_shutdown(post_shutdown).build())
@@ -148,6 +153,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("mute", commands.mute_command))
     application.add_handler(CommandHandler("unmute", commands.unmute_command))
     application.add_handler(CommandHandler("rename", commands.rename_command))
+    application.add_handler(CommandHandler("digest", commands.digest_command))
     application.add_handler(CallbackQueryHandler(callbacks.mute_all_callback, pattern=f"^{callbacks.MUTE_CALLBACK}"))
     application.add_handler(CallbackQueryHandler(callbacks.did_you_mean_callback, pattern=f"^{callbacks.DYM_CALLBACK}"))
     application.add_handler(CallbackQueryHandler(commands.track_callback, pattern=f"^{commands.TRACK_CALLBACK}"))
@@ -162,6 +168,9 @@ def build_application() -> Application:
     job_queue.run_daily(poller.rescan_job, time=datetime.time(hour=Config.VENUE_RESCAN_HOUR_KST,
                                                               minute=Config.VENUE_RESCAN_MINUTE, tzinfo=backup.KST))
     job_queue.run_daily(backup.backup_job, time=datetime.time(hour=Config.BACKUP_HOUR_KST, tzinfo=backup.KST))
+    # daily digest (spec 12): values stored at 00:00 UTC, the hourly job sends to the users whose hour came
+    job_queue.run_daily(digest.daily_value_job, time=datetime.time(hour=0, minute=0, tzinfo=datetime.timezone.utc))
+    job_queue.run_repeating(digest.digest_job, interval=3600, first=_seconds_to_next_hour() + 5)
     return application
 
 
