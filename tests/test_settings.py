@@ -61,7 +61,7 @@ def test_settings_resolve_in_three_levels():
     sub_level = {'events': {'spot': True}, 'venues': {'risex': False}}
     merged = user_settings.resolve(sub_level, user_level)
     assert merged['events']['spot'] is True and merged['events']['position'] is True       # sub wins, defaults kept
-    assert merged['venues'] == {'hyperliquid': True, 'lighter': True, 'risex': False, 'aster': True}
+    assert merged['venues'] == {'hyperliquid': True, 'lighter': True, 'risex': False, 'aster': True, 'arcus': True}
     assert merged['min_notional'] == {'mode': 'fixed', 'usd': 10_000}                     # from the user level
     assert user_settings.resolve(None, user_level)['events']['spot'] is False
     assert user_settings.DEFAULTS['venues']['risex'] is True                                # inputs untouched
@@ -153,11 +153,11 @@ async def test_settings_keyboard_toggles_and_ignores_other_users(repo):
     assert (await repo.subscription_of(7, W))['settings']['events'] == {'spot': False}
     texts_ = [b.text for r in log['markups'][0].inline_keyboard for b in r]
     assert '⬜ Spot' in texts_ and '✅ $10k' in texts_
-    # /settings default edits the user level, shown with all four venues
+    # /settings default edits the user level, shown with all five venues
     update = make_update(7)
     await commands.settings_command(update, ctx(repo, args=['default']))
     kb = update.message.replies[0]['reply_markup'].inline_keyboard
-    assert len(kb[0]) == 4 and kb[0][0].callback_data == 's:u:v:hyperliquid:0'
+    assert len(kb[0]) == 5 and kb[0][0].callback_data == 's:u:v:hyperliquid:0'      # all venues, Arcus included
     mine, log = query('s:u:e:vault:1', 7)
     await callbacks.settings_callback(mine, ctx(repo))
     assert await repo.user_settings(7) == {'events': {'vault': True}}

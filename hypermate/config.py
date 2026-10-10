@@ -60,6 +60,10 @@ class Config:
     ASTER_RPC_URL: str = os.getenv("ASTER_RPC_URL", "https://tapi.asterdex.com/info")
     ASTER_REQ_BUDGET: int = int(os.getenv("ASTER_REQ_BUDGET", "300"))
     ASTER_POLL_SEC: int = 30
+    # Arcus (spec 6.5): public REST, 1,500 weight/min per IP (account 2, fills page 20); bucket 1,200
+    ARCUS_API_URL: str = os.getenv("ARCUS_API_URL", "https://api.arcus.xyz")
+    ARCUS_REQ_BUDGET: int = int(os.getenv("ARCUS_REQ_BUDGET", "1200"))
+    ARCUS_POLL_SEC: int = 20
     VENUE_RESCAN_HOUR_KST: int = 4                   # daily rescan of inactive venues at 04:10 KST
     VENUE_RESCAN_MINUTE: int = 10
 

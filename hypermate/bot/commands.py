@@ -179,7 +179,7 @@ async def _release_wallet(context: ContextTypes.DEFAULT_TYPE, address: str) -> N
             continue
         if row['venue'] == venues.RISEX:
             await stream.untrack(address)
-        elif row['venue'] == venues.LIGHTER and str(row['account_ref']).isdigit():
+        elif row['venue'] == venues.LIGHTER and str(row['account_ref']).isdigit() and hasattr(stream, 'unsubscribe'):
             await stream.unsubscribe(int(row['account_ref']))
     logger.info(f"Wallet {address} has no subscribers: {len(rows)} venue accounts deactivated")
 
@@ -219,8 +219,8 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         except Exception as e:
             logger.error(f"positions {row['venue']} {address}#{row['account_ref']}: {e}")
             continue
-        title = f"{venues.NAMES.get(row['venue'], row['venue'])} #{row['account_ref']}" \
-            if row['venue'] == venues.LIGHTER else venues.NAMES.get(row['venue'], row['venue'])
+        title = f"{venues.NAMES.get(row['venue'], row['venue'])} #{venues.account_index(row['account_ref'])}" \
+            if row['venue'] in venues.INDEXED else venues.NAMES.get(row['venue'], row['venue'])
         sections.append((title, as_clearinghouse_state(snap)))
     dust = to_decimal(Config.DEFAULT_SETTINGS['dust_notional_usd'])
     await reply(update, formatter.format_positions(alias, address, perp_states, spot_state, dust, sections))

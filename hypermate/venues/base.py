@@ -1,4 +1,4 @@
-"""VenueAdapter interface (spec 3.2) shared by Hyperliquid, Lighter, RISEx and Aster.
+"""VenueAdapter interface (spec 3.2) shared by Hyperliquid, Lighter, RISEx, Aster and Arcus.
 
 Adapters know nothing about Telegram and keep no state: cursors and snapshots live in
 the DB and are passed in. They raise on 429/5xx; the scheduler's budget does backoff.
@@ -17,22 +17,36 @@ HYPERLIQUID = 'hyperliquid'
 LIGHTER = 'lighter'
 RISEX = 'risex'
 ASTER = 'aster'
+ARCUS = 'arcus'
 
-BADGES = {HYPERLIQUID: '[HL]', LIGHTER: '[LTR]', RISEX: '[RISE]', ASTER: '[ASTER]'}
-NAMES = {HYPERLIQUID: 'HL', LIGHTER: 'Lighter', RISEX: 'RISEx', ASTER: 'Aster'}
+BADGES = {HYPERLIQUID: '[HL]', LIGHTER: '[LTR]', RISEX: '[RISE]', ASTER: '[ASTER]', ARCUS: '[ARC]'}
+NAMES = {HYPERLIQUID: 'HL', LIGHTER: 'Lighter', RISEX: 'RISEx', ASTER: 'Aster', ARCUS: 'Arcus'}
+# venues whose account_ref is a sub-account index shown as alias#N
+INDEXED = (LIGHTER, ARCUS)
+
+
+def account_index(account_ref: str) -> str:
+    """Sub-account index of an indexed venue's account_ref: Lighter stores the index itself, Arcus
+    '<address>:<index>' (indexes repeat across wallets, so the ref carries the address)."""
+    return str(account_ref).rsplit(':', 1)[-1]
 
 
 @dataclass
 class VenueAccount:
     venue: str
-    account_ref: str                      # HL: address, Lighter: sub-account index, RISEx/Aster: address
+    account_ref: str                      # HL: address, Lighter: index, Arcus: address:index, RISEx/Aster: address
     address: str                          # the EVM wallet it belongs to (lowercase)
     venue_account_id: Optional[int] = None
     meta: dict = field(default_factory=dict)
 
     def label(self, alias: str) -> str:
-        """Alias as shown in alerts; Lighter sub-accounts carry '#<index>' (spec 10)."""
-        return f"{alias}#{self.account_ref}" if self.venue == LIGHTER else alias
+        """Alias as shown in alerts; Lighter sub-accounts carry '#<index>' (spec 10), Arcus sub-accounts
+        (index 1 to 9) too while its main account (0) is the plain alias."""
+        if self.venue == LIGHTER:
+            return f"{alias}#{self.account_ref}"
+        if self.venue == ARCUS and account_index(self.account_ref) != '0':
+            return f"{alias}#{account_index(self.account_ref)}"
+        return alias
 
 
 @dataclass

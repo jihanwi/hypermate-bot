@@ -1,0 +1,8 @@
+{
+  "note": "SYNTHETIC: accountIndex 2 of the same address, positions as an object keyed by market (shape [?]).",
+  "address": "0x7a1c4e9f2b3d5a6c8e0f1234567890abcdef1357",
+  "accountIndex": 2,
+  "equity": "4100.0",
+  "positions": {"SOL-USD": {"marketId": 5, "marketDisplayName": "SOL-USD", "size": "50", "averageEntryPrice": "148.21",
+                            "unrealizedPnl": "-40.5", "leverage": "3", "positionValueNotional": "7370.0"}}
+}

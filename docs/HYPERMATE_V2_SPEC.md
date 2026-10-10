@@ -498,7 +498,7 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 
 ---
 
-## 6. Phase 2: 멀티 베뉴 어댑터 (Lighter, RISEx, Aster)
+## 6. Phase 2: 멀티 베뉴 어댑터 (Lighter, RISEx, Aster, Arcus)
 
 목적: 요구사항 1 중 공개 API로 가능한 3개 베뉴. Extended, Variational은 Phase 4.
 
@@ -551,12 +551,27 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 - TWAP: 웹 UI 전용 private endpoint. 타인 TWAP 비공개 [V]. `aster_openOrders` 의 `type` 에 TWAP 노출되는지 [?] 구현 중 확인. 안 되면 Lighter와 동일하게 집계/debounce만.
 - explorer: Aster Chain explorer [?] 미확인. `https://www.asterdex.com/` 로 대체.
 
-### 6.5 완료 기준
+### 6.5 Arcus [V] (Phase 2D, 2026-10-10)
+
+- Robinhood Chain (Arbitrum Orbit L2) 의 perp DEX. 퍼블릭 REST `https://api.arcus.xyz`, 무인증, CORS 허용. 계정 = EVM 주소 + `accountIndex` (0 = 메인, 1~9 서브). 문서 `docs.arcus.xyz` (이 환경에서 접근 불가, [?] 항목은 `docs/API_NOTES.md` 참조).
+  - `GET /v1/account?address=0x…&accountIndex=N` → `{address, equity, positions[] {marketDisplayName, size (부호 = 방향), averageEntryPrice, unrealizedPnl, leverage, positionValueNotional, markPrice?, liquidationPrice?}}`. 403 `{"error":"address not on access whitelist"}` = Arcus 유저 아님, 404 = 그 index 에 활동 없음, `address` 없으면 400.
+  - `GET /v1/markets` → `markets[] {marketId, marketDisplayName (BTC-USD), baseAsset, tickSize, stepSize, tickTiers[], status}`. 30초 캐시.
+  - `GET /v1/fills?address=&accountIndex=&limit=1000&from=<µs>&to=<µs>` → `fills[] {tradeId, orderId, marketDisplayName, side BUY|SELL, price, size, fee, closedPnl (수수료 차감 후), liquidation {method}?, role TAKER|MAKER, createdAt (µs)}`, 최신순, 페이지당 1,000. 뒤로 넘길 때 `to = 가장 오래된 createdAt - 1`.
+  - `GET /v1/funding` 같은 파라미터 → `fundingPayments[] {marketId, marketDisplayName, payment, time (µs)}`. 2D 에서는 미사용.
+- resolve: index 0~9 를 순서대로 `/v1/account` 호출. 200 이면 그 index 활성 (`account_ref` = `<address>:<index>`, index 는 지갑마다 반복되므로; 표기 `alias#N`, N > 0 만), 403 이면 즉시 중단하고 ✗, 전부 404 면 ✗. `/add arcus:0x… alias` 베뉴 pin 은 index 0 을 강제 활성.
+- snapshot: `/v1/account` 포지션 → 공통 포지션 모델 (size, entry, mark, uPnL, leverage, liq px 가 있으면). 계정 가치 = `equity`. 가격 소수점은 `tickTiers` 의 현재가 구간 tick (없으면 `tickSize`).
+- events: `/v1/fills` 커서 폴링, cursors.kind `trades` 에 `{"ms": 마지막 fill 시각}`, `from = 커서 + 1 (µs)`. 첫 폴은 커서만 now 로. 페이지가 가득 차면 `to` 를 줄여 최대 5페이지 따라감. fill → HL 형태: `tradeId` = tid, `orderId` = oid, `closedPnl + fee` = closedPnl (HL 처럼 수수료 전), `liquidation` 전달, startPosition 은 직전 snapshot 에서 누적. TWAP 상태 없음 → 합성 algo 감지만. 폴링 20초 (`ARCUS_POLL_SEC`). WS [?] 미확인, 없는 것으로 두고 폴링만.
+- 한도: IP 당 1,500 weight/분, fills/funding 페이지 20, account 2. 베뉴 버킷 1,200 (`ARCUS_REQ_BUDGET`), 429 는 큐 일시 정지.
+- 뱃지 `[ARC]`, 이름 `Arcus`. 포지션은 pToken (ERC-20) 으로도 존재 [?]: 온체인 폴백은 범위 밖, 컨트랙트 주소는 `API_NOTES` 에 기록 (미확인).
+- explorer: Robinhood Chain explorer 주소 형식 [?], `https://arcus.xyz/` 로 대체.
+
+### 6.6 완료 기준
 
 - [ ] 각 베뉴에서 실제 활동 중인 공개 지갑 1개씩 추가 → `/positions` 에 베뉴별 섹션 표시
 - [ ] 각 베뉴에서 OPEN/CLOSE 알림 실제 수신 (오너가 테스트 지갑으로 소액 체결 또는 활발한 공개 지갑 관찰)
 - [ ] Lighter/RISEx WS 끊김 시 REST fallback 로그 확인, 복구 시 WS 재구독
 - [ ] Aster privacy on 계정 fixture로 `PRIVACY_ON` 1회만
+- [ ] Arcus: resolve 3분기 (200/403/404) 테스트, fills 페이징 테스트, `/positions` 에 ARC 섹션, `/health` venues 에 arcus
 - [ ] 베뉴별 한도 초과 0회 (24시간 로그)
 - [ ] `docs/API_NOTES.md` 에 [?] 항목 전부 확인 결과 기록
 

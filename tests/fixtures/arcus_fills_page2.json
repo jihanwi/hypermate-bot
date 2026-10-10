@@ -1,0 +1,44 @@
+{
+ "note": "SYNTHETIC older page reached by lowering to; includes a liquidation row",
+ "fills": [
+  {
+   "tradeId": 902000,
+   "orderId": 501000,
+   "marketDisplayName": "BTC-USD",
+   "side": "SELL",
+   "price": "85000",
+   "size": "0.5",
+   "fee": "2.5",
+   "closedPnl": "120.0",
+   "role": "TAKER",
+   "createdAt": 1791599999000000
+  },
+  {
+   "tradeId": 902001,
+   "orderId": 501000,
+   "marketDisplayName": "BTC-USD",
+   "side": "SELL",
+   "price": "85010",
+   "size": "0.2",
+   "fee": "1.0",
+   "closedPnl": "-30.0",
+   "role": "TAKER",
+   "createdAt": 1791599998000000,
+   "liquidation": {
+    "method": "LIQUIDATION"
+   }
+  },
+  {
+   "tradeId": 902002,
+   "orderId": 501001,
+   "marketDisplayName": "BTC-USD",
+   "side": "BUY",
+   "price": "84990",
+   "size": "0.7",
+   "fee": "1.2",
+   "closedPnl": "0",
+   "role": "TAKER",
+   "createdAt": 1791599997000000
+  }
+ ]
+}

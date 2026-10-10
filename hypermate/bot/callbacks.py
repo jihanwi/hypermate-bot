@@ -32,7 +32,7 @@ MUTE_CALLBACK = 'm:'
 DYM_CALLBACK = 'd:'
 USER_TARGET = 'u'
 
-VENUE_ORDER = (venues.HYPERLIQUID, venues.LIGHTER, venues.RISEX, venues.ASTER)
+VENUE_ORDER = (venues.HYPERLIQUID, venues.LIGHTER, venues.RISEX, venues.ASTER, venues.ARCUS)
 EVENT_LABELS = {'position': 'Positions', 'liquidation': 'Liquidations', 'twap': 'TWAP / algo', 'spot': 'Spot',
                 'transfer': 'Transfers', 'deposit_withdraw': 'Deposits / withdrawals', 'vault': 'Vaults',
                 'account_class_transfer': 'Perp <-> spot moves'}
