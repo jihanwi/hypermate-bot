@@ -37,6 +37,7 @@ async def test_post_init_registers_menu_and_creates_db(tmp_path, monkeypatch):
             ('mute', 'Mute alerts: /mute alias [1h/1d]'),
             ('unmute', 'Unmute alerts: /unmute alias'),
             ('rename', 'Rename alias: /rename old new'),
+            ('digest', 'Daily summary now: /digest (on|off|hour to set)'),
             ('rescan', 'Re-detect venues for a wallet: /rescan alias'),
             ('help', 'Commands and examples'),
         ]                                                   # spec 9.1 table; /health stays out of the menu
