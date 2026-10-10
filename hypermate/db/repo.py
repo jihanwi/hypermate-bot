@@ -81,6 +81,9 @@ class Repo:
         if 'settings_json' not in columns:
             await self.db.execute("ALTER TABLE users ADD COLUMN settings_json TEXT DEFAULT '{}'")
             logger.info("Migrated users: added settings_json")
+        if 'last_digest_day' not in columns:
+            await self.db.execute("ALTER TABLE users ADD COLUMN last_digest_day TEXT")
+            logger.info("Migrated users: added last_digest_day")
         cur = await self.db.execute("PRAGMA table_info(subscriptions)")
         columns = {row[1] for row in await self._rows(cur)}
         if 'muted_since_ms' not in columns:
@@ -647,6 +650,45 @@ class Repo:
             "SELECT COUNT(*) FROM events e JOIN venue_accounts va USING (venue_account_id) "
             "JOIN wallets w USING (wallet_id) WHERE w.evm_address = ? AND e.ts_ms >= ?", (address.lower(), since_ms)))
         return row[0] if row else 0
+
+    # Daily digest (spec 12 backlog, feat/daily-digest) -----------------------------
+
+    async def users_with_subscriptions(self) -> list[dict]:
+        """[{user_id, settings, last_digest_day}] for users tracking at least one wallet."""
+        cur = await self.db.execute(
+            "SELECT u.user_id, u.settings_json, u.last_digest_day FROM users u "
+            "WHERE EXISTS (SELECT 1 FROM subscriptions s WHERE s.user_id = u.user_id) ORDER BY u.user_id")
+        return [{'user_id': r[0], 'settings': json.loads(r[1] or '{}'), 'last_digest_day': r[2]}
+                for r in await self._rows(cur)]
+
+    async def set_last_digest_day(self, user_id: int, day: str) -> None:
+        await self.db.execute("UPDATE users SET last_digest_day = ? WHERE user_id = ?", (day, user_id))
+        await self.db.commit()
+
+    async def record_daily_values(self, day: str) -> int:
+        """Store every active venue account's current snapshot value under `day` (idempotent per day)."""
+        cur = await self.db.execute(
+            "INSERT OR REPLACE INTO account_value_daily (venue_account_id, day, value) "
+            "SELECT s.venue_account_id, ?, s.account_value FROM snapshots s "
+            "JOIN venue_accounts va USING (venue_account_id) WHERE va.active = 1", (day,))
+        await self.db.commit()
+        return cur.rowcount
+
+    async def daily_value(self, venue_account_id: int, day: str) -> Optional[str]:
+        """The stored value for `day`, else the newest stored value before it (None when nothing)."""
+        row = await self._row(await self.db.execute(
+            "SELECT value FROM account_value_daily WHERE venue_account_id = ? AND day <= ? ORDER BY day DESC LIMIT 1",
+            (venue_account_id, day)))
+        return row[0] if row else None
+
+    async def snapshot_row(self, venue_account_id: int) -> Optional[dict]:
+        """{positions: {dex: {coin: position}}, account_value, updated_at} or None."""
+        positions = await self.get_snapshot(venue_account_id)
+        if positions is None:
+            return None
+        row = await self._row(await self.db.execute(
+            "SELECT account_value, updated_at FROM snapshots WHERE venue_account_id = ?", (venue_account_id,)))
+        return {'positions': positions, 'account_value': row[0] if row else None, 'updated_at': row[1] if row else None}
 
     async def subscribers_detailed(self, venue_account_id: int) -> list[dict]:
         """Subscribers of the venue account's wallet with their stored settings (subscription and user
