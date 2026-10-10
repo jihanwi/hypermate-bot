@@ -554,6 +554,39 @@ async def rename_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await reply(update, texts.RENAMED.format(old=h(stored_old), new=h(new)))
 
 
+async def digest_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/digest: the 24 h summary now (not counted as today's scheduled one); /digest on|off|<hour> sets it."""
+    from hypermate.core import digest
+    user_id = update.effective_user.id
+    arg = " ".join(context.args).strip().lower() if context.args else ''
+    try:
+        if arg:
+            stored = await _repo(context).user_settings(user_id)
+            if arg in ('on', 'off'):
+                stored = pipeline.user_settings.set_path(stored, ('digest', 'enabled'), arg == 'on')
+            elif arg.isdigit() and 0 <= int(arg) <= 23:
+                stored = pipeline.user_settings.set_path(stored, ('digest', 'hour_kst'), int(arg))
+                stored = pipeline.user_settings.set_path(stored, ('digest', 'enabled'), True)
+            else:
+                await reply(update, texts.DIGEST_USAGE)
+                return
+            await _repo(context).set_user_settings(user_id, stored, now_ms())
+            conf = digest.digest_settings(stored)
+            state = (texts.DIGEST_STATE_ON.format(hour=int(conf.get('hour_kst', 9))) if conf.get('enabled', True)
+                     else texts.DIGEST_STATE_OFF)
+            await reply(update, texts.DIGEST_SET.format(state=state))
+            return
+        chunks = await digest.build_digest(_repo(context), user_id, now_ms())
+    except Exception as e:
+        await reply_internal_error(update, f"digest_command user={user_id}", e)
+        return
+    if not chunks:
+        await reply(update, texts.DIGEST_EMPTY)
+        return
+    for chunk in chunks:
+        await reply(update, chunk)
+
+
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/settings alias: one message with toggle buttons (spec 9.4); /settings default edits the user's defaults."""
     if not context.args:

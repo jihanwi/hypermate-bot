@@ -839,7 +839,7 @@ accumulating LONG ×2 ($900k/24h): BTC, CASHCAT
 - hypurrscan `/twap/{address}` 로 TWAP 교차 검증
 - 그룹 채팅 지원 (현재 private chat만)
 - 한국어 메시지 (`users.lang`)
-- 일간 요약 (추적 지갑들의 24h 순변화)
+- ~~일간 요약 (추적 지갑들의 24h 순변화)~~ → 구현 (feat/daily-digest, 2026-10-11): `/digest`, 유저별 09:00 KST 기본, `users.settings_json.digest`, `account_value_daily`, `users.last_digest_day`
 - 포지션 크기 상위 N 지갑 리더보드
 
 ---

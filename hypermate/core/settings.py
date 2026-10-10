@@ -21,6 +21,7 @@ DEFAULTS: dict = {
                'deposit_withdraw': True, 'vault': False, 'account_class_transfer': False},
     'min_notional': {'mode': 'auto'},       # auto = max($100, account value x 0.5%) | fixed + usd | off
     'twap_progress': False,                 # stored only; no per-user progress edits yet
+    'digest': {'enabled': True, 'hour_kst': 9},   # daily digest (user level only, spec 12)
 }
 
 EVENT_KEYS = ('position', 'liquidation', 'twap', 'spot', 'transfer', 'deposit_withdraw', 'vault',

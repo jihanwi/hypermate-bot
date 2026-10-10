@@ -14,6 +14,7 @@ MENU_COMMANDS = [
     ("mute", "Mute alerts: /mute alias [1h/1d]"),
     ("unmute", "Unmute alerts: /unmute alias"),
     ("rename", "Rename alias: /rename old new"),
+    ("digest", "Daily summary now: /digest (on|off|hour to set)"),
     ("rescan", "Re-detect venues for a wallet: /rescan alias"),
     ("help", "Commands and examples"),
 ]
@@ -28,7 +29,8 @@ HELP = (
     "<b>Wallets</b>: /add 0x... alias · /remove alias · /rename old new · /list · /rescan alias\n"
     "<b>Info</b>: /positions [alias] · /stats alias · /twap [alias] · /recent alias [n] · /related alias\n"
     "<b>Alerts</b>: /settings alias (venues, alert types, minimum size; /settings default for new wallets) · "
-    "/mute alias [1h|6h|1d|7d] · /unmute alias\n\n"
+    "/mute alias [1h|6h|1d|7d] · /unmute alias · /digest (24h summary of all your wallets, daily at 09:00 KST; "
+    "/digest off, /digest 18 to change)\n\n"
     "Aliases are case-insensitive. A command without arguments shows its usage.\n\n"
     "<b>What you get</b>, per tracked wallet on Hyperliquid, Lighter, RISEx and Aster:\n"
     "• Perp positions opened, added to, reduced, closed, flipped or liquidated (incl. HIP-3 dexs). "
@@ -86,6 +88,13 @@ RENAME_USAGE = "Usage: /rename old new\nExample: <code>/rename whale1 jez</code>
 RENAME_INVALID = "An alias is 1 to 32 characters without spaces."
 RENAME_EXISTS = "You already have a wallet named <b>{alias}</b>."
 RENAMED = "✅ Renamed <b>{old}</b> → <b>{new}</b>."
+
+# /digest (spec 12)
+DIGEST_USAGE = "Usage: /digest (send now), /digest on|off, /digest <hour 0-23 KST>\nExample: <code>/digest 18</code>"
+DIGEST_SET = "📰 Daily digest {state}."
+DIGEST_STATE_ON = "on, every day at {hour:02d}:00 KST"
+DIGEST_STATE_OFF = "off"
+DIGEST_EMPTY = "Nothing to summarise: you're not tracking any wallets yet. Use /add to start."
 
 # /mute, /unmute (spec 9.5)
 MUTE_USAGE = "Usage: /mute alias [1h|6h|1d|7d] (no duration = until /unmute)\nExample: <code>/mute whale1 1d</code>"

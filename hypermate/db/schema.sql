@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
   lang TEXT DEFAULT 'en',
   tz TEXT DEFAULT 'Asia/Seoul',
   settings_json TEXT DEFAULT '{}',           -- /settings default (spec 9.4), under the subscription's own
+  last_digest_day TEXT,                      -- YYYY-MM-DD (KST) of the last daily digest sent
   created_at INTEGER
 );
 
@@ -52,6 +53,13 @@ CREATE TABLE IF NOT EXISTS snapshots (
   account_value TEXT,                          -- Decimal string (marginSummary.accountValue)
   spot_json TEXT,                              -- HL: {coin: total} spot balances, for change detection (spec 3.5)
   updated_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS account_value_daily (          -- daily digest: account value at 00:00 UTC (spec 12)
+  venue_account_id INTEGER REFERENCES venue_accounts,
+  day TEXT NOT NULL,                           -- YYYY-MM-DD (UTC)
+  value TEXT,                                  -- Decimal string
+  PRIMARY KEY (venue_account_id, day)
 );
 
 CREATE TABLE IF NOT EXISTS twap_active (
