@@ -1,0 +1,14 @@
+{
+  "note": "SYNTHETIC: built from the field names observed in a third-party Arcus integration (API_NOTES, Arcus). Owner: replace with a live GET /v1/account recording (address anonymised).",
+  "address": "0x7a1c4e9f2b3d5a6c8e0f1234567890abcdef1357",
+  "accountIndex": 0,
+  "equity": "1534210.55",
+  "positions": [
+    {"marketId": 1, "marketDisplayName": "BTC-USD", "size": "12.5", "averageEntryPrice": "84221.3", "markPrice": "86100.5",
+     "unrealizedPnl": "23490.0", "leverage": "10", "positionValueNotional": "1076256.25", "liquidationPrice": "77012.1"},
+    {"marketId": 7, "marketDisplayName": "TSLA-USD", "size": "-1200", "averageEntryPrice": "241.37", "markPrice": "238.9",
+     "unrealizedPnl": "2964.0", "leverage": "5", "positionValueNotional": "286680.0"},
+    {"marketId": 3, "marketDisplayName": "ETH-USD", "size": "0", "averageEntryPrice": "0", "unrealizedPnl": "0", "leverage": "1",
+     "positionValueNotional": "0"}
+  ]
+}

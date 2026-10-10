@@ -1,0 +1,10 @@
+{
+  "note": "SYNTHETIC: fields from the PM's live call of 2026-10-10 (marketId, marketDisplayName, baseAsset, tickSize, stepSize, tickTiers[], status); the shape of one tickTiers entry is [?] and written here as {minPrice, tickSize}.",
+  "markets": [
+    {"marketId": 1, "marketDisplayName": "BTC-USD", "baseAsset": "BTC", "tickSize": "0.1", "stepSize": "0.001", "status": "ACTIVE",
+     "tickTiers": [{"minPrice": "0", "tickSize": "0.01"}, {"minPrice": "1000", "tickSize": "0.1"}, {"minPrice": "50000", "tickSize": "1"}]},
+    {"marketId": 7, "marketDisplayName": "TSLA-USD", "baseAsset": "TSLA", "tickSize": "0.01", "stepSize": "1", "status": "ACTIVE",
+     "tickTiers": [{"minPrice": "0", "tickSize": "0.001"}, {"minPrice": "100", "tickSize": "0.01"}]},
+    {"marketId": 5, "marketDisplayName": "SOL-USD", "baseAsset": "SOL", "tickSize": "0.01", "stepSize": "0.1", "status": "ACTIVE", "tickTiers": []}
+  ]
+}
