@@ -554,15 +554,15 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 ### 6.5 Arcus [V] (Phase 2D, 2026-10-10)
 
 - Robinhood Chain (Arbitrum Orbit L2) 의 perp DEX. 퍼블릭 REST `https://api.arcus.xyz`, 무인증, CORS 허용. 계정 = EVM 주소 + `accountIndex` (0 = 메인, 1~9 서브). 문서 `docs.arcus.xyz` (이 환경에서 접근 불가, [?] 항목은 `docs/API_NOTES.md` 참조).
-  - `GET /v1/account?address=0x…&accountIndex=N` → `{address, equity, positions[] {marketDisplayName, size (부호 = 방향), averageEntryPrice, unrealizedPnl, leverage, positionValueNotional, markPrice?, liquidationPrice?}}`. 403 `{"error":"address not on access whitelist"}` = Arcus 유저 아님, 404 = 그 index 에 활동 없음, `address` 없으면 400.
-  - `GET /v1/markets` → `markets[] {marketId, marketDisplayName (BTC-USD), baseAsset, tickSize, stepSize, tickTiers[], status}`. 30초 캐시.
-  - `GET /v1/fills?address=&accountIndex=&limit=1000&from=<µs>&to=<µs>` → `fills[] {tradeId, orderId, marketDisplayName, side BUY|SELL, price, size, fee, closedPnl (수수료 차감 후), liquidation {method}?, role TAKER|MAKER, createdAt (µs)}`, 최신순, 페이지당 1,000. 뒤로 넘길 때 `to = 가장 오래된 createdAt - 1`.
-  - `GET /v1/funding` 같은 파라미터 → `fundingPayments[] {marketId, marketDisplayName, payment, time (µs)}`. 2D 에서는 미사용.
+  - `GET /v1/account?address=0x…&accountIndex=N` → `{address, accountIndex, equity, freeCollateral, netQuoteBalance, netDeposits, netDepositsByAsset[], positions}`; `positions` 는 `marketId` 문자열 키의 dict, 각 `{side LONG|SHORT, size, averageEntryPrice, markPx, unrealizedPnl, leverage, marginMode, positionValueNotional, marginUsed, cumulativeFunding{allTime,sinceOpen,sinceChange}}` (liquidationPrice 없음, PM 실녹화 2026-10-10). 403 `{"error":"address not on access whitelist"}` = Arcus 유저 아님, 404 `{"error":"this account has no activity yet"}` = 그 index 에 활동 없음, `address` 없으면 400.
+  - `GET /v1/markets` → `markets[] {marketId, marketDisplayName, baseAsset, tickSize, stepSize, tickTiers[] {upToPrice, tick} (마지막은 upToPrice 없음), markPrice, oraclePrice, lastTradePrice, fundingRate, minOrderNotional, status}` (67개, 주식 퍼프 포함). 30초 캐시. 가격 소수점은 markPx 가 속한 tier 의 tick.
+  - `GET /v1/fills?address=&accountIndex=&limit=1000&from=<µs>&to=<µs>` → `{fills[], total}`, `fills[] {tradeId, orderId, clientId, marketId, marketDisplayName, side, originalSize, size, remainingSize, price, fee (maker 리베이트 음수), closedPnl (수수료 반영 후), role MAKER|TAKER, positionEffect, createdAt (µs), sequenceNumber}`, 최신순, 페이지당 1,000. dir 라벨은 `positionEffect` (ADD_LONG, ADD_SHORT, CLOSE_LONG, CLOSE_SHORT, FLIP_LONG_TO_SHORT, FLIP_SHORT_TO_LONG) 로 결정. 뒤로 넘길 때 `to = 가장 오래된 createdAt - 1`.
+  - `GET /v1/funding` 같은 파라미터 → `{fundingPayments[] {marketId, fundingRate, size, payment (음수 = 지불), time (µs)}, total}`, 시간당 정산. 2D 에서는 미사용. `GET /v1/leaderboard` (공개, 100명, 정수 스케일 [?]) 와 `GET /v1/trades?market=` (maker/taker 주소 노출) 는 `API_NOTES` 참조, 범위 밖.
 - resolve: index 0~9 를 순서대로 `/v1/account` 호출. 200 이면 그 index 활성 (`account_ref` = `<address>:<index>`, index 는 지갑마다 반복되므로; 표기 `alias#N`, N > 0 만), 403 이면 즉시 중단하고 ✗, 전부 404 면 ✗. `/add arcus:0x… alias` 베뉴 pin 은 index 0 을 강제 활성.
-- snapshot: `/v1/account` 포지션 → 공통 포지션 모델 (size, entry, mark, uPnL, leverage, liq px 가 있으면). 계정 가치 = `equity`. 가격 소수점은 `tickTiers` 의 현재가 구간 tick (없으면 `tickSize`).
-- events: `/v1/fills` 커서 폴링, cursors.kind `trades` 에 `{"ms": 마지막 fill 시각}`, `from = 커서 + 1 (µs)`. 첫 폴은 커서만 now 로. 페이지가 가득 차면 `to` 를 줄여 최대 5페이지 따라감. fill → HL 형태: `tradeId` = tid, `orderId` = oid, `closedPnl + fee` = closedPnl (HL 처럼 수수료 전), `liquidation` 전달, startPosition 은 직전 snapshot 에서 누적. TWAP 상태 없음 → 합성 algo 감지만. 폴링 20초 (`ARCUS_POLL_SEC`). WS [?] 미확인, 없는 것으로 두고 폴링만.
+- snapshot: `/v1/account` 포지션 → 공통 포지션 모델 (size 는 `side` 로 부호, entry, mark = `markPx`, uPnL, leverage; 청산가 없음). 계정 가치 = `equity`. 가격 소수점은 `tickTiers` 의 markPx 구간 tick (없으면 `tickSize`).
+- events: `/v1/fills` 커서 폴링, cursors.kind `trades` 에 `{"ms": 마지막 fill 시각}`, `from = 커서 + 1 (µs)`. 첫 폴은 커서만 now 로. 페이지가 가득 차면 `to` 를 줄여 최대 5페이지 따라감. fill → HL 형태: `tradeId` = tid, `orderId` = oid, `positionEffect` → dir, `closedPnl + fee` = closedPnl (HL 처럼 수수료 전), startPosition 은 직전 snapshot 에서 누적. TWAP 상태 없음 → 합성 algo 감지만. 폴링 20초 (`ARCUS_POLL_SEC`). WS [?] 미확인, 없는 것으로 두고 폴링만.
 - 한도: IP 당 1,500 weight/분, fills/funding 페이지 20, account 2. 베뉴 버킷 1,200 (`ARCUS_REQ_BUDGET`), 429 는 큐 일시 정지.
-- 뱃지 `[ARC]`, 이름 `Arcus`. 포지션은 pToken (ERC-20) 으로도 존재 [?]: 온체인 폴백은 범위 밖, 컨트랙트 주소는 `API_NOTES` 에 기록 (미확인).
+- 뱃지 `[ARC]`, 이름 `Arcus`. 포지션은 pToken (ERC-20) 으로도 존재: 온체인 폴백은 범위 밖.
 - explorer: Robinhood Chain explorer 주소 형식 [?], `https://arcus.xyz/` 로 대체.
 
 ### 6.6 완료 기준
@@ -824,7 +824,7 @@ accumulating LONG ×2 ($900k/24h): BTC, CASHCAT
 
 - 로깅: 구조화 (JSON 한 줄). 분당 베뉴별 weight 사용량, 429 횟수, 이벤트 수, 전송 실패 수.
 - `/health` (ADMIN_USER_IDS 환경변수에 있는 유저만): 베뉴별 마지막 폴링 시각, 활성 계정 수, 큐 길이, 최근 1시간 429, WS 연결 상태, DB 크기.
-- 전송 실패 (유저가 봇 차단 등 `Forbidden`): 그 유저 subscriptions 전부 `muted_until = 무기한` 처리 + 로그. 재시도 안 함.
+- 전송 실패 (유저가 봇 차단 등 `Forbidden`): 그 유저 subscriptions 전부 `muted_until = 무기한` 처리 + 로그. 재시도 안 함. (구현: `pipeline.mute_blocked_user`, 알림과 일간 요약 공용, fix/arcus-live-shapes 2026-10-12)
 - 환경변수: `BOT_TOKEN`, `DATABASE_PATH`, `ADMIN_USER_IDS`, `LOG_LEVEL`, `POLL_FAST_SEC`, `POLL_LEDGER_SEC`, `HL_WEIGHT_BUDGET` (기본 1020), `ARBISCAN_API_KEY` (선택), `STARKNET_RPC_URL` (Phase 4).
 - Fly.io: 리전 `nrt`. Volume `hypermate_data` 를 `/data` 에 마운트. `Dockerfile` 의 `CMD ["python", "-m", "hypermate.main"]`. `[http_service]`/`[[services]]` 없음 (worker, 포트 안 엶, 머신 상시 가동). `kill_signal = "SIGINT"`, `kill_timeout = 30` (PTB graceful shutdown). 머신은 반드시 1대 (`fly scale count 1`, SQLite 볼륨은 머신 간 공유 불가). `BOT_TOKEN` 은 `fly secrets`.
 - 백업: 매일 1회 `hypermate.db` 를 `/data/backups/` 에 복사, 7일 보관 (`sqlite3 .backup` API 사용, 파일 복사 금지).
