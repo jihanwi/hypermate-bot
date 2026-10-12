@@ -130,11 +130,16 @@ def fill_to_hl(fill: dict) -> dict:
            'side': side, 'time': int(fill.get('createdAt') or 0) // 1000, 'startPosition': '0',
            'dir': POSITION_EFFECTS.get(effect, ''),
            'oid': str(fill.get('orderId') or fill.get('tradeId') or ''), 'tid': str(fill.get('tradeId') or ''),
-           'closedPnl': str(closed) if closed is not None else None, 'fee': str(fee), 'feeToken': 'USDG',
+           'closedPnl': plain(closed) if closed is not None else None, 'fee': plain(fee), 'feeToken': 'USDG',
            'crossed': str(fill.get('role', '')).upper() == 'TAKER'}
     if liquidation is not None:
         out['liquidation'] = {'method': liquidation.get('method'), 'markPx': out['px']}
     return out
+
+
+def plain(value: Decimal) -> str:
+    text = format(value, 'f')
+    return (text.rstrip('0').rstrip('.') or '0') if '.' in text else text
 
 
 def account_ref(address: str, index: int) -> str:
