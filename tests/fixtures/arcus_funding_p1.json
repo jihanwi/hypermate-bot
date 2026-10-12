@@ -1,0 +1,326 @@
+{
+ "fundingPayments": [
+  {
+   "marketId": 65,
+   "marketDisplayName": "UNI-USD",
+   "fundingRate": "0.0000125",
+   "size": "28.358134",
+   "payment": "-0.002671336",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 64,
+   "marketDisplayName": "AAVE-USD",
+   "fundingRate": "0.0000125",
+   "size": "59.5809",
+   "payment": "-0.128232992",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 63,
+   "marketDisplayName": "TAO-USD",
+   "fundingRate": "0.0000125",
+   "size": "-0.8311075",
+   "payment": "0.002928822",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 62,
+   "marketDisplayName": "BNB-USD",
+   "fundingRate": "0.0000125",
+   "size": "2.58291875",
+   "payment": "-0.024143833",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 61,
+   "marketDisplayName": "LINK-USD",
+   "fundingRate": "0.0000125",
+   "size": "423.283035",
+   "payment": "-0.068587513",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 59,
+   "marketDisplayName": "SUI-USD",
+   "fundingRate": "0.0000125",
+   "size": "892.227273",
+   "payment": "-0.012412665",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 56,
+   "marketDisplayName": "NEAR-USD",
+   "fundingRate": "0.0000125",
+   "size": "-77.530915",
+   "payment": "0.005138361",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 54,
+   "marketDisplayName": "ENA-USD",
+   "fundingRate": "0.000054844929273165",
+   "size": "-14251.51968",
+   "payment": "0.172503244",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 44,
+   "marketDisplayName": "SKHY-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "116.8108035",
+   "payment": "-0.100845102",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 42,
+   "marketDisplayName": "XRP-USD",
+   "fundingRate": "0.0000125",
+   "size": "-445.09616",
+   "payment": "0.007801957",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 41,
+   "marketDisplayName": "LIT-USD",
+   "fundingRate": "0.0000125",
+   "size": "-212.85524",
+   "payment": "0.009857581",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 40,
+   "marketDisplayName": "USAR-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "-2654.7962988",
+   "payment": "0.168367181",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 39,
+   "marketDisplayName": "BE-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "357.7080178",
+   "payment": "-0.505337693",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 38,
+   "marketDisplayName": "SPCX-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "67.2081371",
+   "payment": "-0.055486365",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 37,
+   "marketDisplayName": "ORCL-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "44.3349983",
+   "payment": "-0.031711937",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 36,
+   "marketDisplayName": "CRWV-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "176.2712097",
+   "payment": "-0.073739535",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 35,
+   "marketDisplayName": "PLTR-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "50.6676441",
+   "payment": "-0.053427003",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 34,
+   "marketDisplayName": "DRAM-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "-654.4856543",
+   "payment": "0.190075723",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 33,
+   "marketDisplayName": "SNDK-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "-64.9732289",
+   "payment": "0.522593974",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 32,
+   "marketDisplayName": "MSFT-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "-112.0938955",
+   "payment": "0.302702839",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 31,
+   "marketDisplayName": "AMZN-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "-273.4383275",
+   "payment": "0.362915551",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 30,
+   "marketDisplayName": "AAPL-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "-138.2527484",
+   "payment": "0.235064235",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 29,
+   "marketDisplayName": "TSLA-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "-174.0089419",
+   "payment": "0.336554174",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 28,
+   "marketDisplayName": "NVDA-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "-35.3914963",
+   "payment": "0.041210566",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 24,
+   "marketDisplayName": "QQQ-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "-150.9365737",
+   "payment": "0.573661616",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 23,
+   "marketDisplayName": "SPY-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "-259.8261613",
+   "payment": "1.022696556",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 21,
+   "marketDisplayName": "SLV-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "257.8675677",
+   "payment": "-0.07146026",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 20,
+   "marketDisplayName": "GLD-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "48.4120351",
+   "payment": "-0.094139138",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 19,
+   "marketDisplayName": "CRCL-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "-360.156771",
+   "payment": "0.155620139",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 18,
+   "marketDisplayName": "HOOD-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "-435.1169333",
+   "payment": "0.24023241",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 17,
+   "marketDisplayName": "BABA-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "-418.3350874",
+   "payment": "0.234522833",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 16,
+   "marketDisplayName": "MU-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "-90.6802699",
+   "payment": "0.474265972",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 15,
+   "marketDisplayName": "META-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "5.6258347",
+   "payment": "-0.020433594",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 14,
+   "marketDisplayName": "GOOGL-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "70.4149318",
+   "payment": "-0.125268163",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 10,
+   "marketDisplayName": "INTC-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "-586.2735484",
+   "payment": "0.310730843",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 9,
+   "marketDisplayName": "AMD-USD",
+   "fundingRate": "0.00000505787037037",
+   "size": "-63.8009796",
+   "payment": "0.19646108",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 8,
+   "marketDisplayName": "ZEC-USD",
+   "fundingRate": "0.0000125",
+   "size": "6.743191",
+   "payment": "-0.10332549",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 6,
+   "marketDisplayName": "HYPE-USD",
+   "fundingRate": "0.0000125",
+   "size": "421.064261",
+   "payment": "-0.443459405",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 4,
+   "marketDisplayName": "DOGE-USD",
+   "fundingRate": "0.0000125",
+   "size": "89621.3263",
+   "payment": "-0.096141277",
+   "time": 1791637200000000
+  },
+  {
+   "marketId": 3,
+   "marketDisplayName": "SOL-USD",
+   "fundingRate": "0.0000125",
+   "size": "-3.488958",
+   "payment": "0.004782182",
+   "time": 1791637200000000
+  }
+ ],
+ "total": 40,
+ "note": "PM live recording 2026-10-10, trimmed to 40 rows"
+}

@@ -1,1 +1,5 @@
-{"error": "address not on access whitelist"}
+{
+ "error": "address not on access whitelist",
+ "_http_status": 403,
+ "note": "GET /v1/account?address=<non-user>&accountIndex=0, PM live 2026-10-10"
+}

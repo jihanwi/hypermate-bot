@@ -273,3 +273,27 @@ async def test_fuzzy_alias_suggestion_and_rerun_button(repo):
                                            (commands.unmute_command, texts.UNMUTE_USAGE)])
 async def test_usage_without_arguments(repo, handler, usage):
     assert await call_usage(handler, repo) == usage
+
+
+async def test_forbidden_on_an_alert_mutes_every_wallet_of_that_user_only(repo, clock):
+    """Spec 11 (fix/arcus-live-shapes): a Forbidden on send mutes all of that user's subscriptions
+    without an end, logs once and never retries; other subscribers of the same wallet are untouched."""
+    await repo.add_subscription(1, W, 'a', T0)
+    await repo.add_subscription(1, '0x' + 'd' * 40, 'b', T0)
+    await repo.add_subscription(2, W, 'c', T0)
+
+    class Bot(FakeBot):
+        async def send_message(self, chat_id, text, parse_mode=None, **kwargs):
+            if chat_id == 1:
+                raise RuntimeError('Forbidden: bot was blocked by the user')
+            return await super().send_message(chat_id, text, parse_mode, **kwargs)
+
+    bot = Bot()
+    (hl_key, _), = [(k, a) for k, a in await repo.tracked_accounts() if a == W]
+    await pipeline.deliver(bot, repo, hl_key, lambda alias: f'hi {alias}')
+    assert [m['chat_id'] for m in bot.sent] == [2]
+    for address in (W, '0x' + 'd' * 40):
+        assert pipeline.is_muted((await repo.subscription_of(1, address))['muted_until_ms'], T0)
+    assert not pipeline.is_muted((await repo.subscription_of(2, W))['muted_until_ms'], T0)
+    await pipeline.deliver(bot, repo, hl_key, lambda alias: f'again {alias}')          # muted now: no retry
+    assert [m['chat_id'] for m in bot.sent] == [2, 2]

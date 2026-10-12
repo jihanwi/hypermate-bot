@@ -1,9 +1,10 @@
-"""Arcus public REST (spec 6.5): GET https://api.arcus.xyz/v1/{account,markets,fills}, no auth.
+"""Arcus public REST (spec 6.5): GET https://api.arcus.xyz/v1/{account,markets,fills,funding,leaderboard},
+no auth. Shapes recorded live by the PM on 2026-10-10 (docs/API_NOTES.md, Arcus).
 
 Weights (per IP, 1,500 per minute): account 2, fills / funding pages 20, markets 20 (assumed, cached
-30 s). The venue bucket starts at ARCUS_REQ_BUDGET (1,200); a 429 pauses the queue for the Retry-After
-or 30 s. Status meanings on /v1/account (PM 2026-10-10): 403 = address not on the access whitelist (not
-an Arcus user), 404 = no activity on that accountIndex, 400 = missing address.
+30 s). The venue bucket starts at ARCUS_REQ_BUDGET (1,200); a 429 pauses the queue for Retry-After or
+30 s. /v1/account: 403 {"error": "address not on access whitelist"} = not an Arcus user, 404 {"error":
+"this account has no activity yet"} = nothing on that accountIndex, 400 = missing address.
 """
 
 import functools
@@ -24,6 +25,8 @@ WEIGHT_ACCOUNT = 2
 WEIGHT_PAGE = 20
 PAGE_SIZE = 1000
 MAX_ACCOUNT_INDEX = 9
+NOT_WHITELISTED = 'address not on access whitelist'
+NO_ACTIVITY = 'this account has no activity yet'
 
 
 class ArcusAPIError(Exception):
@@ -35,11 +38,15 @@ class ArcusRateLimited(ArcusAPIError):
 
 
 class ArcusNotWhitelisted(ArcusAPIError):
-    """HTTP 403: the address is not an Arcus user (resolve answers ✗)."""
+    """HTTP 403 'address not on access whitelist': the address is not an Arcus user (resolve answers ✗)."""
 
 
 class ArcusNoActivity(ArcusAPIError):
-    """HTTP 404: nothing on that accountIndex."""
+    """HTTP 404 'this account has no activity yet': nothing on that accountIndex."""
+
+
+def _error_text(body: Any) -> str:
+    return str(body.get('error') or '') if isinstance(body, dict) else ''
 
 
 class ArcusClient:
@@ -82,12 +89,13 @@ class ArcusClient:
             if self.budget is not None:
                 self.budget.rate_limited(int(retry) if retry and str(retry).isdigit() else None)
             raise ArcusRateLimited(f"GET {path} returned HTTP 429")
-        if status == 403:
-            raise ArcusNotWhitelisted(f"GET {path}: {(body or {}).get('error') if isinstance(body, dict) else 'forbidden'}")
-        if status == 404:
-            raise ArcusNoActivity(f"GET {path}: no activity")
+        error = _error_text(body)
+        if status == 403 or NOT_WHITELISTED in error:
+            raise ArcusNotWhitelisted(f"GET {path}: {error or 'forbidden'}")
+        if status == 404 or NO_ACTIVITY in error:
+            raise ArcusNoActivity(f"GET {path}: {error or 'no activity'}")
         if status != 200 or body is None:
-            raise ArcusAPIError(f"GET {path} returned HTTP {status}")
+            raise ArcusAPIError(f"GET {path} returned HTTP {status}{': ' + error if error else ''}")
         return body
 
     async def account(self, address: str, index: int, priority: int = P_SNAPSHOT) -> dict:
@@ -96,31 +104,50 @@ class ArcusClient:
                                WEIGHT_ACCOUNT, priority)
         return body if isinstance(body, dict) else {}
 
-    async def fills(self, address: str, index: int, from_us: Optional[int] = None, to_us: Optional[int] = None,
-                    limit: int = PAGE_SIZE, priority: int = 2) -> list[dict]:
-        """One page of /v1/fills, newest first (at most `limit`)."""
+    def _page_params(self, address: str, index: int, from_us: Optional[int], to_us: Optional[int], limit: int) -> dict:
         params: dict = {'address': address.lower(), 'accountIndex': int(index), 'limit': int(limit)}
         if from_us is not None:
             params['from'] = int(from_us)
         if to_us is not None:
             params['to'] = int(to_us)
-        body = await self._get('/v1/fills', params, WEIGHT_PAGE, priority)
+        return params
+
+    async def fills(self, address: str, index: int, from_us: Optional[int] = None, to_us: Optional[int] = None,
+                    limit: int = PAGE_SIZE, priority: int = 2) -> list[dict]:
+        """One page of /v1/fills ({fills, total}), newest first (at most `limit`)."""
+        body = await self._get('/v1/fills', self._page_params(address, index, from_us, to_us, limit), WEIGHT_PAGE, priority)
         rows = body.get('fills') if isinstance(body, dict) else body
         return list(rows or [])
 
+    async def funding(self, address: str, index: int, from_us: Optional[int] = None, to_us: Optional[int] = None,
+                      limit: int = PAGE_SIZE, priority: int = 3) -> list[dict]:
+        """One page of /v1/funding ({fundingPayments, total}): {marketId, fundingRate, size, payment, time (µs)},
+        payment negative = paid. Recorded, not used by the pipeline yet."""
+        body = await self._get('/v1/funding', self._page_params(address, index, from_us, to_us, limit), WEIGHT_PAGE, priority)
+        rows = body.get('fundingPayments') if isinstance(body, dict) else body
+        return list(rows or [])
+
+    async def leaderboard(self, priority: int = 3) -> dict:
+        """/v1/leaderboard: {window, sortBy, entries[] {address, volume, feesPaid, pnl, rank}} (100 entries)."""
+        body = await self._get('/v1/leaderboard', {}, WEIGHT_PAGE, priority)
+        return body if isinstance(body, dict) else {'entries': []}
+
     async def markets(self, priority: int = 1) -> dict[str, dict]:
-        """{marketDisplayName: {market_id, name, base, tick_size, step_size, tick_tiers, status}}, cached."""
+        """{marketId (str): {market_id, name, base, tick_size, step_size, tick_tiers, mark_price, status}}, cached."""
         if self._markets is not None and time.monotonic() - self._markets_at < self.markets_ttl_sec:
             return self._markets
         body = await self._get('/v1/markets', {}, WEIGHT_PAGE, priority)
         rows = body.get('markets') if isinstance(body, dict) else body
         out = {}
         for market in rows or []:
-            name = str(market.get('marketDisplayName') or market.get('name') or '')
-            if not name:
+            market_id = market.get('marketId')
+            name = str(market.get('marketDisplayName') or '')
+            if market_id is None or not name:
                 continue
-            out[name] = {'market_id': market.get('marketId'), 'name': name, 'base': market.get('baseAsset'),
-                         'tick_size': market.get('tickSize'), 'step_size': market.get('stepSize'),
-                         'tick_tiers': market.get('tickTiers') or [], 'status': market.get('status')}
+            out[str(market_id)] = {'market_id': str(market_id), 'name': name, 'base': market.get('baseAsset'),
+                                   'tick_size': market.get('tickSize'), 'step_size': market.get('stepSize'),
+                                   'tick_tiers': market.get('tickTiers') or [], 'mark_price': market.get('markPrice'),
+                                   'oracle_price': market.get('oraclePrice'), 'funding_rate': market.get('fundingRate'),
+                                   'min_order_notional': market.get('minOrderNotional'), 'status': market.get('status')}
         self._markets, self._markets_at = out, time.monotonic()
         return out

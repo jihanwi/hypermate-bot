@@ -100,6 +100,20 @@ async def recipients(repo: Repo, account_key: int, event_id: Optional[int]) -> l
     return out
 
 
+def is_forbidden(error: Exception) -> bool:
+    """Telegram's Forbidden (the user blocked the bot or deleted the chat)."""
+    text = f"{type(error).__name__} {error}".lower()
+    return 'forbidden' in text or 'blocked' in text
+
+
+async def mute_blocked_user(repo: Repo, user_id: int, now_ms: int) -> int:
+    """Spec 11: a Forbidden on send mutes every subscription of that user without an end, one log line,
+    no retry. Shared by alerts and the daily digest."""
+    count = await repo.mute_all(user_id, MUTE_FOREVER_MS, now_ms)
+    logger.warning(f"User {user_id} blocked the bot: {count} subscriptions muted until /unmute")
+    return count
+
+
 async def deliver(bot: Bot, repo: Repo, account_key: int, render: Render, event_id: Optional[int] = None) -> None:
     """Send to every subscriber (rendered with their alias); remember message ids for later edits."""
     subscribers = await recipients(repo, account_key, event_id)
@@ -113,7 +127,10 @@ async def deliver(bot: Bot, repo: Repo, account_key: int, render: Render, event_
             if event_id is not None and message is not None:
                 await repo.add_sent_message(event_id, user_id, message.chat_id, message.message_id)
         except Exception as e:
-            logger.error(f"Failed to send alert to user {user_id}: {e}")
+            if is_forbidden(e):
+                await mute_blocked_user(repo, user_id, adapter.now_ms())
+            else:
+                logger.error(f"Failed to send alert to user {user_id}: {e}")
         if i < len(subscribers) - 1:
             await asyncio.sleep(1)
 
@@ -142,7 +159,10 @@ async def edit_or_send(bot: Bot, repo: Repo, account_key: int, target_event_id: 
             if message is not None:
                 await repo.add_sent_message(target_event_id, user_id, message.chat_id, message.message_id)
         except Exception as e:
-            logger.error(f"Failed to send alert to user {user_id}: {e}")
+            if is_forbidden(e):
+                await mute_blocked_user(repo, user_id, adapter.now_ms())
+            else:
+                logger.error(f"Failed to send alert to user {user_id}: {e}")
         if i < len(subscribers) - 1:
             await asyncio.sleep(1)
 

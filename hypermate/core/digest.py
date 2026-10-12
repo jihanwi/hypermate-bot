@@ -222,10 +222,9 @@ async def send_digest(bot: Bot, repo: Repo, user_id: int, now_ms: int, mark: boo
         try:
             await bot.send_message(chat_id=user_id, text=chunk, parse_mode=ParseMode.HTML)
         except Exception as e:
-            if 'forbidden' in str(e).lower() or 'blocked' in str(e).lower():
-                from hypermate.core.pipeline import MUTE_FOREVER_MS
-                await repo.mute_all(user_id, MUTE_FOREVER_MS, now_ms)
-                logger.warning(f"Digest: user {user_id} blocked the bot, wallets muted")
+            from hypermate.core.pipeline import is_forbidden, mute_blocked_user
+            if is_forbidden(e):
+                await mute_blocked_user(repo, user_id, now_ms)          # spec 11, same rule as alerts
             else:
                 logger.error(f"Digest send failed for user {user_id}: {e}")
             return False

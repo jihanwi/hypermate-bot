@@ -152,15 +152,16 @@ def ws_trade_to_fill(update: dict, address: str, start: Decimal, markets: dict[s
     return fill
 
 
-def accumulate(fills_in_order: list[dict], positions_before: dict[str, dict]) -> list[dict]:
-    """Set each fill's startPosition from the snapshot before the batch, walking the fills oldest first."""
+def accumulate(fills_in_order: list[dict], positions_before: dict[str, dict], keep_dir: bool = False) -> list[dict]:
+    """Set each fill's startPosition from the snapshot before the batch, walking the fills oldest first.
+    keep_dir: a fill that already carries a dir (Arcus positionEffect) keeps it; only the position is walked."""
     running = {coin: to_decimal(p.get('szi')) or ZERO for coin, p in positions_before.items()}
     out = []
     for fill in fills_in_order:
         start = running.get(fill['coin'], ZERO)
         size = to_decimal(fill['sz']) or ZERO
         direction, end = fill_direction(fill['side'], start, size)
-        out.append({**fill, 'startPosition': str(start), 'dir': direction})
+        out.append({**fill, 'startPosition': str(start), 'dir': (fill.get('dir') or direction) if keep_dir else direction})
         running[fill['coin']] = end
     return out
 
