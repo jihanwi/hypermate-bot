@@ -1,0 +1,7 @@
+{
+  "fundingPayments": [
+    {"marketId": 6, "fundingRate": "0.0000125", "size": "12.5", "payment": "-13.45", "time": 1791604800000000},
+    {"marketId": 31, "fundingRate": "0.00002", "size": "1200", "payment": "5.73", "time": 1791604800000000}
+  ],
+  "total": 2
+}

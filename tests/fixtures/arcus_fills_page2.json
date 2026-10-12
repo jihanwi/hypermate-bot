@@ -1,44 +1,59 @@
 {
- "note": "SYNTHETIC older page reached by lowering to; includes a liquidation row",
  "fills": [
   {
    "tradeId": 902000,
    "orderId": 501000,
+   "clientId": "c2000",
+   "marketId": 6,
    "marketDisplayName": "BTC-USD",
    "side": "SELL",
-   "price": "85000",
+   "originalSize": "0.5",
    "size": "0.5",
+   "remainingSize": "0",
+   "price": "85000",
    "fee": "2.5",
-   "closedPnl": "120.0",
    "role": "TAKER",
-   "createdAt": 1791599999000000
+   "positionEffect": "CLOSE_LONG",
+   "createdAt": 1791599999000000,
+   "sequenceNumber": 12000,
+   "closedPnl": "117.5"
   },
   {
    "tradeId": 902001,
    "orderId": 501000,
+   "clientId": "c2001",
+   "marketId": 6,
    "marketDisplayName": "BTC-USD",
    "side": "SELL",
-   "price": "85010",
+   "originalSize": "0.2",
    "size": "0.2",
+   "remainingSize": "0",
+   "price": "85010",
    "fee": "1.0",
-   "closedPnl": "-30.0",
    "role": "TAKER",
+   "positionEffect": "CLOSE_LONG",
    "createdAt": 1791599998000000,
-   "liquidation": {
-    "method": "LIQUIDATION"
-   }
+   "sequenceNumber": 12001,
+   "closedPnl": "-31.0"
   },
   {
    "tradeId": 902002,
    "orderId": 501001,
+   "clientId": "c2002",
+   "marketId": 6,
    "marketDisplayName": "BTC-USD",
-   "side": "BUY",
-   "price": "84990",
+   "side": "SELL",
+   "originalSize": "0.7",
    "size": "0.7",
-   "fee": "1.2",
-   "closedPnl": "0",
-   "role": "TAKER",
-   "createdAt": 1791599997000000
+   "remainingSize": "0",
+   "price": "84990",
+   "fee": "-0.0057",
+   "role": "MAKER",
+   "positionEffect": "ADD_SHORT",
+   "createdAt": 1791599997000000,
+   "sequenceNumber": 12002,
+   "closedPnl": "0.0057"
   }
- ]
+ ],
+ "total": 1003
 }
