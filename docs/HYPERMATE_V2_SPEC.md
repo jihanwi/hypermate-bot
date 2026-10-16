@@ -575,6 +575,30 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 - [ ] 베뉴별 한도 초과 0회 (24시간 로그)
 - [ ] `docs/API_NOTES.md` 에 [?] 항목 전부 확인 결과 기록
 
+### 6.7 Papertrade [?] (Phase 2E, 초안 2026-10-15)
+
+조사만 끝난 초안. 근거와 실측 수치는 `docs/API_NOTES.md` Papertrade 절, 재현은 `scripts/probe_papertrade.py`.
+
+- HyperEVM 메인넷(chain id 999) 온체인 합성 perp. BTC, ETH 2종 (`instrumentCount() = 2`). 오더북 없음: open 마다 독립된 isolated 포지션(`positionId`), HyperCore BBO mid 로 체결, 상대는 프로토콜 LP. 유저는 서명만 하고 relayer(`BatchExecutor`)가 tx 를 보내므로 `tx.from` 은 유저가 아니다. 유저는 이벤트의 indexed `user` (EOA). **같은 코인에 롱과 숏이 동시에 열릴 수 있다** (프로브의 큰 지갑: BTC 롱 17개 + 숏 17개 동일 크기).
+- 데이터 소스: 공개 RPC `https://rpc.hyperliquid.xyz/evm` 만 쓴다. Exchange 프록시 `0x6cd5661646289fb6e65ea5c032310fded797d0a2` (구현체 미검증, ABI 는 바이트코드 상수에서 복원: fixture `papertrade_exchange_abi.json`). `exchange.papertrade.xyz/query/*` HTTP API 가 같은 데이터를 더 읽기 좋게 주지만 클라우드 IP 에서 404 를 받은 적이 있어 의존하지 않는다 (교차 검증용).
+- resolve: JSON-RPC batch 1회에 `getUserOpenPositionIds(addr)` + `balances(addr)`. 열린 포지션이 있거나 `balance > 0` 이면 활성 (`account_ref` = 주소). 다 닫고 출금한 지갑은 ✗ (과거 이력은 유저 topic getLogs 1,000 블록 단위라 resolve 에 쓰지 않음; 다시 거래하면 일일 재탐색이 잡는다). `/add papertrade:0x… alias` 는 다른 베뉴처럼 강제 활성.
+- snapshot: 지갑별이 아니라 베뉴 전체로 묶는다. 폴링마다 Multicall3 `aggregate3` 1콜로 추적 지갑 전부의 `getUserOpenPositionIds`, 이어서 1콜로 그 id 전부의 `positions(id)` (`owner, instrumentId, entryPrice, margin, leverage, openedAt, isLong, ?, isOpen`). 지갑 수와 무관하게 폴링당 2콜 (+ getLogs 1콜). 지갑별 2콜이면 20초 폴링에서 지갑당 6콜/분이라 60/분 버킷이 지갑 약 9개에서 찬다. JSON-RPC batch 는 20개 제한이라 Multicall3 를 쓰고, 한 콜의 calldata/응답이 커지면 (id 수백 개) 청크로 나눈다 [?]. 포지션 키 (오너 결정 2026-10-16): 사이드별 행. 롱/숏이 둘 다 있으면 `BTC` / `BTC (short)`, 한쪽만 있으면 `BTC` (헤지 지갑이 0 으로 보이지 않게). notional = Σ margin × leverage, size = Σ (margin × leverage / entry), entry = notional / size (size 가중 평균), uPnL 은 HL `allMids` 로 추정치 (haircut 전), 레버리지는 포지션별이 달라 notional 가중 평균 표시. 계정 가치 = `balances` + Σ margin [?] (큐 잔고 미포함).
+- events: 20초 폴링, 한 번의 `eth_getLogs` 로 `topics=[[PositionOpened, PositionClosed, Liquidated]]` 를 유저 필터 없이 받아 추적 지갑만 로컬 필터 (안 (a), 20 블록 64~170 KB, 1 MB 한도의 1/6 이하). 지갑별 호출 (b) 는 지갑 수만큼 콜이 늘고 버스트 한도(약 7콜)에 걸려 신규 지갑 catch-up 에만 쓴다. 커서는 베뉴 전역 `{"block": N}` (지갑별 커서 아님: 한 번 받은 로그를 모든 계정에 분배); 재시작 후 catch-up 은 250 블록 청크 (1,000 은 -32008, 500 은 806 KB), 최대 3,600 블록 (1시간) 까지, 그보다 오래 멈췄으면 snapshot diff 로 대체. `PositionClosed` / `Liquidated` 에는 코인/사이드/크기가 없으므로 같은 폴의 Multicall3 `positions(id)` (닫힌 뒤에도 행이 남음, `isOpen = 0`) 로 채운다.
+- HL fill 매핑 (제안):
+  - open: `coin` = instruments 테이블 심볼, `px` = entryPrice / priceScale, `sz` = margin × leverage / px, `side` = isLong ? B : A, `dir` = Open Long | Open Short, `closedPnl` = 0, `fee` = 0.
+  - close: `px` = exitPrice / priceScale, `sz` 는 open 과 같음, `side` 반대, `dir` = Close Long | Close Short, `closedPnl` = `adjustedPnl` (haircut 적용, 수수료 전 = HL 의 gross 관례), `fee` = `fee` (승패 모두 |adjustedPnl| 의 2%), `feeToken` USDC.
+  - liquidation: close 와 같되 `closedPnl` = −margin [?], `fee` = 0 [?], `liquidation = {method: 'bust', markPx: price / priceScale}`, `LIQUIDATION` 이벤트. −margin 과 fee 0 은 추정: `Liquidated` 의 `feeA` / `feeB` 를 버리고 있다. 구현 전에 fixture 의 청산 2건을 `/query/accounts/<addr>/trades` 의 `adjustedPnlRaw`, `userPaidFeeRaw` 와 대조해 확정한다.
+  - `oid` = positionId (open 과 close 가 같은 포지션으로 묶임), `tid` = `<block>:<logIndex>` (원 제안의 tid = positionId 는 open 과 close 가 같은 tid 를 가져 dedupe 키가 겹침), `time` = `blockTimestamp` × 1000.
+  - dir 은 이벤트가 정한다 (`accumulate(keep_dir=True)`, Arcus 와 같음). startPosition 은 직전 snapshot 에서 같은 코인(사이드별 키면 같은 사이드) 누적. leverage 는 fill 의 meta 로 넘겨 알림에 `100x` 표시 [?].
+  - 각 open 이 별도 positionId 라 HL 의 "같은 oid 의 여러 fill 묶기" 는 일어나지 않는다. 같은 지갑이 한 블록에 여러 개를 열면 5.2 debounce 가 메시지 하나로 합친다.
+- 마켓 매핑: 프론트 상수 `{0: BTC (priceScale 10), 1: ETH (100)}` 를 코드 상수로. `instruments(id)` 에는 HL `assetIndex` 만 있고 심볼/스케일 없음. 하루 1회 `instrumentCount()` 를 보고 늘어나면 경고 로그 + 그 instrument 건너뜀 (대안: HL `meta.universe[assetIndex]` 로 심볼, 10^(6 − szDecimals) 로 스케일 [I]).
+- 한도: 공개 RPC, 문서화된 한도 없음. 실측: 연속 약 7콜에 -32005, 0.7초 후 해제; getLogs 는 더 느린 버짓 (2초마다 1콜이면 60초에 2번 거절). 베뉴 버킷 60/분 (`PAPERTRADE_REQ_BUDGET`, 초당 1콜), -32005 는 2초부터 두 배씩 최대 30초 백오프, `-32008` 은 청크 반으로. 폴링 20초 (`PAPERTRADE_POLL_SEC`). WS: HyperEVM 공개 RPC 의 `eth_subscribe` 는 미확인 [?], 폴링만.
+- TWAP: 없음. 합성 algo 감지는 HL 과 같은 파이프라인 (open 반복 패턴).
+- 업그레이드 감지: Exchange 는 EIP-1967 프록시이고 구현체는 미검증, ABI 는 바이트코드에서 복원했다. 구현체가 바뀌면 이벤트가 조용히 깨질 수 있으므로 하루 1회 구현체 슬롯 (`0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc`, 2026-10-16 값 `0x0f3febfc…49ee` 확인) 을 `eth_getStorageAt` 로 읽어 저장값과 비교하고, 바뀌면 경고 로그 + `/health` 에 표시. 폴링 중 Exchange 에서 처음 보는 topic0 는 개수를 세어 `/health` 에 표시 (trade topic0 필터라 getLogs 응답에는 안 나오므로, 하루 1회 필터 없는 짧은 구간 getLogs 로 확인).
+- 뱃지 `[PAPER]`, 이름 `Papertrade`, `/add` prefix `papertrade:` (오너 결정 2026-10-16).
+- explorer: `https://hyperevmscan.io/address/<addr>` (2026-10-15 200 확인).
+- 범위 밖: 입출금 (`Swept`, 미명명 deposit/withdraw 토픽), PAPER 스테이킹 보상, 지급 큐 잔고, 유저 이름/리더보드 (`/query/leaderboard`).
+
 ---
 
 ## 7. Phase 3: 연관 지갑 탐색 (`/related`)
