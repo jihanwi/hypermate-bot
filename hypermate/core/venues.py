@@ -14,7 +14,7 @@ from hypermate.venues.base import NAMES, VenueAccount
 
 logger = logging.getLogger(__name__)
 
-VENUE_ORDER = (base.HYPERLIQUID, base.LIGHTER, base.RISEX, base.ASTER, base.ARCUS)
+VENUE_ORDER = (base.HYPERLIQUID, base.LIGHTER, base.RISEX, base.ASTER, base.ARCUS, base.PAPERTRADE)
 
 
 async def resolve_wallet(repo: Repo, adapters: dict, address: str, now_ms: int,
@@ -60,7 +60,7 @@ async def resolve_wallet(repo: Repo, adapters: dict, address: str, now_ms: int,
 
 VENUE_PREFIXES = {'hl': base.HYPERLIQUID, 'hyperliquid': base.HYPERLIQUID, 'lighter': base.LIGHTER,
                   'ltr': base.LIGHTER, 'risex': base.RISEX, 'rise': base.RISEX, 'aster': base.ASTER,
-                  'arcus': base.ARCUS, 'arc': base.ARCUS}
+                  'arcus': base.ARCUS, 'arc': base.ARCUS, 'papertrade': base.PAPERTRADE, 'paper': base.PAPERTRADE}
 
 
 def split_venue_prefix(text: str) -> tuple[Optional[str], str]:

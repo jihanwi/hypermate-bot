@@ -698,7 +698,10 @@ async def poll_venue_account(bot: Bot, repo: Repo, adapter_obj, account: VenueAc
         return True, adapter_obj.cost('snapshot')
     activity = changed
     active_algo = bool(await repo.active_algos(key))
-    if changed or active_algo or previous is None:      # baseline poll sets the trades cursor
+    # Papertrade: an open and a close inside one cycle leave the snapshot unchanged but logs are waiting
+    pending = getattr(adapter_obj, 'has_pending_events', None)
+    if changed or active_algo or previous is None or (pending is not None and pending(account)):
+        # baseline poll sets the trades cursor
         cursor = await repo.get_cursor(key, 'trades')
         result = await adapter_obj.fetch_events(account, cursor, (previous or {}).get('', {}))
         if result is None:

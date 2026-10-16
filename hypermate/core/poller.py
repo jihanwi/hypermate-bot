@@ -162,7 +162,7 @@ async def poll_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 f"({len(state.dormant)} dormant), fast={state.poll_fast_sec}s ledger={state.ledger_interval_sec}s")
 
 
-# Other venues (spec 6.1): one job for Lighter / RISEx / Aster accounts ---------------------------
+# Other venues (spec 6.1): one job for Lighter / RISEx / Aster / Arcus / Papertrade accounts ---------------------------
 
 def lighter_interval_sec(n_accounts: int, ws_connected: bool) -> int:
     """REST polling needs 2 requests per account per cycle (account + trades) inside LIGHTER_REQ_BUDGET
@@ -180,6 +180,8 @@ def venue_interval_sec(venue: str, adapter_obj, n_accounts: int) -> int:
         return Config.ASTER_POLL_SEC
     if venue == venues.ARCUS:
         return Config.ARCUS_POLL_SEC
+    if venue == venues.PAPERTRADE:
+        return Config.PAPERTRADE_POLL_SEC
     if venue == venues.LIGHTER:
         stream = getattr(adapter_obj, 'stream', None)
         return lighter_interval_sec(n_accounts, bool(stream is not None and stream.connected))
@@ -208,6 +210,13 @@ async def venue_poll_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 stream.set_markets((await adapter_obj.client.markets()).keys())
             except Exception as e:
                 logger.error(f"RISEx markets unavailable: {e}")
+        prepare = getattr(adapter_obj, 'prepare_cycle', None)
+        if prepare is not None and accounts:
+            try:                                       # Papertrade: one read of the venue for every account
+                await prepare([row['address'] for row in accounts])
+            except Exception as e:
+                logger.error(f"{venue} cycle read failed, skipping this cycle: {e}")
+                continue
         for row in accounts:
             account = VenueAccount(venue, row['account_ref'], row['address'], row['key'])
             if stream is not None and venue == venues.LIGHTER and int(row['account_ref']) not in stream.indexes:

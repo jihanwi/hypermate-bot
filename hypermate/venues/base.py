@@ -1,4 +1,4 @@
-"""VenueAdapter interface (spec 3.2) shared by Hyperliquid, Lighter, RISEx, Aster and Arcus.
+"""VenueAdapter interface (spec 3.2) shared by Hyperliquid, Lighter, RISEx, Aster, Arcus and Papertrade.
 
 Adapters know nothing about Telegram and keep no state: cursors and snapshots live in
 the DB and are passed in. They raise on 429/5xx; the scheduler's budget does backoff.
@@ -18,9 +18,12 @@ LIGHTER = 'lighter'
 RISEX = 'risex'
 ASTER = 'aster'
 ARCUS = 'arcus'
+PAPERTRADE = 'papertrade'
 
-BADGES = {HYPERLIQUID: '[HL]', LIGHTER: '[LTR]', RISEX: '[RISE]', ASTER: '[ASTER]', ARCUS: '[ARC]'}
-NAMES = {HYPERLIQUID: 'HL', LIGHTER: 'Lighter', RISEX: 'RISEx', ASTER: 'Aster', ARCUS: 'Arcus'}
+BADGES = {HYPERLIQUID: '[HL]', LIGHTER: '[LTR]', RISEX: '[RISE]', ASTER: '[ASTER]', ARCUS: '[ARC]',
+          PAPERTRADE: '[PAPER]'}
+NAMES = {HYPERLIQUID: 'HL', LIGHTER: 'Lighter', RISEX: 'RISEx', ASTER: 'Aster', ARCUS: 'Arcus',
+         PAPERTRADE: 'Papertrade'}
 # venues whose account_ref is a sub-account index shown as alias#N
 INDEXED = (LIGHTER, ARCUS)
 
@@ -34,7 +37,7 @@ def account_index(account_ref: str) -> str:
 @dataclass
 class VenueAccount:
     venue: str
-    account_ref: str                      # HL: address, Lighter: index, Arcus: address:index, RISEx/Aster: address
+    account_ref: str                      # HL: address, Lighter: index, Arcus: address:index, RISEx/Aster/Papertrade: address
     address: str                          # the EVM wallet it belongs to (lowercase)
     venue_account_id: Optional[int] = None
     meta: dict = field(default_factory=dict)

@@ -16,7 +16,7 @@ from hypermate.venues import base as venues
 
 DEFAULTS: dict = {
     'venues': {venues.HYPERLIQUID: True, venues.LIGHTER: True, venues.RISEX: True, venues.ASTER: True,
-               venues.ARCUS: True},
+               venues.ARCUS: True, venues.PAPERTRADE: True},
     'events': {'position': True, 'liquidation': True, 'twap': True, 'spot': True, 'transfer': True,
                'deposit_withdraw': True, 'vault': False, 'account_class_transfer': False},
     'min_notional': {'mode': 'auto'},       # auto = max($100, account value x 0.5%) | fixed + usd | off

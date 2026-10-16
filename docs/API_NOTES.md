@@ -200,7 +200,11 @@ Rate limit (-32005) [V]: back-to-back `eth_blockNumber` calls are refused after 
 - `GET /query/protocol/trades/recent` → `{ok, count: 50, events[] {seq (= block × 1e6 + logIndex), ts (ms), wallet, instrument, instrumentId, side, leverage, notionalUsd, positionId, kind open|close, entry, exit, pnlUsd}}`.
 - `GET /query/accounts/<addr>/trades?limit=75[&cursor=]` → `{items[] {timestampMs, txHash, positionId, instrumentId, symbol, assetIndex, priceScaleRaw, isLong, entryPriceRaw, marginRaw, leverage, kind PositionClosed|Liquidated, openedAtMs, exitPriceRaw, adjustedPnlRaw, userPaidFeeRaw, paperMintedRaw, …}, nextCursor}`. `limit` must be exactly 75 (other values → 400 "path and query must contain only this route's parameters").
 - `GET /query/accounts/<addr>/cashflows?limit=75` (Deposit/Withdrawal with `amountRaw` 1e18, `route hypercore`), `/funding`, `/positions?ids=a,b` (`{open: [...], closed: [...]}`), `/portfolio-history?range=1d`, `/queue-ring`, `/queue-balances`, `/leaderboard-badges`. Protocol: `/query/protocol/summary`, `/market-stats`, `/queue-summary`, `/history`, `/paper/activity`; `/query/markets/<id>/price-history`, `/liquidation-map`.
-- The PM saw 404 from a cloud IP. Whether Fly.io egress gets through is [?]. The bot design therefore does not depend on it; it is a cross-check and a possible resolve fallback (`/trades` finds past-only users in 1 call).
+- The PM saw 404 from a cloud IP. A Hostinger VPS (datacenter IP) got 200 on 2026-10-16. Whether Fly.io egress gets through is [?]. The bot design therefore does not depend on it; it is a cross-check and a possible resolve fallback (`/trades` finds past-only users in 1 call).
+
+**Liquidation PnL [V] (2026-10-16, one sample).** `/query/accounts/0x01bf…7aad/trades` has fixture liquidation #724713 as `kind: Liquidated`, `marginRaw` 25e18, `adjustedPnlRaw` −25e18, `userPaidFeeRaw` 0: a liquidation loses the margin and the user pays no fee. The event's two fee words (0.25e18 each, 1% of the margin) are protocol-side.
+
+**Adapter (2026-10-16).** Live run over 8 active wallets: 9 RPC calls in the first cycle (daily check included), 4 per cycle after (block number, getLogs, two Multicall3), no -32005. A wallet holding BTC long and short at once was seen, so the per-side position rows are needed.
 
 **Explorer.** `https://hyperevmscan.io/address/<addr>` (200, PM 2026-10-15; the frontend config's `explorerUrl` is `https://hyperevmscan.io`).
 
