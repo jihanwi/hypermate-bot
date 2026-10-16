@@ -575,9 +575,9 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 - [ ] 베뉴별 한도 초과 0회 (24시간 로그)
 - [ ] `docs/API_NOTES.md` 에 [?] 항목 전부 확인 결과 기록
 
-### 6.7 Papertrade [?] (Phase 2E, 초안 2026-10-15)
+### 6.7 Papertrade (Phase 2E, 초안 2026-10-15, 구현 2026-10-16)
 
-조사만 끝난 초안. 근거와 실측 수치는 `docs/API_NOTES.md` Papertrade 절, 재현은 `scripts/probe_papertrade.py`.
+구현: `hypermate/venues/papertrade/` (`FEATURE_PAPERTRADE` 기본 꺼짐), 테스트 `tests/test_papertrade.py`. 사이클 캐시는 `prepare_cycle` (폴러가 계정 루프 전에 호출), 한 사이클 안에서 open 과 close 가 모두 일어나 snapshot 이 그대로인 경우는 `has_pending_events` 로 파이프라인이 이벤트를 가져온다. 재시작 후 커서가 오래된 지갑은 지갑별 getLogs 로 최대 3,600 블록 (약 1시간) 따라잡는다. 근거와 실측 수치는 `docs/API_NOTES.md` Papertrade 절, 재현은 `scripts/probe_papertrade.py`.
 
 - HyperEVM 메인넷(chain id 999) 온체인 합성 perp. BTC, ETH 2종 (`instrumentCount() = 2`). 오더북 없음: open 마다 독립된 isolated 포지션(`positionId`), HyperCore BBO mid 로 체결, 상대는 프로토콜 LP. 유저는 서명만 하고 relayer(`BatchExecutor`)가 tx 를 보내므로 `tx.from` 은 유저가 아니다. 유저는 이벤트의 indexed `user` (EOA). **같은 코인에 롱과 숏이 동시에 열릴 수 있다** (프로브의 큰 지갑: BTC 롱 17개 + 숏 17개 동일 크기).
 - 데이터 소스: 공개 RPC `https://rpc.hyperliquid.xyz/evm` 만 쓴다. Exchange 프록시 `0x6cd5661646289fb6e65ea5c032310fded797d0a2` (구현체 미검증, ABI 는 바이트코드 상수에서 복원: fixture `papertrade_exchange_abi.json`). `exchange.papertrade.xyz/query/*` HTTP API 가 같은 데이터를 더 읽기 좋게 주지만 클라우드 IP 에서 404 를 받은 적이 있어 의존하지 않는다 (교차 검증용).
@@ -587,7 +587,7 @@ WebSocket 사용 여부: HL WS는 IP당 커넥션 10개, 구독 1000개, 그리�
 - HL fill 매핑 (제안):
   - open: `coin` = instruments 테이블 심볼, `px` = entryPrice / priceScale, `sz` = margin × leverage / px, `side` = isLong ? B : A, `dir` = Open Long | Open Short, `closedPnl` = 0, `fee` = 0.
   - close: `px` = exitPrice / priceScale, `sz` 는 open 과 같음, `side` 반대, `dir` = Close Long | Close Short, `closedPnl` = `adjustedPnl` (haircut 적용, 수수료 전 = HL 의 gross 관례), `fee` = `fee` (승패 모두 |adjustedPnl| 의 2%), `feeToken` USDC.
-  - liquidation: close 와 같되 `closedPnl` = −margin [?], `fee` = 0 [?], `liquidation = {method: 'bust', markPx: price / priceScale}`, `LIQUIDATION` 이벤트. −margin 과 fee 0 은 추정: `Liquidated` 의 `feeA` / `feeB` 를 버리고 있다. 구현 전에 fixture 의 청산 2건을 `/query/accounts/<addr>/trades` 의 `adjustedPnlRaw`, `userPaidFeeRaw` 와 대조해 확정한다.
+  - liquidation: close 와 같되 `closedPnl` = −margin [V], `fee` = 0 [V], `liquidation = {method: 'bust', markPx: price / priceScale}`, `LIQUIDATION` 이벤트. 2026-10-16 확인: fixture 청산 #724713 의 `/query` 기록이 `adjustedPnlRaw` = −margin (−$25), `userPaidFeeRaw` = 0. `feeA` / `feeB` (각 $0.25, margin 의 1%) 는 유저가 내는 수수료가 아니다 (샘플 1건).
   - `oid` = positionId (open 과 close 가 같은 포지션으로 묶임), `tid` = `<block>:<logIndex>` (원 제안의 tid = positionId 는 open 과 close 가 같은 tid 를 가져 dedupe 키가 겹침), `time` = `blockTimestamp` × 1000.
   - dir 은 이벤트가 정한다 (`accumulate(keep_dir=True)`, Arcus 와 같음). startPosition 은 직전 snapshot 에서 같은 코인(사이드별 키면 같은 사이드) 누적. leverage 는 fill 의 meta 로 넘겨 알림에 `100x` 표시 [?].
   - 각 open 이 별도 positionId 라 HL 의 "같은 oid 의 여러 fill 묶기" 는 일어나지 않는다. 같은 지갑이 한 블록에 여러 개를 열면 5.2 debounce 가 메시지 하나로 합친다.

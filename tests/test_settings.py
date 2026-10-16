@@ -61,7 +61,8 @@ def test_settings_resolve_in_three_levels():
     sub_level = {'events': {'spot': True}, 'venues': {'risex': False}}
     merged = user_settings.resolve(sub_level, user_level)
     assert merged['events']['spot'] is True and merged['events']['position'] is True       # sub wins, defaults kept
-    assert merged['venues'] == {'hyperliquid': True, 'lighter': True, 'risex': False, 'aster': True, 'arcus': True}
+    assert merged['venues'] == {'hyperliquid': True, 'lighter': True, 'risex': False, 'aster': True, 'arcus': True,
+                                 'papertrade': True}
     assert merged['min_notional'] == {'mode': 'fixed', 'usd': 10_000}                     # from the user level
     assert user_settings.resolve(None, user_level)['events']['spot'] is False
     assert user_settings.DEFAULTS['venues']['risex'] is True                                # inputs untouched

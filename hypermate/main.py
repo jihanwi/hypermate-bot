@@ -28,6 +28,8 @@ from hypermate.venues.aster.adapter import AsterAdapter
 from hypermate.venues.aster.client import AsterClient
 from hypermate.venues.arcus.adapter import ArcusAdapter
 from hypermate.venues.arcus.client import ArcusClient
+from hypermate.venues.papertrade.adapter import PapertradeAdapter
+from hypermate.venues.papertrade.client import PapertradeClient
 
 logger = logging.getLogger(__name__)
 
@@ -111,13 +113,18 @@ async def build_venues(application: Application, hl: HyperliquidClient) -> None:
         venues.ASTER: AsterAdapter(aster),
         venues.ARCUS: ArcusAdapter(arcus),
     }
+    if Config.FEATURE_PAPERTRADE:
+        papertrade = PapertradeClient(Config.PAPERTRADE_RPC_URL, WeightBudget(Config.PAPERTRADE_REQ_BUDGET))
+        await papertrade.start()
+        application.bot_data['papertrade'] = papertrade
+        application.bot_data['venues'][venues.PAPERTRADE] = PapertradeAdapter(papertrade, hl)
 
 
 async def post_shutdown(application: Application) -> None:
     for name in ('lighter_stream', 'risex_stream'):
         if application.bot_data.get(name) is not None:
             await application.bot_data[name].stop()
-    for name in ('risex', 'aster', 'arcus'):
+    for name in ('risex', 'aster', 'arcus', 'papertrade'):
         if name in application.bot_data:
             await application.bot_data[name].close()
     if 'lighter' in application.bot_data:

@@ -18,6 +18,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from hypermate.bot import texts
+from hypermate.config import Config
 from hypermate.core import settings as user_settings
 from hypermate.core.formatter import h
 from hypermate.db.repo import Repo
@@ -32,7 +33,7 @@ MUTE_CALLBACK = 'm:'
 DYM_CALLBACK = 'd:'
 USER_TARGET = 'u'
 
-VENUE_ORDER = (venues.HYPERLIQUID, venues.LIGHTER, venues.RISEX, venues.ASTER, venues.ARCUS)
+VENUE_ORDER = (venues.HYPERLIQUID, venues.LIGHTER, venues.RISEX, venues.ASTER, venues.ARCUS, venues.PAPERTRADE)
 EVENT_LABELS = {'position': 'Positions', 'liquidation': 'Liquidations', 'twap': 'TWAP / algo', 'spot': 'Spot',
                 'transfer': 'Transfers', 'deposit_withdraw': 'Deposits / withdrawals', 'vault': 'Vaults',
                 'account_class_transfer': 'Perp <-> spot moves'}
@@ -48,7 +49,8 @@ def _mark(on: bool) -> str:
 def settings_keyboard(settings: dict, target: str, active_venues: Optional[list[str]] = None) -> InlineKeyboardMarkup:
     """Toggle buttons for one subscription (target = rowid) or the user's defaults (target = 'u')."""
     rows: list[list[InlineKeyboardButton]] = []
-    shown = [v for v in VENUE_ORDER if active_venues is None or v in active_venues] or list(VENUE_ORDER)
+    order = [v for v in VENUE_ORDER if v != venues.PAPERTRADE or Config.FEATURE_PAPERTRADE]
+    shown = [v for v in order if active_venues is None or v in active_venues] or order
     venue_row = []
     for venue in shown:
         on = bool((settings.get('venues') or {}).get(venue, True))

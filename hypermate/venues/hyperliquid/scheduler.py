@@ -32,6 +32,7 @@ P_LEDGER = 3
 REQUESTS = {
     'clearinghouseState': (2, P_SNAPSHOT),
     'spotClearinghouseState': (2, P_SNAPSHOT),
+    'allMids': (2, P_SNAPSHOT),                 # Papertrade uPnL estimate, once per Papertrade cycle
     'webData2': (20, P_TWAP),
     'twapHistory': (20, P_TWAP),
     'userFillsByTime': (20, P_FILLS),

@@ -64,6 +64,12 @@ class Config:
     ARCUS_API_URL: str = os.getenv("ARCUS_API_URL", "https://api.arcus.xyz")
     ARCUS_REQ_BUDGET: int = int(os.getenv("ARCUS_REQ_BUDGET", "1200"))
     ARCUS_POLL_SEC: int = 20
+    # Papertrade (spec 6.7): public HyperEVM RPC, no published limit; -32005 after about 7 calls back to back.
+    # Off by default: FEATURE_PAPERTRADE=true registers the adapter.
+    FEATURE_PAPERTRADE: bool = os.getenv("FEATURE_PAPERTRADE", "false").lower() == "true"
+    PAPERTRADE_RPC_URL: str = os.getenv("PAPERTRADE_RPC_URL", "https://rpc.hyperliquid.xyz/evm")
+    PAPERTRADE_REQ_BUDGET: int = int(os.getenv("PAPERTRADE_REQ_BUDGET", "60"))
+    PAPERTRADE_POLL_SEC: int = int(os.getenv("PAPERTRADE_POLL_SEC", "20"))
     VENUE_RESCAN_HOUR_KST: int = 4                   # daily rescan of inactive venues at 04:10 KST
     VENUE_RESCAN_MINUTE: int = 10
 

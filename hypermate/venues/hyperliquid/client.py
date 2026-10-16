@@ -114,6 +114,11 @@ class HyperliquidClient:
             self._perp_dexs_fetched_at = time.monotonic()
         return list(self._perp_dexs)
 
+    async def all_mids(self) -> dict:
+        """{coin: mid price (str)} for every perp on the main dex."""
+        body = await self._info({'type': 'allMids'})
+        return body if isinstance(body, dict) else {}
+
     async def spot_clearinghouse_state(self, user: str) -> dict:
         return await self._info({"type": "spotClearinghouseState", "user": user})
 
