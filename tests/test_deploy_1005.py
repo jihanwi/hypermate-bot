@@ -320,7 +320,7 @@ def test_add_summary_labels():
     assert resolve_summary({base.HYPERLIQUID: hl_account}) == 'HL ✅'
     lighter_account = [VenueAccount(base.LIGHTER, '7', W)]
     assert resolve_summary({base.HYPERLIQUID: [], base.LIGHTER: lighter_account}) == 'HL ✗ · Lighter ✅ (1 sub-account)'
-    assert lighter.EXPLORER_FALLBACK.startswith('https://')
+    assert lighter.LighterAdapter.explorer_url(None, lighter_account[0]) == 'https://app.lighter.xyz/explorer/accounts/7'
 
 
 async def test_related_row_separates_volume_and_account_value(repo, clock):

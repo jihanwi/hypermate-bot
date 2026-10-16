@@ -51,7 +51,10 @@ def counterparty(address: str) -> str:
 
 
 def alias_link(address: str, alias: str, venue: str = HYPERLIQUID) -> str:
-    return f'<a href="{h(address_url(venue, address))}">{h(alias)}</a>'
+    url = address_url(venue, address)
+    if url is None:
+        return h(alias)
+    return f'<a href="{h(url)}">{h(alias)}</a>'
 
 
 def badge(venue: str) -> str:

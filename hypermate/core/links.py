@@ -1,4 +1,5 @@
 """Explorer links per venue."""
+from typing import Optional
 
 
 def hl_address_url(address: str) -> str:
@@ -9,20 +10,16 @@ def hl_address_url_fallback(address: str) -> str:
     return f"https://app.hyperliquid.xyz/explorer/address/{address}"
 
 
-LIGHTER_APP_URL = "https://app.lighter.xyz/"     # official explorer URL format not confirmed [?]
-RISEX_APP_URL = "https://app.rise.trade/"        # RISE chain explorer address format not confirmed [?]
-ASTER_APP_URL = "https://www.asterdex.com/"      # Aster Chain explorer address format not confirmed [?]
-ARCUS_APP_URL = "https://arcus.xyz/"             # Robinhood Chain explorer address format not confirmed [?]
+def lighter_account_url(account_key: str) -> str:
+    """Lighter explorer account page; the route takes an account index or an L1 address (master account)."""
+    return f"https://app.lighter.xyz/explorer/accounts/{account_key}"
 
 
-def address_url(venue: str, address: str) -> str:
-    """Explorer link for an alert header, per venue."""
+def address_url(venue: str, address: str) -> Optional[str]:
+    """Explorer link for an alert header, per venue. None where no per-wallet page is known
+    (RISEx, Aster, Arcus): the alias is shown as plain text instead of linking the venue home page."""
     if venue == 'lighter':
-        return LIGHTER_APP_URL
-    if venue == 'risex':
-        return RISEX_APP_URL
-    if venue == 'aster':
-        return ASTER_APP_URL
-    if venue == 'arcus':
-        return ARCUS_APP_URL
+        return lighter_account_url(address)
+    if venue in ('risex', 'aster', 'arcus'):
+        return None
     return hl_address_url(address)
