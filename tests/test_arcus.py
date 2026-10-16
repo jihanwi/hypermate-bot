@@ -281,7 +281,7 @@ async def test_add_pin_positions_section_health_and_polling(repo, clock):
     assert activity and len(bot.sent) == 1
     text = bot.sent[0]['text']
     check_telegram_html(text)
-    assert text.startswith('[ARC] 🔒 <b><a href="https://arcus.xyz/">cl</a></b> closed LONG $SUI')
+    assert text.startswith('[ARC] 🔒 <b>cl</b> closed LONG $SUI')
     assert '(913.4 SUI) @ 1.12' in text and 'realized 🟢 +$0' in text               # 0.0671 + 0.00065 fee
     # /health lists the venue with its interval and the bucket
     assert poller.venue_interval_sec(base.ARCUS, ad, 1) == 20

@@ -12,6 +12,7 @@ import logging
 from decimal import Decimal
 from typing import Optional
 
+from hypermate.core.links import lighter_account_url
 from hypermate.core.numbers import to_decimal
 from hypermate.venues import base
 from hypermate.venues.base import AccountSnapshot, VenueAccount, fill_direction, position_entry
@@ -21,7 +22,6 @@ from hypermate.venues.lighter.client import LighterClient
 logger = logging.getLogger(__name__)
 
 ZERO = Decimal(0)
-EXPLORER_FALLBACK = 'https://app.lighter.xyz/'      # official explorer URL format not confirmed [?]
 MAX_CATCHUP_PAGES = 5
 LIQUIDATION_TYPES = ('liquidation',)
 
@@ -150,7 +150,7 @@ class LighterAdapter:
         return fills, encode_cursor(newest)
 
     def explorer_url(self, account: VenueAccount) -> str:
-        return EXPLORER_FALLBACK
+        return lighter_account_url(account.account_ref)
 
     def cost(self, op: str) -> int:
         return {'resolve': 1, 'snapshot': 1, 'events': 1}.get(op, 1)

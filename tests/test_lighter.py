@@ -414,7 +414,7 @@ async def test_lighter_poll_sends_alerts_with_badge_and_sub_account_label(repo, 
     assert len(bot.sent) == 1
     text = bot.sent[0]['text']
     check_telegram_html(text)
-    assert text.startswith('[LTR] ➕ <b><a href="https://app.lighter.xyz/">cl#702389</a></b> added to LONG $ETH')
+    assert text.startswith(f'[LTR] ➕ <b><a href="https://app.lighter.xyz/explorer/accounts/{L1}">cl#702389</a></b> added to LONG $ETH')
     assert '$2.7k (1 ETH) @ 2,700' in text
     # unchanged snapshot: no trades request
     calls_before = len(client.calls)
@@ -495,3 +495,18 @@ def test_hl_venue_resolve_rules():
     account = VenueAccount(base.HYPERLIQUID, L1, L1)
     assert account.label('cl') == 'cl' and VenueAccount(base.LIGHTER, '7', L1).label('cl') == 'cl#7'
     assert SimpleNamespace is not None
+
+
+def test_alias_links_per_venue():
+    from hypermate.core.formatter import alias_link
+    assert alias_link(L1, 'cl', 'lighter') == f'<a href="https://app.lighter.xyz/explorer/accounts/{L1}">cl</a>'
+    assert alias_link(L1, 'cl', 'hyperliquid') == f'<a href="https://hypurrscan.io/address/{L1}">cl</a>'
+    for venue in ('arcus', 'risex', 'aster'):
+        assert alias_link(L1, 'a<b', venue) == 'a&lt;b'
+
+
+def test_application_disables_link_previews(monkeypatch):
+    from hypermate.config import Config
+    from hypermate.main import build_application
+    monkeypatch.setattr(Config, 'BOT_TOKEN', '123:abc', raising=False)
+    assert build_application().bot.defaults.link_preview_options.is_disabled is True

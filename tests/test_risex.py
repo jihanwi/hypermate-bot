@@ -314,7 +314,7 @@ async def test_add_positions_and_alert_through_the_pipeline(repo, clock):
     assert activity and weight == 2 and len(bot.sent) == 1
     text = bot.sent[0]['text']
     check_telegram_html(text)
-    assert text.startswith('[RISE] 🔒 <b><a href="https://app.rise.trade/">rise</a></b> closed SHORT $BTC')
+    assert text.startswith('[RISE] 🔒 <b>rise</b> closed SHORT $BTC')
     assert '(0.02089 BTC) @ 84,000' in text and 'realized' in text
 
 

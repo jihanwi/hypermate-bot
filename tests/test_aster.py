@@ -212,7 +212,7 @@ async def test_add_summary_positions_poll_and_privacy_transition(repo, clock):
     assert activity and len(bot.sent) == 1
     text = bot.sent[0]['text']
     check_telegram_html(text)
-    assert text.startswith('[ASTER] 🔒 <b><a href="https://www.asterdex.com/">ast</a></b> closed SHORT $ETH')
+    assert text.startswith('[ASTER] 🔒 <b>ast</b> closed SHORT $ETH')
     assert 'realized' not in text
 
     # privacy turns on: PRIVACY_ON once, account inactive, no further polling or messages

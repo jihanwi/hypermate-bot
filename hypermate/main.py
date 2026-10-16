@@ -5,8 +5,8 @@ import datetime
 import logging
 import os
 
-from telegram import BotCommand, BotCommandScopeAllPrivateChats, Update
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler
+from telegram import BotCommand, BotCommandScopeAllPrivateChats, LinkPreviewOptions, Update
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Defaults
 
 from hypermate.bot import callbacks, commands, texts
 from hypermate.config import Config
@@ -134,7 +134,9 @@ def _seconds_to_next_hour() -> int:
 
 
 def build_application() -> Application:
-    application = (Application.builder().token(Config.BOT_TOKEN)
+    # No link preview cards on any message: alerts link the alias, and a venue page preview buries the alert
+    defaults = Defaults(link_preview_options=LinkPreviewOptions(is_disabled=True))
+    application = (Application.builder().token(Config.BOT_TOKEN).defaults(defaults)
                    .post_init(post_init).post_shutdown(post_shutdown).build())
 
     application.add_handler(CommandHandler("start", commands.start))
