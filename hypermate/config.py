@@ -64,11 +64,14 @@ class Config:
     ARCUS_API_URL: str = os.getenv("ARCUS_API_URL", "https://api.arcus.xyz")
     ARCUS_REQ_BUDGET: int = int(os.getenv("ARCUS_REQ_BUDGET", "1200"))
     ARCUS_POLL_SEC: int = 20
-    # Papertrade (spec 6.7): public HyperEVM RPC, no published limit; -32005 after about 7 calls back to back.
-    # Off by default: FEATURE_PAPERTRADE=true registers the adapter.
+    # Papertrade (spec 6.7): public HyperEVM RPC, no published limit; measured -32005 after about 7 calls
+    # back to back. WeightBudget lets a burst of per_minute / 6 tokens through, so the bucket must stay
+    # under that: 36 / 6 = 6 calls (60 would allow 10). On top of the bucket, consecutive RPC calls are
+    # spaced PAPERTRADE_MIN_GAP_MS apart. Off by default: FEATURE_PAPERTRADE=true registers the adapter.
     FEATURE_PAPERTRADE: bool = os.getenv("FEATURE_PAPERTRADE", "false").lower() == "true"
     PAPERTRADE_RPC_URL: str = os.getenv("PAPERTRADE_RPC_URL", "https://rpc.hyperliquid.xyz/evm")
-    PAPERTRADE_REQ_BUDGET: int = int(os.getenv("PAPERTRADE_REQ_BUDGET", "60"))
+    PAPERTRADE_REQ_BUDGET: int = int(os.getenv("PAPERTRADE_REQ_BUDGET", "36"))
+    PAPERTRADE_MIN_GAP_MS: int = int(os.getenv("PAPERTRADE_MIN_GAP_MS", "150"))
     PAPERTRADE_POLL_SEC: int = int(os.getenv("PAPERTRADE_POLL_SEC", "20"))
     VENUE_RESCAN_HOUR_KST: int = 4                   # daily rescan of inactive venues at 04:10 KST
     VENUE_RESCAN_MINUTE: int = 10

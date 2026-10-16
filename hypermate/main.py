@@ -114,7 +114,9 @@ async def build_venues(application: Application, hl: HyperliquidClient) -> None:
         venues.ARCUS: ArcusAdapter(arcus),
     }
     if Config.FEATURE_PAPERTRADE:
-        papertrade = PapertradeClient(Config.PAPERTRADE_RPC_URL, WeightBudget(Config.PAPERTRADE_REQ_BUDGET))
+        papertrade = PapertradeClient(Config.PAPERTRADE_RPC_URL,
+                                      WeightBudget(Config.PAPERTRADE_REQ_BUDGET, name='Papertrade'),
+                                      min_gap_ms=Config.PAPERTRADE_MIN_GAP_MS)
         await papertrade.start()
         application.bot_data['papertrade'] = papertrade
         application.bot_data['venues'][venues.PAPERTRADE] = PapertradeAdapter(papertrade, hl)
