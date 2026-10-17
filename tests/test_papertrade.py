@@ -502,6 +502,51 @@ async def test_too_large_halves_the_range_and_the_tip_advances(clock, caplog):
     assert user_spans == [580, 290, 290]                                           # 401..980, halved once
 
 
+async def test_halving_is_capped_per_cycle(clock, caplog):
+    """A range the RPC refuses at every size costs 1 + MAX_SPLIT_CALLS getLogs, not ~63, then the rest is
+    skipped and the tip still advances (the poller must not stall behind the 36/min bucket)."""
+    chain = FakeChain(tip=1000)
+    ad = paper.PapertradeAdapter(chain)
+    await ad.prepare_cycle([ADDR])
+    chain.too_large_over = 0
+    chain.tip = 1000 + paper.LOG_CHUNK_BLOCKS
+    chain.calls.clear()
+    caplog.set_level(logging.ERROR)
+    await ad.prepare_cycle([ADDR])
+    spans = [c[2] - c[1] + 1 for c in chain.calls if c[0] == 'logs']
+    assert len(spans) == 1 + paper.MAX_SPLIT_CALLS and spans[:3] == [250, 125, 62]
+    assert ad.tip == chain.tip and ad.skipped_ranges > 0 and 'halving budget spent' in caplog.text
+
+
+async def test_concurrent_rpc_calls_are_spaced_too():
+    """Two callers at once (the poller and a /positions read) take consecutive slots instead of computing
+    the same wait and reaching the RPC together."""
+    import asyncio
+    clock = {'now': 100.0}
+
+    async def sleep(seconds):
+        target = clock['now'] + seconds
+        await asyncio.sleep(0)
+        clock['now'] = max(clock['now'], target)
+
+    class Budget:
+        per_minute = 36
+
+        async def acquire(self, weight, priority):
+            await asyncio.sleep(0)
+
+    client = PapertradeClient('http://unused', Budget(), min_gap_ms=150, clock=lambda: clock['now'], sleep=sleep)
+    hits = []
+
+    async def post(body):
+        hits.append(clock['now'])
+        return 200, {'result': '0x10'}
+    client._post = post
+    await asyncio.gather(*(client.block_number() for _ in range(3)))
+    gaps = [b - a for a, b in zip(hits, hits[1:])]
+    assert len(hits) == 3 and all(g >= 0.15 - 1e-9 for g in gaps)
+
+
 async def test_cycle_cache_is_pruned(clock):
     """Closed rows and removed wallets leave rows / covered_from / consumed / buffer after a cycle."""
     chain = FakeChain(tip=1000)

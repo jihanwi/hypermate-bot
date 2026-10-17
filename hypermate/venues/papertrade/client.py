@@ -169,14 +169,16 @@ class PapertradeClient:
         self._backoff = min(self._backoff * 2, BACKOFF_MAX_SEC)
 
     async def _space(self) -> None:
-        """At least min_gap between consecutive calls, after the bucket let the call through."""
+        """At least min_gap between consecutive calls, after the bucket let the call through. The slot is
+        reserved before sleeping, so concurrent callers (the poller and a /positions read) queue up instead
+        of computing the same wait and firing together."""
         if self.min_gap <= 0:
             return
-        if self._last_call is not None:
-            wait = self.min_gap - (self.clock() - self._last_call)
-            if wait > 0:
-                await self.sleep(wait)
-        self._last_call = self.clock()
+        now = self.clock()
+        slot = now if self._last_call is None else max(now, self._last_call + self.min_gap)
+        self._last_call = slot
+        if slot > now:
+            await self.sleep(slot - now)
 
     async def rpc(self, method: str, params: list, priority: int = P_SNAPSHOT) -> Any:
         if self.budget is not None:

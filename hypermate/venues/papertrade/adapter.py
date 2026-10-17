@@ -16,7 +16,8 @@ key that changed while a position was alive made the snapshot diff read a flip a
 mid-life.
 
 Hardening (fix/papertrade-hardening): a getLogs range that answers -32008 is halved down to
-MIN_LOG_BLOCKS and skipped below that, so the tip always advances; logs without blockTimestamp get the
+MIN_LOG_BLOCKS (at most MAX_SPLIT_CALLS extra calls per cycle) and skipped past that, so the tip always
+advances and one bad range cannot stall the poller behind the 36/min bucket; logs without blockTimestamp get the
 block's timestamp from eth_getBlockByNumber (cached for the life of the buffer) or the cycle's clock; the
 cycle cache is pruned to the tracked wallets; the daily check waits for the second cycle after a start so
 the restart catch-up is not joined by three more calls.
@@ -73,6 +74,7 @@ KNOWN_TOPICS = frozenset((
 FIRST_CYCLE_BLOCKS = 20            # about one 20 s cycle
 LOG_CHUNK_BLOCKS = 250             # unfiltered getLogs: 500 blocks came back at 806 KB, 1,000 at -32008
 MIN_LOG_BLOCKS = 8                 # -32008 halving stops here; a smaller range is skipped with an error
+MAX_SPLIT_CALLS = 12               # extra getLogs one cycle (or one wallet catch-up) may spend on halving
 BUFFER_BLOCKS = 900                # logs kept per tracked wallet, about 15 minutes
 WALLET_CHUNK_BLOCKS = 1000         # user-topic catch-up: 68 KB per 1,000 blocks for a busy wallet
 MAX_CATCHUP_BLOCKS = 3600          # about an hour; older gaps are skipped (logged)
@@ -279,8 +281,9 @@ class PapertradeAdapter:
         wanted = set(tracked)
         catch_up = tip - start + 1 > FIRST_CYCLE_BLOCKS * 2
         warned = [False]
+        splits = [MAX_SPLIT_CALLS]
         for frm in range(start, tip + 1, LOG_CHUNK_BLOCKS):
-            for log in await self._logs_halving(frm, min(tip, frm + LOG_CHUNK_BLOCKS - 1)):
+            for log in await self._logs_halving(frm, min(tip, frm + LOG_CHUNK_BLOCKS - 1), splits):
                 trade = decode_trade_log(log)
                 if trade is not None and trade['user'] in wanted:
                     new.append(trade)
@@ -308,23 +311,27 @@ class PapertradeAdapter:
         if self.cycles >= 2 and not catch_up and hl_adapter.now_ms() - self.last_check_ms >= CHECK_INTERVAL_MS:
             await self._daily_check(tip)
 
-    async def _logs_halving(self, frm: int, to: int, user: Optional[str] = None, priority: int = scheduler.P_SNAPSHOT,
-                            depth: int = 0) -> list[dict]:
-        """getLogs over [frm, to]; on -32008 the range is halved (this call only) down to MIN_LOG_BLOCKS,
-        below that the range is skipped with an error so the tip still advances (spec 6.7)."""
+    async def _logs_halving(self, frm: int, to: int, splits: list, user: Optional[str] = None,
+                            priority: int = scheduler.P_SNAPSHOT) -> list[dict]:
+        """getLogs over [frm, to]; on -32008 the range is halved (this call only) down to MIN_LOG_BLOCKS.
+        `splits` holds the extra calls left, shared by every range of the cycle (or wallet catch-up): a
+        range below MIN_LOG_BLOCKS, or one that would need more calls than are left, is skipped with an
+        error so the tip still advances (spec 6.7). Unbounded, one refused 250-block chunk costs ~63 calls."""
         try:
             return await self.client.logs(frm, to, user=user, priority=priority)
         except PapertradeTooLarge:
             span = to - frm + 1
-            if span <= MIN_LOG_BLOCKS:
+            if span <= MIN_LOG_BLOCKS or splits[0] < 2:
                 self.skipped_ranges += 1
-                logger.error(f"Papertrade: getLogs [{frm}, {to}] too large even at {span} blocks, range skipped"
+                reason = f"even at {span} blocks" if span <= MIN_LOG_BLOCKS else f"at {span} blocks, halving budget spent"
+                logger.error(f"Papertrade: getLogs [{frm}, {to}] too large {reason}, range skipped"
                              + (f" (user {user})" if user else ""))
                 return []
+            splits[0] -= 2
             mid = frm + span // 2 - 1
             logger.info(f"Papertrade: getLogs [{frm}, {to}] too large, halving to {span // 2} blocks")
-            return (await self._logs_halving(frm, mid, user, priority, depth + 1)
-                    + await self._logs_halving(mid + 1, to, user, priority, depth + 1))
+            return (await self._logs_halving(frm, mid, splits, user, priority)
+                    + await self._logs_halving(mid + 1, to, splits, user, priority))
 
     async def _fill_times(self, trades: list[dict], warned: list) -> None:
         """blockTimestamp is a non-standard getLogs field: a log without it gets the block's timestamp from
@@ -453,8 +460,9 @@ class PapertradeAdapter:
                                f"last {MAX_CATCHUP_BLOCKS} only")
                 frm = covered - MAX_CATCHUP_BLOCKS
             older = []
+            splits = [MAX_SPLIT_CALLS]
             for chunk in range(frm, covered, WALLET_CHUNK_BLOCKS):
-                logs = await self._logs_halving(chunk, min(covered - 1, chunk + WALLET_CHUNK_BLOCKS - 1),
+                logs = await self._logs_halving(chunk, min(covered - 1, chunk + WALLET_CHUNK_BLOCKS - 1), splits,
                                                 user=address, priority=scheduler.P_FILLS)
                 older += [t for t in map(decode_trade_log, logs) if t is not None and (t['block'], t['index']) > position]
             await self._fill_times(older, [False])
