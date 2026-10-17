@@ -10,8 +10,17 @@ older than the cycles that covered it (restart, buffer reset) catches up with it
 An open and a close inside one cycle leave the snapshot unchanged, so has_pending_events() tells the
 pipeline to fetch events anyway.
 
-Positions are keyed per side (owner decision 2026-10-16): `BTC` while the wallet holds one side, and the
-short side becomes `BTC (short)` while a long is also open.
+Positions are keyed per side with fixed keys (owner decision 2026-10-17, superseding the 2026-10-16 note):
+the long side is `BTC`, the short side is `BTC (short)`, always, whether or not the other side is open. A
+key that changed while a position was alive made the snapshot diff read a flip and relabelled alerts
+mid-life.
+
+Hardening (fix/papertrade-hardening): a getLogs range that answers -32008 is halved down to
+MIN_LOG_BLOCKS (at most MAX_SPLIT_CALLS extra calls per cycle) and skipped past that, so the tip always
+advances and one bad range cannot stall the poller behind the 36/min bucket; logs without blockTimestamp get the
+block's timestamp from eth_getBlockByNumber (cached for the life of the buffer) or the cycle's clock; the
+cycle cache is pruned to the tracked wallets; the daily check waits for the second cycle after a start so
+the restart catch-up is not joined by three more calls.
 """
 
 import json
@@ -24,7 +33,7 @@ from hypermate.venues.base import AccountSnapshot, VenueAccount, position_entry
 from hypermate.venues.hyperliquid import adapter as hl_adapter
 from hypermate.venues.hyperliquid import scheduler
 from hypermate.venues.papertrade.client import (EXCHANGE, TOPIC_CLOSED, TOPIC_OPENED, TRADE_TOPICS, PapertradeClient,
-                                                word)
+                                                PapertradeTooLarge, word)
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +73,8 @@ KNOWN_TOPICS = frozenset((
 
 FIRST_CYCLE_BLOCKS = 20            # about one 20 s cycle
 LOG_CHUNK_BLOCKS = 250             # unfiltered getLogs: 500 blocks came back at 806 KB, 1,000 at -32008
+MIN_LOG_BLOCKS = 8                 # -32008 halving stops here; a smaller range is skipped with an error
+MAX_SPLIT_CALLS = 12               # extra getLogs one cycle (or one wallet catch-up) may spend on halving
 BUFFER_BLOCKS = 900                # logs kept per tracked wallet, about 15 minutes
 WALLET_CHUNK_BLOCKS = 1000         # user-topic catch-up: 68 KB per 1,000 blocks for a busy wallet
 MAX_CATCHUP_BLOCKS = 3600          # about an hour; older gaps are skipped (logged)
@@ -83,9 +94,10 @@ def decode_trade_log(log: dict) -> Optional[dict]:
     if len(topics) < 3 or topics[0] not in TRADE_TOPICS:
         return None
     data = log.get('data') or '0x'
+    stamp = log.get('blockTimestamp')
     out = {'position_id': int(topics[1], 16), 'user': '0x' + topics[2][-40:].lower(),
            'block': int(log['blockNumber'], 16), 'index': int(log['logIndex'], 16),
-           'time_ms': int(log.get('blockTimestamp') or '0x0', 16) * 1000}
+           'time_ms': int(stamp, 16) * 1000 if stamp else None}      # None: filled by the adapter
     if topics[0] == TOPIC_OPENED:
         out.update(kind='open', instrument_id=word(data, 0), is_long=bool(word(data, 1)),
                    entry_raw=word(data, 3), margin_raw=word(data, 4), leverage=word(data, 5))
@@ -109,10 +121,9 @@ def position_size(row: dict) -> Optional[tuple[str, Decimal, Decimal, Decimal]]:
     return coin, size, notional, entry
 
 
-def side_key(coin: str, is_long: bool, long_open: bool) -> str:
-    """Snapshot / fill key: the long side is the coin, the short side is the coin too unless a long is
-    open on the same coin, then `<coin> (short)`."""
-    return coin if is_long or not long_open else f"{coin}{SHORT_SUFFIX}"
+def side_key(coin: str, is_long: bool) -> str:
+    """Snapshot / fill key, fixed per side: the long side is `<coin>`, the short side `<coin> (short)`."""
+    return coin if is_long else f"{coin}{SHORT_SUFFIX}"
 
 
 def split_key(key: str, szi: Decimal) -> tuple[str, bool]:
@@ -143,7 +154,6 @@ def build_positions(rows: list[dict], mids: Optional[dict] = None) -> dict[str, 
         agg['notional'] += notional
         agg['lev_ntl'] += notional * int(row['leverage'])
         agg['margin'] += Decimal(row['margin_raw']) / E18
-    longs = {coin for (coin, is_long), agg in sides.items() if is_long and agg['size'] > 0}
     positions = {}
     for (coin, is_long), agg in sides.items():
         if agg['size'] <= 0:
@@ -153,7 +163,7 @@ def build_positions(rows: list[dict], mids: Optional[dict] = None) -> dict[str, 
         mid = Decimal(str((mids or {}).get(coin))) if (mids or {}).get(coin) is not None else None
         upnl = (szi * (mid - entry)).quantize(Decimal('0.01')) if mid is not None else None
         value = (agg['size'] * mid if mid is not None else agg['notional']).quantize(Decimal('0.01'))
-        key = side_key(coin, is_long, coin in longs)
+        key = side_key(coin, is_long)
         scale = next(s for c, s in INSTRUMENTS.values() if c == coin)
         decimals = max(0, len(str(int(scale))) - 1)
         positions[key] = position_entry(coin, szi, entry.quantize(Decimal(1) / scale), value, upnl)
@@ -197,7 +207,7 @@ def logs_to_fills(trades: list[dict], rows: dict[int, dict], positions_before: d
             start, end = (start if start and (start > 0) == is_long else signed), ZERO
         else:
             end = start - signed
-        fill = {'coin': side_key(coin, is_long, running.get((coin, True), ZERO) > 0),
+        fill = {'coin': side_key(coin, is_long),
                 'sz': plain(size), 'side': ('B' if is_long else 'A') if opening else ('A' if is_long else 'B'),
                 'time': t['time_ms'], 'startPosition': plain(start),
                 'dir': ('Open ' if opening else 'Close ') + ('Long' if is_long else 'Short'),
@@ -246,6 +256,9 @@ class PapertradeAdapter:
         self.covered_from: dict[str, int] = {}       # address -> first block every cycle since has read
         self.consumed: dict[str, tuple[int, int]] = {}  # address -> last log position handed to the pipeline
         self.last_check_ms = 0
+        self.cycles = 0                                # cycles since this adapter started
+        self.block_times: dict[int, int] = {}          # block -> timestamp (s), for logs without blockTimestamp
+        self.skipped_ranges = 0                        # -32008 ranges given up on (health)
         self.implementation: Optional[str] = None
         self.instrument_count: Optional[int] = None
         self.unknown_topics = 0
@@ -266,11 +279,15 @@ class PapertradeAdapter:
             self.covered_from.setdefault(address, start)
         new: list[dict] = []
         wanted = set(tracked)
+        catch_up = tip - start + 1 > FIRST_CYCLE_BLOCKS * 2
+        warned = [False]
+        splits = [MAX_SPLIT_CALLS]
         for frm in range(start, tip + 1, LOG_CHUNK_BLOCKS):
-            for log in await self.client.logs(frm, min(tip, frm + LOG_CHUNK_BLOCKS - 1)):
+            for log in await self._logs_halving(frm, min(tip, frm + LOG_CHUNK_BLOCKS - 1), splits):
                 trade = decode_trade_log(log)
                 if trade is not None and trade['user'] in wanted:
                     new.append(trade)
+        await self._fill_times(new, warned)
         new.sort(key=lambda t: (t['block'], t['index']))
         for trade in new:
             self.buffer.setdefault(trade['user'], []).append(trade)
@@ -286,8 +303,72 @@ class PapertradeAdapter:
         ids += [t['position_id'] for t in new if t['kind'] != 'open']
         self.rows = await self.client.positions(ids, block=tip)
         self.mids = await self._mids() if any(open_ids for open_ids, _ in self.views.values()) else {}
-        if hl_adapter.now_ms() - self.last_check_ms >= CHECK_INTERVAL_MS:
+        self.cycles += 1
+        self._prune(tracked, floor)
+        # the daily check waits for the second cycle after a start: the first one already carries the
+        # catch-up getLogs of every wallet (restart burst, fix/papertrade-hardening); a cycle that itself
+        # caught up more than two cycles' worth of blocks also waits
+        if self.cycles >= 2 and not catch_up and hl_adapter.now_ms() - self.last_check_ms >= CHECK_INTERVAL_MS:
             await self._daily_check(tip)
+
+    async def _logs_halving(self, frm: int, to: int, splits: list, user: Optional[str] = None,
+                            priority: int = scheduler.P_SNAPSHOT) -> list[dict]:
+        """getLogs over [frm, to]; on -32008 the range is halved (this call only) down to MIN_LOG_BLOCKS.
+        `splits` holds the extra calls left, shared by every range of the cycle (or wallet catch-up): a
+        range below MIN_LOG_BLOCKS, or one that would need more calls than are left, is skipped with an
+        error so the tip still advances (spec 6.7). Unbounded, one refused 250-block chunk costs ~63 calls."""
+        try:
+            return await self.client.logs(frm, to, user=user, priority=priority)
+        except PapertradeTooLarge:
+            span = to - frm + 1
+            if span <= MIN_LOG_BLOCKS or splits[0] < 2:
+                self.skipped_ranges += 1
+                reason = f"even at {span} blocks" if span <= MIN_LOG_BLOCKS else f"at {span} blocks, halving budget spent"
+                logger.error(f"Papertrade: getLogs [{frm}, {to}] too large {reason}, range skipped"
+                             + (f" (user {user})" if user else ""))
+                return []
+            splits[0] -= 2
+            mid = frm + span // 2 - 1
+            logger.info(f"Papertrade: getLogs [{frm}, {to}] too large, halving to {span // 2} blocks")
+            return (await self._logs_halving(frm, mid, splits, user, priority)
+                    + await self._logs_halving(mid + 1, to, splits, user, priority))
+
+    async def _fill_times(self, trades: list[dict], warned: list) -> None:
+        """blockTimestamp is a non-standard getLogs field: a log without it gets the block's timestamp from
+        one eth_getBlockByNumber per distinct block (cached for the life of the buffer), and the cycle's
+        clock when that fails too (warned once per cycle)."""
+        missing = sorted({t['block'] for t in trades if t['time_ms'] is None and t['block'] not in self.block_times})
+        for block in missing:
+            try:
+                stamp = await self.client.block_timestamp(block)
+            except Exception as e:
+                stamp = None
+                if not warned[0]:
+                    logger.warning(f"Papertrade: eth_getBlockByNumber failed for block {block}: {e}; "
+                                   f"using the cycle's clock")
+                    warned[0] = True
+            if stamp is not None:
+                self.block_times[block] = stamp
+        now_s = hl_adapter.now_ms() // 1000
+        for t in trades:
+            if t['time_ms'] is None:
+                stamp = self.block_times.get(t['block'])
+                if stamp is None and not warned[0]:
+                    logger.warning(f"Papertrade: no timestamp for block {t['block']}, using the cycle's clock")
+                    warned[0] = True
+                t['time_ms'] = (stamp if stamp is not None else now_s) * 1000
+
+    def _prune(self, tracked: list[str], floor: int) -> None:
+        """Keep only what the next cycle can use: positions(id) rows that are open for a tracked wallet or
+        referenced by a buffered log, and per-address state of tracked wallets."""
+        keep = {i for open_ids, _ in self.views.values() for i in open_ids}
+        keep |= {t['position_id'] for logs in self.buffer.values() for t in logs}
+        self.rows = {i: row for i, row in self.rows.items() if i in keep}
+        wanted = set(tracked)
+        for store in (self.buffer, self.covered_from, self.consumed, self.views):
+            for address in [a for a in store if a not in wanted]:
+                del store[address]
+        self.block_times = {b: s for b, s in self.block_times.items() if b >= floor}
 
     async def _mids(self) -> dict:
         if self.hl is None:
@@ -379,10 +460,12 @@ class PapertradeAdapter:
                                f"last {MAX_CATCHUP_BLOCKS} only")
                 frm = covered - MAX_CATCHUP_BLOCKS
             older = []
+            splits = [MAX_SPLIT_CALLS]
             for chunk in range(frm, covered, WALLET_CHUNK_BLOCKS):
-                logs = await self.client.logs(chunk, min(covered - 1, chunk + WALLET_CHUNK_BLOCKS - 1),
-                                              user=address, priority=scheduler.P_FILLS)
+                logs = await self._logs_halving(chunk, min(covered - 1, chunk + WALLET_CHUNK_BLOCKS - 1), splits,
+                                                user=address, priority=scheduler.P_FILLS)
                 older += [t for t in map(decode_trade_log, logs) if t is not None and (t['block'], t['index']) > position]
+            await self._fill_times(older, [False])
             older.sort(key=lambda t: (t['block'], t['index']))
             seen = {(t['block'], t['index']) for t in trades}
             trades = [t for t in older if (t['block'], t['index']) not in seen] + trades
@@ -408,4 +491,6 @@ class PapertradeAdapter:
             parts.append(f"instruments {self.instrument_count} (known {len(INSTRUMENTS)})")
         if self.unknown_topics:
             parts.append(f"{self.unknown_topics} unknown topic0s")
+        if self.skipped_ranges:
+            parts.append(f"{self.skipped_ranges} log ranges skipped (-32008)")
         return {'mode': 'rpc', 'detail': ', '.join(parts)}

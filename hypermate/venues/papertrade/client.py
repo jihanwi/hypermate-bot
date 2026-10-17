@@ -4,16 +4,22 @@ functions through Multicall3 aggregate3, the EIP-1967 implementation slot. No au
 Measured 2026-10-15 (docs/API_NOTES.md, Papertrade): about 7 calls back to back get -32005 (rate limited)
 and it clears after 0.7 s; eth_getLogs has a slower budget; a JSON-RPC batch is capped at 20, which is
 why the views go through Multicall3; a getLogs range that returns too much gets -32008 (1,000 blocks of
-the unfiltered trade topics), so callers keep ranges at 250 blocks.
+the unfiltered trade topics), so callers start at 250 blocks and halve on -32008 (PapertradeTooLarge).
+
+Two guards keep a restart burst under the limit (fix/papertrade-hardening): the bucket's capacity
+(per_minute / 6) stays below the 7-call burst, and rpc() spaces consecutive calls min_gap_ms apart,
+with the same clock / sleep injection as WeightBudget so tests stay deterministic.
 
 Selectors and topic0s are the keccak of the ABI fixture's signatures (tests/test_papertrade.py checks them).
 """
 
+import asyncio
 import functools
 import json
 import logging
+import time
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 import aiohttp
 
@@ -56,6 +62,10 @@ class PapertradeAPIError(Exception):
 
 class PapertradeRateLimited(PapertradeAPIError):
     """-32005 or HTTP 429."""
+
+
+class PapertradeTooLarge(PapertradeAPIError):
+    """-32008: the getLogs range returned too much; the caller halves the range (spec 6.7)."""
 
 
 def word(data: str, i: int) -> int:
@@ -117,13 +127,20 @@ def decode_position(data: Optional[str]) -> Optional[dict]:
 
 
 class PapertradeClient:
-    def __init__(self, url: str, budget: Optional[WeightBudget] = None) -> None:
+    def __init__(self, url: str, budget: Optional[WeightBudget] = None, min_gap_ms: int = 150,
+                 clock: Callable[[], float] = time.monotonic,
+                 sleep: Callable[[float], Awaitable] = asyncio.sleep) -> None:
         self.url = url
         self.budget = budget
+        self.min_gap = min_gap_ms / 1000
+        self.clock = clock
+        self.sleep = sleep
+        self._last_call: Optional[float] = None
         self._session: Optional[aiohttp.ClientSession] = None
         self._backoff = BACKOFF_START_SEC
         self.calls = 0
         self.rate_limited = 0
+        self.too_large = 0
 
     async def start(self) -> None:
         if self._session is None:
@@ -151,9 +168,22 @@ class PapertradeClient:
             self.budget.rate_limited(self._backoff)
         self._backoff = min(self._backoff * 2, BACKOFF_MAX_SEC)
 
+    async def _space(self) -> None:
+        """At least min_gap between consecutive calls, after the bucket let the call through. The slot is
+        reserved before sleeping, so concurrent callers (the poller and a /positions read) queue up instead
+        of computing the same wait and firing together."""
+        if self.min_gap <= 0:
+            return
+        now = self.clock()
+        slot = now if self._last_call is None else max(now, self._last_call + self.min_gap)
+        self._last_call = slot
+        if slot > now:
+            await self.sleep(slot - now)
+
     async def rpc(self, method: str, params: list, priority: int = P_SNAPSHOT) -> Any:
         if self.budget is not None:
             await self.budget.acquire(1, priority)
+        await self._space()
         self.calls += 1
         try:
             status, body = await self._post({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params})
@@ -171,6 +201,9 @@ class PapertradeClient:
             if code == RATE_LIMITED:
                 self._limited()
                 raise PapertradeRateLimited(f"{method}: {message}", code)
+            if code == TOO_LARGE:
+                self.too_large += 1
+                raise PapertradeTooLarge(f"{method}: {message}", code)
             raise PapertradeAPIError(f"{method}: {code} {message}", code)
         self._backoff = BACKOFF_START_SEC
         return body.get('result')
@@ -188,6 +221,14 @@ class PapertradeClient:
         result = await self.rpc('eth_getLogs', [{'address': EXCHANGE, 'fromBlock': hex(from_block),
                                                  'toBlock': hex(to_block), 'topics': topics}], priority)
         return list(result or [])
+
+    async def block_timestamp(self, block: int, priority: int = P_SNAPSHOT) -> Optional[int]:
+        """eth_getBlockByNumber(block, false).timestamp in seconds; None when the block is unknown. Used
+        only for logs without the non-standard blockTimestamp field."""
+        result = await self.rpc('eth_getBlockByNumber', [hex(block), False], priority)
+        if not isinstance(result, dict) or result.get('timestamp') is None:
+            return None
+        return int(result['timestamp'], 16)
 
     async def multicall(self, calls: list[str], priority: int = P_SNAPSHOT,
                         block: Optional[int] = None) -> list[Optional[str]]:

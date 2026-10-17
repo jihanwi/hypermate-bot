@@ -705,7 +705,10 @@ async def poll_venue_account(bot: Bot, repo: Repo, adapter_obj, account: VenueAc
         cursor = await repo.get_cursor(key, 'trades')
         result = await adapter_obj.fetch_events(account, cursor, (previous or {}).get('', {}))
         if result is None:
-            fills = diff_fills(previous.get('', {}) if previous else {}, snap.positions, now) if changed else []
+            # snapshot-diff fills are for venues without an events source; an adapter that signals pending
+            # events (Papertrade) always serves its own fills, so no synthetic fill may be invented for it
+            fills = [] if pending is not None else (
+                diff_fills(previous.get('', {}) if previous else {}, snap.positions, now) if changed else [])
         else:
             fills, new_cursor = result
             if new_cursor != cursor:

@@ -64,7 +64,8 @@ def item_weight(request_type: str, items: int) -> int:
 
 class WeightBudget:
     def __init__(self, per_minute: int, clock: Callable[[], float] = time.monotonic,
-                 sleep: Callable[[float], Awaitable] = asyncio.sleep) -> None:
+                 sleep: Callable[[float], Awaitable] = asyncio.sleep, name: str = 'HL') -> None:
+        self.name = name                      # log label: every venue has its own bucket
         self.per_minute = per_minute
         self.rate = per_minute / 60
         self.capacity = per_minute / 6
@@ -193,7 +194,7 @@ class WeightBudget:
         seconds = retry_after if retry_after and retry_after > 0 else DEFAULT_RETRY_AFTER_SEC
         self.paused_until = max(self.paused_until, self.clock() + seconds)
         self._record(rate_limited=1)
-        logger.warning(f"HL returned 429, pausing the HL queue for {seconds:g}s")
+        logger.warning(f"{self.name} rate limited, pausing the {self.name} queue for {seconds:g}s")
         return seconds
 
 
